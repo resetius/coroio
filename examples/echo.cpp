@@ -50,9 +50,11 @@ task client(TLoop* loop)
     char buffer[] = "Hello";
     char rcv[1024] = {0};
 
+    TSocket socket(address, loop);
+    co_await socket.Connect();
+    std::cerr << "Connected\n";
+
     while (true) {
-        TSocket socket(address, loop);
-        co_await socket.Connect();
         co_await socket.Write(buffer, sizeof(buffer));
         auto size = co_await socket.Read(rcv, sizeof(rcv));
         std::cerr << "Received: " << rcv << std::endl;
@@ -63,7 +65,7 @@ task client(TLoop* loop)
 int main() {
     TLoop loop;
 
-    server(&loop);
+    //server(&loop);
     client(&loop);
 
     loop.Loop();
