@@ -9,6 +9,8 @@
 #include <cstdint>
 
 #include <sys/select.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 using i64 = int64_t;
 
@@ -96,14 +98,67 @@ public:
 
 class TAddress {
 public:
+    TAddress(const std::string& addr, int port) { }
 };
 
 class TSocket {
 public:
     TSocket(TAddress&& addr) { }
-    void Connect();
-    void Read();
-    void Write();
+    TSocket(const TAddress& addr) { }
+    TSocket() {
+
+    }
+    auto Connect() {
+        return std::suspend_always();
+    }
+
+    auto Read(char* buf, size_t size) {
+        int ret = read(Fd_, buf, size);
+        int err;
+        if (ret < 0) {
+            err = errno;
+        }
+        struct awaitable {
+            bool await_ready() {
+                return (ready = (ret >= 0));
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+            }
+
+            int await_resume() {
+                return ret;
+            }
+
+            int ret, err, ready;
+        };
+        return awaitable{ret,err,false};
+    }
+
+    auto Write(char* buf, size_t size) {
+        return std::suspend_always();
+    }
+
+    auto Accept() {
+        struct awaitable {
+            std::coroutine_handle<>* H;
+
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+            }
+            TSocket await_resume() {
+                return TSocket{};
+            }
+        };
+
+        return awaitable{};
+    }
+
+    void Bind() { }
+    void Listen() { }
+
+private:
+    int Fd_;
 };
 
 class TLoop {
