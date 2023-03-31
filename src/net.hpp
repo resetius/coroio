@@ -85,9 +85,11 @@ private:
 class TSelect {
     std::unordered_map<i64,TTimer> Timers_;
     std::unordered_map<i64,TEvent> Writes_;
+    std::unordered_map<i64,TEvent> Reads_;
     std::vector<TTimer> ReadyTimers_;
     std::vector<TEvent> ReadyEvents_;
     bool Running_ = true;
+    fd_set ReadFds_;
     fd_set WriteFds_;
     fd_set ErrorFds_;
 
@@ -107,6 +109,11 @@ public:
         Writes_.emplace(id, std::move(event));
     }
 
+    void AddRead(TEvent&& event) {
+        auto id = event.Id();
+        Reads_.emplace(id, std::move(event));
+    }
+
     bool Ready() {
         struct timeval tv;
         tv.tv_sec = 0;
@@ -117,7 +124,13 @@ public:
             FD_SET(k, &ErrorFds_);
             max_fd = std::max(max_fd, k);
         }
-        select(max_fd+1, NULL, &WriteFds_, NULL, &tv); // TODO: return code
+        // TODO: remove copy paste
+        for (auto& [k, _] : Reads_) {
+            FD_SET(k, &ReadFds_);
+            FD_SET(k, &ErrorFds_);
+            max_fd = std::max(max_fd, k);
+        }
+        select(max_fd+1, &ReadFds_, &WriteFds_, &ErrorFds_, &tv); // TODO: return code
         auto now = std::chrono::steady_clock::now();
         ReadyTimers_.clear();
         for (auto& [k, v]: Timers_) {
@@ -142,8 +155,22 @@ public:
                 ReadyEvents_.emplace_back(std::move(v));
             }
         }
+        for (auto& [k, v]: Reads_) {
+            if (FD_ISSET(k, &ErrorFds_)) {
+                int error;
+                socklen_t len;
+                getsockopt(k, SOL_SOCKET, SO_ERROR, &error, &len);
+                std::cerr << "Error " << strerror(error) << "\n";
+                // TODO: indicate error
+                ReadyEvents_.emplace_back(std::move(v));
+            } else if (FD_ISSET(k, &ReadFds_)) {
+                ReadyEvents_.emplace_back(std::move(v));
+            }
+        }
+        // TODO: remove copy-paste
         for (auto& v : ReadyEvents_) {
             Writes_.erase(v.Id());
+            Reads_.erase(v.Id());
         }
         return Running_;
     }
@@ -165,6 +192,10 @@ public:
         Addr_.sin_port = htons(port);
         Addr_.sin_family = AF_INET;
     }
+
+    TAddress(sockaddr_in addr)
+        : Addr_(addr)
+    { }
 
     TAddress() { /*TODO:remove*/ }
 
@@ -213,6 +244,14 @@ public:
         , Fd_(Create())
     { }
 
+    TSocket(const TAddress& addr, int fd, TLoop* loop)
+        : Loop_(loop)
+        , Addr_(addr)
+        , Fd_(fd)
+    {
+        Setup(Fd_);
+    }
+
     TSocket(const TAddress& addr, TLoop* loop)
         : Loop_(loop)
         , Addr_(addr)
@@ -242,7 +281,7 @@ public:
         // TODO: connection timeout
         struct awaitable {
             bool await_ready() {
-                return (ret >= 0 || !(err == EINTR||err==EINPROGRESS));
+                return (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS));
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -263,21 +302,34 @@ public:
         if (ret < 0) {
             err = errno;
         }
+        // std::cerr << err << " " << strerror(err) << "\n";
+
         struct awaitable {
             bool await_ready() {
-                return (ret >= 0 || !(err == EINTR||err==EINPROGRESS));
+                (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
+                std::cerr << "R: " << ready << "\n";
+                return ready;
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                std::cerr << "Read Suspended\n";
             }
 
             int await_resume() {
-                return ret;
+                if (ready) {
+                    return ret;
+                } else {
+                    return read(fd, b, s);
+                }
             }
 
+            TLoop* loop;
+            int fd;
+            char* b; size_t s;
             int ret, err;
+            bool ready;
         };
-        return awaitable{ret,err};
+        return awaitable{Loop_,Fd_,buf,size,ret,err,false};
     }
 
     auto Write(char* buf, size_t size) {
@@ -287,19 +339,24 @@ public:
             err = errno;
         }
 
+        std::cerr << err << " " << strerror(err) << "\n";
+
         struct awaitable {
             bool await_ready() {
-                return (ready=(ret >= 0 || !(err == EINTR||err==EINPROGRESS)));
+                return (ready=(ret >= 0 || !(err == EINTR||err==EINTR||err==EINPROGRESS)));
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                select.AddWrite(TEvent(fd,h));
             }
 
             int await_resume() {
                 if (ready) {
                     return ret;
                 } else {
-                    return write(fd, b, s);
+                    ret = write(fd, b, s);
+                    std::cerr << errno << " " << strerror(errno) << "\n";
+                    return ret;
                 }
             }
 
@@ -307,38 +364,61 @@ public:
             int fd, ret, err;
             char* b;
             size_t s;
-            bool ready;
+            bool ready=false;
         };
-        return awaitable{Loop_->Select(),Fd_,ret,err,buf,size,false};
+        return awaitable{Loop_->Select(),Fd_,ret,err,buf,size};
     }
 
     auto Accept() {
         struct awaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                loop->Select().AddRead(TEvent(fd, h));
             }
             TSocket await_resume() {
-                return TSocket{loop};
+                sockaddr_in clientaddr;
+                socklen_t len = sizeof(clientaddr);
+                // TODO: return code
+                int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
+
+                return TSocket{clientaddr, clientfd, loop};
             }
 
             TLoop* loop;
+            int fd;
         };
 
-        return awaitable{Loop_};
+        return awaitable{Loop_, Fd_};
     }
 
-    void Bind() { }
-    void Listen() { }
+    void Bind() {
+        // TODO: return code
+        auto addr = Addr_.Addr();
+        bind(Fd_, (struct sockaddr*)&addr, sizeof(addr));
+    }
+
+    void Listen() {
+        // TODO: return code
+        // TODO: backlog
+        listen(Fd_, 128);
+    }
 
 private:
     int Create() {
         /* TODO: return code */
         auto s = socket(PF_INET, SOCK_STREAM, 0);
-        int value = 1;
+        Setup(s);
+        return s;
+    }
+
+    void Setup(int s) {
+        int value;
+        value = 1;
+        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int));
+        value = 1;
         setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int));
         auto flags = fcntl(s, F_GETFL, 0);
         fcntl(s, F_SETFL, flags | O_NONBLOCK);
-        return s;
     }
 
     int Fd_;
