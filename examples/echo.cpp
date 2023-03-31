@@ -18,16 +18,23 @@ struct promise
     void unhandled_exception() {}
 };
 
-task client_handler(TSocket&& socket) {
-    char buffer[1024];
+task client_handler(TSocket&& s, TLoop* loop ) {
+    char buffer[1024] = {0};
+    TSocket socket(std::move(s));
 
     while (true) {
+        buffer[0] = '\0';
         auto size = co_await socket.Read(buffer, sizeof(buffer));
         if (size <= 0) {
-            std::cerr << "Connection closed\n";
+            std::cerr << "Connection closed " << size << "\n";
+        }
+
+        if (size > 0) {
+            std::cerr << "Received from client: " << buffer << "\n";
         }
 
         co_await socket.Write(buffer, sizeof(buffer));
+        co_await loop->Sleep(std::chrono::milliseconds(200));
     }
 
     std::cerr << "Return\n";
@@ -45,7 +52,7 @@ task server(TLoop* loop)
     while (true) {
         auto client = co_await socket.Accept();
         std::cerr << "Accepted\n";
-        client_handler(std::move(client)); // TODO: destroy coro on client disconnect
+        client_handler(std::move(client), loop); // TODO: destroy coro on client disconnect
         co_await loop->Sleep(std::chrono::milliseconds(1000));
     }
 }
@@ -62,9 +69,9 @@ task client(TLoop* loop)
 
     while (true) {
         auto size = co_await socket.Write(buffer, sizeof(buffer));
-        std::cerr << "Bytes written : " << size << "\n";
-        //auto size = co_await socket.Read(rcv, sizeof(rcv));
-        //std::cerr << "Received: " << rcv << std::endl;
+        //std::cerr << "Bytes written : " << size << "\n";
+        size = co_await socket.Read(rcv, sizeof(rcv));
+        std::cerr << "Received from server: " << rcv << std::endl;
         co_await loop->Sleep(std::chrono::milliseconds(1000));
     }
     std::cerr << "Return\n";

@@ -266,9 +266,21 @@ public:
 
     }
 
+    TSocket(const TSocket& other) = delete;
+
+    TSocket(TSocket&& other)
+        : Loop_(other.Loop_)
+        , Addr_(other.Addr_)
+        , Fd_(other.Fd_)
+    {
+        other.Fd_ = -1;
+    }
+
     ~TSocket()
     {
-        close(Fd_);
+        if (Fd_ >= 0) {
+            close(Fd_);
+        }
     }
 
     auto Connect() {
@@ -306,20 +318,23 @@ public:
 
         struct awaitable {
             bool await_ready() {
-                (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
-                std::cerr << "R: " << ready << "\n";
-                return ready;
+                return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                std::cerr << "Read Suspended\n";
+                loop->Select().AddRead(TEvent{fd,h});
             }
 
             int await_resume() {
                 if (ready) {
                     return ret;
                 } else {
-                    return read(fd, b, s);
+                    ret = read(fd, b, s);
+                    err = errno;
+                    if (err && ret < 0) {
+                        std::cerr << "Read: " << err << " " << strerror(err) << "\n";
+                    }
+                    return ret;
                 }
             }
 
@@ -338,8 +353,6 @@ public:
         if (ret < 0) {
             err = errno;
         }
-
-        std::cerr << err << " " << strerror(err) << "\n";
 
         struct awaitable {
             bool await_ready() {
@@ -380,6 +393,7 @@ public:
                 socklen_t len = sizeof(clientaddr);
                 // TODO: return code
                 int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
+                std::cerr << "Accepted : " << clientfd << " on " << fd << "\n";
 
                 return TSocket{clientaddr, clientfd, loop};
             }
