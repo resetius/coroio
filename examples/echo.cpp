@@ -47,7 +47,7 @@ task server(TLoop* loop)
 task client(TLoop* loop)
 {
     TAddress address("127.0.0.1", 8888);
-    char buffer[] = "Hello";
+    char buffer[] = "Hello\n\0";
     char rcv[1024] = {0};
 
     TSocket socket(address, loop);
@@ -55,14 +55,18 @@ task client(TLoop* loop)
     std::cerr << "Connected\n";
 
     while (true) {
-        co_await socket.Write(buffer, sizeof(buffer));
-        auto size = co_await socket.Read(rcv, sizeof(rcv));
-        std::cerr << "Received: " << rcv << std::endl;
+        auto size = co_await socket.Write(buffer, sizeof(buffer));
+        std::cerr << "Bytes written : " << size << "\n";
+        //auto size = co_await socket.Read(rcv, sizeof(rcv));
+        //std::cerr << "Received: " << rcv << std::endl;
         co_await loop->Sleep(std::chrono::milliseconds(1000));
     }
+    std::cerr << "Return\n";
 }
 
 int main() {
+    signal(SIGPIPE, SIG_IGN);
+
     TLoop loop;
 
     //server(&loop);

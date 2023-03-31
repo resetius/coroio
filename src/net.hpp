@@ -7,6 +7,8 @@
 #include <iostream>
 
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 
 #include <arpa/inet.h>
 #include <sys/select.h>
@@ -84,12 +86,15 @@ class TSelect {
     std::unordered_map<i64,TTimer> Timers_;
     std::unordered_map<i64,TEvent> Writes_;
     std::vector<TTimer> ReadyTimers_;
+    std::vector<TEvent> ReadyEvents_;
     bool Running_ = true;
     fd_set WriteFds_;
+    fd_set ErrorFds_;
 
 public:
     TSelect() {
         FD_ZERO(&WriteFds_);
+        FD_ZERO(&ErrorFds_);
     }
 
     TTimer& Add(TTimer&& timer) {
@@ -109,6 +114,7 @@ public:
         i64 max_fd = -1;
         for (auto& [k, _] : Writes_) {
             FD_SET(k, &WriteFds_);
+            FD_SET(k, &ErrorFds_);
             max_fd = std::max(max_fd, k);
         }
         select(max_fd+1, NULL, &WriteFds_, NULL, &tv); // TODO: return code
@@ -122,11 +128,32 @@ public:
         for (auto& v : ReadyTimers_) {
             Timers_.erase(v.Id());
         };
+
+        ReadyEvents_.clear();
+        for (auto& [k, v]: Writes_) {
+            if (FD_ISSET(k, &ErrorFds_)) {
+                int error;
+                socklen_t len;
+                getsockopt(k, SOL_SOCKET, SO_ERROR, &error, &len);
+                std::cerr << "Error " << strerror(error) << "\n";
+                // TODO: indicate error
+                ReadyEvents_.emplace_back(std::move(v));
+            } else if (FD_ISSET(k, &WriteFds_)) {
+                ReadyEvents_.emplace_back(std::move(v));
+            }
+        }
+        for (auto& v : ReadyEvents_) {
+            Writes_.erase(v.Id());
+        }
         return Running_;
     }
 
     auto& ReadyTimers() {
         return ReadyTimers_;
+    }
+
+    auto& ReadyEvents() {
+        return ReadyEvents_;
     }
 };
 
@@ -135,7 +162,7 @@ public:
     TAddress(const std::string& addr, int port)
     {
         inet_pton(AF_INET, addr.c_str(), &(Addr_.sin_addr));
-        Addr_.sin_port = port;
+        Addr_.sin_port = htons(port);
         Addr_.sin_family = AF_INET;
     }
 
@@ -165,6 +192,9 @@ public:
 
         while (Select_.Ready()) {
             for (auto& ev : Select_.ReadyTimers()) {
+                ev.Handle();
+            }
+            for (auto& ev : Select_.ReadyEvents()) {
                 ev.Handle();
             }
         }
@@ -212,7 +242,7 @@ public:
         // TODO: connection timeout
         struct awaitable {
             bool await_ready() {
-                return (ret >= 0 || err != EINTR);
+                return (ret >= 0 || !(err == EINTR||err==EINPROGRESS));
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -235,7 +265,7 @@ public:
         }
         struct awaitable {
             bool await_ready() {
-                return (ready = (ret >= 0 || err != EINTR));
+                return (ret >= 0 || !(err == EINTR||err==EINPROGRESS));
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -245,13 +275,41 @@ public:
                 return ret;
             }
 
-            int ret, err, ready;
+            int ret, err;
         };
-        return awaitable{ret,err,false};
+        return awaitable{ret,err};
     }
 
     auto Write(char* buf, size_t size) {
-        return std::suspend_always();
+        int ret = write(Fd_, buf, size);
+        int err = 0;
+        if (ret < 0) {
+            err = errno;
+        }
+
+        struct awaitable {
+            bool await_ready() {
+                return (ready=(ret >= 0 || !(err == EINTR||err==EINPROGRESS)));
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+            }
+
+            int await_resume() {
+                if (ready) {
+                    return ret;
+                } else {
+                    return write(fd, b, s);
+                }
+            }
+
+            TSelect& select;
+            int fd, ret, err;
+            char* b;
+            size_t s;
+            bool ready;
+        };
+        return awaitable{Loop_->Select(),Fd_,ret,err,buf,size,false};
     }
 
     auto Accept() {
