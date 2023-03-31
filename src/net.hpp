@@ -101,11 +101,41 @@ public:
     TAddress(const std::string& addr, int port) { }
 };
 
+class TLoop {
+    TSelect Select;
+    i64 TimerId = 0;
+
+public:
+    template<typename Rep, typename Period>
+    auto Sleep(std::chrono::duration<Rep,Period> duration) {
+        auto now = std::chrono::steady_clock::now();
+        auto next= now+duration;
+        TTimer t(TimerId++, next);
+        return Select.Add(std::move(t)).Awaitable();
+    }
+
+    void Loop() {
+        std::vector<TEvent> events;
+
+        while (Select.Ready()) {
+            for (auto& ev : Select.ReadyTimers()) {
+                ev.Handle();
+            }
+        }
+    }
+};
+
 class TSocket {
 public:
-    TSocket(TAddress&& addr) { }
-    TSocket(const TAddress& addr) { }
-    TSocket() {
+    TSocket(TAddress&& addr, TLoop* loop)
+        : Loop_(loop)
+    { }
+    TSocket(const TAddress& addr, TLoop* loop)
+        : Loop_(loop)
+    { }
+    TSocket(TLoop* loop)
+        : Loop_(loop)
+    {
 
     }
     auto Connect() {
@@ -141,17 +171,17 @@ public:
 
     auto Accept() {
         struct awaitable {
-            std::coroutine_handle<>* H;
-
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
             }
             TSocket await_resume() {
-                return TSocket{};
+                return TSocket{loop};
             }
+
+            TLoop* loop;
         };
 
-        return awaitable{};
+        return awaitable{Loop_};
     }
 
     void Bind() { }
@@ -159,30 +189,7 @@ public:
 
 private:
     int Fd_;
-};
-
-class TLoop {
-    TSelect Select;
-    i64 TimerId = 0;
-
-public:
-    template<typename Rep, typename Period>
-    auto Sleep(std::chrono::duration<Rep,Period> duration) {
-        auto now = std::chrono::steady_clock::now();
-        auto next= now+duration;
-        TTimer t(TimerId++, next);
-        return Select.Add(std::move(t)).Awaitable();
-    }
-
-    void Loop() {
-        std::vector<TEvent> events;
-
-        while (Select.Ready()) {
-            for (auto& ev : Select.ReadyTimers()) {
-                ev.Handle();
-            }
-        }
-    }
+    TLoop* Loop_;
 };
 
 } /* namespace NNet */

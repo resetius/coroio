@@ -34,7 +34,7 @@ task client_handler(TSocket&& socket) {
 task server(TLoop* loop)
 {
     TAddress address("127.0.0.1", 8888);
-    TSocket socket(std::move(address));
+    TSocket socket(std::move(address), loop);
     socket.Bind();
     socket.Listen();
 
@@ -51,7 +51,7 @@ task client(TLoop* loop)
     char rcv[1024] = {0};
 
     while (true) {
-        TSocket socket(address);
+        TSocket socket(address, loop);
         co_await socket.Connect();
         co_await socket.Write(buffer, sizeof(buffer));
         auto size = co_await socket.Read(rcv, sizeof(rcv));
