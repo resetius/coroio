@@ -321,15 +321,14 @@ public:
     }
 
     auto Read(char* buf, size_t size) {
-        int ret = read(Fd_, buf, size);
-        int err = 0;
-        if (ret < 0) {
-            err = errno;
-        }
-        // std::cerr << err << " " << strerror(err) << "\n";
-
         struct awaitable {
+            void run() {
+                ret = read(fd, b, s);
+                if (ret < 0) { err = errno; }
+            }
+
             bool await_ready() {
+                run();
                 return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
             }
 
@@ -338,16 +337,10 @@ public:
             }
 
             int await_resume() {
-                if (ready) {
-                    return ret;
-                } else {
-                    ret = read(fd, b, s);
-                    err = errno;
-                    if (err && ret < 0) {
-                        std::cerr << "Read: " << err << " " << strerror(err) << "\n";
-                    }
-                    return ret;
+                if (!ready) {
+                    run();
                 }
+                return ret;
             }
 
             TLoop* loop;
@@ -356,18 +349,18 @@ public:
             int ret, err;
             bool ready;
         };
-        return awaitable{Loop_,Fd_,buf,size,ret,err,false};
+        return awaitable{Loop_,Fd_,buf,size};
     }
 
     auto Write(char* buf, size_t size) {
-        int ret = write(Fd_, buf, size);
-        int err = 0;
-        if (ret < 0) {
-            err = errno;
-        }
-
         struct awaitable {
+            void run() {
+                ret = write(fd, b, s);
+                if (ret < 0) { err = errno; }
+            }
+
             bool await_ready() {
+                run();
                 return (ready=(ret >= 0 || !(err == EINTR||err==EINTR||err==EINPROGRESS)));
             }
 
@@ -376,22 +369,20 @@ public:
             }
 
             int await_resume() {
-                if (ready) {
-                    return ret;
-                } else {
-                    ret = write(fd, b, s);
-                    std::cerr << errno << " " << strerror(errno) << "\n";
-                    return ret;
+                if (!ready) {
+                    run();
                 }
+                return ret;
             }
 
             TSelect& select;
-            int fd, ret, err;
+            int fd;
             char* b;
             size_t s;
+            int ret, err;
             bool ready=false;
         };
-        return awaitable{Loop_->Select(),Fd_,ret,err,buf,size};
+        return awaitable{Loop_->Select(),Fd_,buf,size};
     }
 
     auto Accept() {
@@ -446,6 +437,9 @@ private:
         auto flags = fcntl(s, F_GETFL, 0);
         fcntl(s, F_SETFL, flags | O_NONBLOCK);
     }
+
+    template<typename T>
+    struct TAwaitable { };
 
     int Fd_;
     TLoop* Loop_;
