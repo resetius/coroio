@@ -321,68 +321,31 @@ public:
     }
 
     auto Read(char* buf, size_t size) {
-        struct awaitable {
+        struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             void run() {
                 ret = read(fd, b, s);
                 if (ret < 0) { err = errno; }
             }
 
-            bool await_ready() {
-                run();
-                return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
-            }
-
             void await_suspend(std::coroutine_handle<> h) {
                 loop->Select().AddRead(TEvent{fd,h});
             }
-
-            int await_resume() {
-                if (!ready) {
-                    run();
-                }
-                return ret;
-            }
-
-            TLoop* loop;
-            int fd;
-            char* b; size_t s;
-            int ret, err;
-            bool ready;
         };
-        return awaitable{Loop_,Fd_,buf,size};
+        return TAwaitableRead{Loop_,Fd_,buf,size};
     }
 
     auto Write(char* buf, size_t size) {
-        struct awaitable {
+        struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             void run() {
                 ret = write(fd, b, s);
                 if (ret < 0) { err = errno; }
             }
 
-            bool await_ready() {
-                run();
-                return (ready=(ret >= 0 || !(err == EINTR||err==EINTR||err==EINPROGRESS)));
-            }
-
             void await_suspend(std::coroutine_handle<> h) {
-                select.AddWrite(TEvent(fd,h));
+                loop->Select().AddWrite(TEvent(fd,h));
             }
-
-            int await_resume() {
-                if (!ready) {
-                    run();
-                }
-                return ret;
-            }
-
-            TSelect& select;
-            int fd;
-            char* b;
-            size_t s;
-            int ret, err;
-            bool ready=false;
         };
-        return awaitable{Loop_->Select(),Fd_,buf,size};
+        return TAwaitableWrite{Loop_,Fd_,buf,size};
     }
 
     auto Accept() {
@@ -439,7 +402,25 @@ private:
     }
 
     template<typename T>
-    struct TAwaitable { };
+    struct TAwaitable { 
+        bool await_ready() {
+            ((T*)this)->run();
+            return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
+        }
+
+        int await_resume() {
+            if (!ready) {
+                ((T*)this)->run();
+            }
+            return ret;
+        }
+
+        TLoop* loop;
+        int fd;
+        char* b; size_t s;
+        int ret, err;
+        bool ready;
+    };
 
     int Fd_;
     TLoop* Loop_;
