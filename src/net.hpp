@@ -22,6 +22,22 @@ using i64 = int64_t;
 
 namespace NNet {
 
+struct TVoidPromise;
+
+struct TSimpleTask : std::coroutine_handle<TVoidPromise>
+{
+    using promise_type = TVoidPromise;
+};
+
+struct TVoidPromise
+{
+    TSimpleTask get_return_object() { return {}; }
+    std::suspend_never initial_suspend() { return {}; }
+    std::suspend_never final_suspend() noexcept { return {}; }
+    void return_void() {}
+    void unhandled_exception() {}
+};
+
 class TEvent {
 public:
     using TTime = std::chrono::steady_clock::time_point;
@@ -79,11 +95,11 @@ class TSelect {
     timeval Timeval() const {
         auto now = std::chrono::steady_clock::now();
         if (now>Deadline_) {
-            return {0,1000};
+            return {0,0};
         } else {
             auto duration = (Deadline_-now);
-            if (duration > std::chrono::milliseconds(1000)) {
-                duration = std::chrono::milliseconds(1000);
+            if (duration > std::chrono::milliseconds(10000)) {
+                duration = std::chrono::milliseconds(10000);
             }
             auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
             duration -= seconds;
@@ -232,12 +248,18 @@ public:
     }
 
     void Loop() {
-        std::vector<TEvent> events;
-
         while (Select_.Ready()) {
-            for (auto& ev : Select_.ReadyEvents()) {
-                ev.Handle();
-            }
+            HandleEvents();
+        }
+    }
+
+    void OneStep() {
+        Select_.Ready();
+    }
+
+    void HandleEvents() {
+        for (auto& ev : Select_.ReadyEvents()) {
+            ev.Handle();
         }
     }
 
