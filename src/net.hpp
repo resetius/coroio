@@ -214,7 +214,13 @@ public:
         : Addr_(addr)
     { }
 
+    TAddress() = default;
+
     auto Addr() const { return Addr_; }
+
+    bool operator == (const TAddress& other) const {
+        return memcmp(&Addr_, &other.Addr_, sizeof(Addr_)) == 0;
+    }
 
 private:
     struct sockaddr_in Addr_;
@@ -290,6 +296,8 @@ public:
         , Fd_(Create())
     { }
 
+    TSocket() = default;
+
     TSocket(const TSocket& other) = delete;
 
     TSocket(TSocket&& other)
@@ -305,6 +313,14 @@ public:
         if (Fd_ >= 0) {
             close(Fd_);
         }
+    }
+
+    TSocket& operator=(TSocket&& other) {
+        Loop_ = other.Loop_;
+        Addr_ = other.Addr_;
+        Fd_ = other.Fd_;
+        other.Fd_ = -1;
+        return *this;
     }
 
     auto Connect() {
@@ -371,7 +387,6 @@ public:
                 socklen_t len = sizeof(clientaddr);
                 // TODO: return code
                 int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
-                std::cerr << "Accepted : " << clientfd << " on " << fd << "\n";
 
                 return TSocket{clientaddr, clientfd, loop};
             }
@@ -393,6 +408,10 @@ public:
         // TODO: return code
         // TODO: backlog
         listen(Fd_, 128);
+    }
+
+    const TAddress& Addr() const {
+        return Addr_;
     }
 
 private:

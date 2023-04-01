@@ -28,6 +28,34 @@ void test_listen(void**) {
     socket.Listen();
 }
 
+void test_accept(void**) {
+    TLoop loop;
+    TSocket socket(TAddress{"127.0.0.1", 8888}, &loop);
+    TSocket clientServer{};
+    socket.Bind();
+    socket.Listen();
+
+    TSimpleTask h1 = [](TLoop* loop) -> TSimpleTask 
+    {
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop);
+        co_await clientSocket.Connect();
+        co_return;
+    }(&loop);
+
+    TSimpleTask h2 = [](TSocket* socket, TSocket* clientServer) -> TSimpleTask 
+    {
+        *clientServer = std::move(co_await socket->Accept());
+        co_return;
+    }(&socket, &clientServer);
+
+    loop.OneStep();
+    loop.HandleEvents(); 
+
+    in_addr addr1 = clientServer.Addr().Addr().sin_addr;
+    in_addr addr2 = socket.Addr().Addr().sin_addr;
+    assert_true(memcmp(&addr1, &addr2, 4)==0);
+}
+
 void test_timeout(void**) {
     TLoop loop;
     auto now = std::chrono::steady_clock::now();
@@ -48,7 +76,8 @@ int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
         cmocka_unit_test(test_listen),
-        cmocka_unit_test(test_timeout)
+        cmocka_unit_test(test_timeout),
+        cmocka_unit_test(test_accept)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
