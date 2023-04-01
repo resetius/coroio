@@ -4,13 +4,18 @@
 using namespace NNet;
 
 TSimpleTask client_handler(TSocket socket, TLoop* loop) {
-    char buffer[128] = {0};
+    char buffer[128] = {0}; ssize_t size = 0;
 
-    while (true) {
-        auto size = co_await socket.ReadSome(buffer, sizeof(buffer));
-        std::cerr << "Received from client: " << buffer << " (" << size << ") bytes \n";
-
-        co_await socket.WriteSome(buffer, sizeof(buffer));
+    try {
+        while ((size = co_await socket.ReadSome(buffer, sizeof(buffer))) > 0) {
+            std::cerr << "Received from client: '" << std::string_view(buffer, size) << "' (" << size << ") bytes \n";
+            co_await socket.WriteSome(buffer, size);
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "Exception: " << ex.what() << "\n";
+    }
+    if (size == 0) { 
+        std::cerr << "Client disconnected\n";
     }
     co_return;
 }
@@ -61,4 +66,5 @@ int main(int argc, char** argv) {
     }
 
     loop.Loop();
+    return 0;
 }
