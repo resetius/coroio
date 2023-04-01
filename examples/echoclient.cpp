@@ -7,14 +7,14 @@ TSimpleTask client(TLoop* loop, TAddress addr)
 {
     char out[128] = {0};
     char in[128] = {0};
-    ssize_t size = 0;
+    ssize_t size = 1;
 
     try {
         TSocket input{TAddress{}, 0, loop}; // stdin
         TSocket socket{addr, loop};
 
         co_await socket.Connect();
-        while ((size = co_await input.ReadSome(out, sizeof(out)))) {
+        while (size && (size = co_await input.ReadSome(out, sizeof(out)))) {
             co_await socket.WriteSome(out, size);
             size = co_await socket.ReadSome(in, sizeof(in));
             std::cout << "Received from server: " << std::string_view(in, size) << " (" << size << ") bytes \n";
@@ -22,6 +22,7 @@ TSimpleTask client(TLoop* loop, TAddress addr)
     } catch (const std::exception& ex) {
         std::cout << "Exception: " << ex.what() << "\n";
     }
+    co_return;
 }
 
 int main(int argc, char** argv) {
