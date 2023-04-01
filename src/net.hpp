@@ -166,7 +166,7 @@ public:
             FD_SET(k, &ReadFds_);
             maxFd = std::max(maxFd, k);
         }
-        select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv); // TODO: return code
+        if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }
         Deadline_ = TEvent::TTime::max();
         auto now = std::chrono::steady_clock::now();
 
