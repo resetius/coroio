@@ -56,7 +56,7 @@ void test_accept(void**) {
     assert_true(memcmp(&addr1, &addr2, 4)==0);
 }
 
-void test_connection_refused(void**) {
+void test_connection_refused_on_write(void**) {
     TLoop loop;
     int err = 0;
 
@@ -77,8 +77,12 @@ void test_connection_refused(void**) {
     loop.HandleEvents(); 
 
     assert_int_equal(err, ECONNREFUSED);
+}
 
-    err = 0;
+void test_connection_refused_on_read(void**) {
+    TLoop loop;
+    int err = 0;
+
     TSimpleTask h2 = [](TLoop* loop, int* err) -> TSimpleTask 
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop);
@@ -120,7 +124,8 @@ int main() {
         cmocka_unit_test(test_listen),
         cmocka_unit_test(test_timeout),
         cmocka_unit_test(test_accept),
-        cmocka_unit_test(test_connection_refused)
+        cmocka_unit_test(test_connection_refused_on_write),
+        cmocka_unit_test(test_connection_refused_on_read),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
