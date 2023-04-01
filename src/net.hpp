@@ -24,7 +24,7 @@ namespace NNet {
 class TSystemError: public std::exception
 {
 public:
-    TSystemError() 
+    TSystemError()
         : Errno_(errno)
         , Message_(strerror(Errno_))
     { }
@@ -107,7 +107,6 @@ class TSelect {
     std::unordered_map<int,TEvent> Reads_;
     std::priority_queue<TEvent> Timers_;
     std::vector<TEvent> ReadyEvents_;
-    bool Running_ = true;
     TEvent::TTime Deadline_ = TEvent::TTime::max();
     fd_set ReadFds_;
     fd_set WriteFds_;
@@ -152,7 +151,7 @@ public:
         Reads_.emplace(fd, std::move(event));
     }
 
-    bool Ready() {
+    void Poll() {
         auto tv = Timeval();
         int maxFd = -1;
 
@@ -192,8 +191,6 @@ public:
             ReadyEvents_.emplace_back(std::move(Timers_.top()));
             Timers_.pop();
         }
-
-        return Running_;
     }
 
     auto& ReadyEvents() {
@@ -228,6 +225,7 @@ private:
 
 class TLoop {
     TSelect Select_;
+    bool Running_ = true;
 
 public:
     template<typename Rep, typename Period>
@@ -252,13 +250,18 @@ public:
     }
 
     void Loop() {
-        while (Select_.Ready()) {
+        while (Running_) {
+            Select_.Poll();
             HandleEvents();
         }
     }
 
+    void Stop() {
+        Running_ = false;
+    }
+
     void OneStep() {
-        Select_.Ready();
+        Select_.Poll();
     }
 
     void HandleEvents() {
@@ -436,7 +439,7 @@ private:
     }
 
     template<typename T>
-    struct TAwaitable {         
+    struct TAwaitable {
         bool await_ready() {
             SafeRun();
             return (ready = (ret >= 0 || !SkipError(err)));

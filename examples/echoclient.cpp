@@ -22,6 +22,7 @@ TSimpleTask client(TLoop* loop, TAddress addr)
     } catch (const std::exception& ex) {
         std::cout << "Exception: " << ex.what() << "\n";
     }
+    loop->Stop();
     co_return;
 }
 
@@ -32,7 +33,7 @@ int main(int argc, char** argv) {
     if (argc > 1) { addr = argv[1]; }
     if (addr.empty()) { addr = "127.0.0.1"; }
     if (argc > 2) { port = atoi(argv[2]); }
-    if (port == 0) { port = 8888; }    
+    if (port == 0) { port = 8888; }
 
     TAddress address{addr, port};
     TLoop loop;
