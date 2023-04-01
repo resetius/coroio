@@ -22,6 +22,27 @@ using i64 = int64_t;
 
 namespace NNet {
 
+class TSystemError: public std::exception
+{
+public:
+    TSystemError() 
+        : Errno_(errno)
+        , Message_(strerror(Errno_))
+    { }
+
+    const char* what() const noexcept {
+        return Message_.c_str();
+    }
+
+    int Errno() const {
+        return Errno_;
+    }
+
+private:
+    int Errno_;
+    std::string Message_;
+};
+
 struct TVoidPromise;
 
 struct TSimpleTask : std::coroutine_handle<TVoidPromise>
@@ -90,7 +111,6 @@ class TSelect {
     TEvent::TTime Deadline_ = TEvent::TTime::max();
     fd_set ReadFds_;
     fd_set WriteFds_;
-    fd_set ErrorFds_;
 
     timeval Timeval() const {
         auto now = std::chrono::steady_clock::now();
@@ -115,7 +135,6 @@ public:
     TSelect() {
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
-        FD_ZERO(&ErrorFds_);
     }
 
     void AddTimer(TEvent&& timer) {
@@ -139,46 +158,29 @@ public:
 
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
-        FD_ZERO(&ErrorFds_);
 
         for (auto& [k, _] : Writes_) {
             FD_SET(k, &WriteFds_);
-            FD_SET(k, &ErrorFds_);
             max_fd = std::max(max_fd, k);
         }
         // TODO: remove copy paste
         for (auto& [k, _] : Reads_) {
             FD_SET(k, &ReadFds_);
-            FD_SET(k, &ErrorFds_);
             max_fd = std::max(max_fd, k);
         }
-        select(max_fd+1, &ReadFds_, &WriteFds_, &ErrorFds_, &tv); // TODO: return code
+        select(max_fd+1, &ReadFds_, &WriteFds_, nullptr, &tv); // TODO: return code
         Deadline_ = TEvent::TTime::max();
         auto now = std::chrono::steady_clock::now();
 
         ReadyEvents_.clear();
 
         for (auto& [k, v]: Writes_) {
-            if (FD_ISSET(k, &ErrorFds_)) {
-                int error;
-                socklen_t len;
-                getsockopt(k, SOL_SOCKET, SO_ERROR, &error, &len);
-                std::cerr << "Error " << strerror(error) << "\n";
-                // TODO: indicate error
-                ReadyEvents_.emplace_back(std::move(v));
-            } else if (FD_ISSET(k, &WriteFds_)) {
+            if (FD_ISSET(k, &WriteFds_)) {
                 ReadyEvents_.emplace_back(std::move(v));
             }
         }
         for (auto& [k, v]: Reads_) {
-            if (FD_ISSET(k, &ErrorFds_)) {
-                int error;
-                socklen_t len;
-                getsockopt(k, SOL_SOCKET, SO_ERROR, &error, &len);
-                std::cerr << "Error " << strerror(error) << "\n";
-                // TODO: indicate error
-                ReadyEvents_.emplace_back(std::move(v));
-            } else if (FD_ISSET(k, &ReadFds_)) {
+            if (FD_ISSET(k, &ReadFds_)) {
                 ReadyEvents_.emplace_back(std::move(v));
             }
         }
@@ -435,15 +437,22 @@ private:
     template<typename T>
     struct TAwaitable { 
         bool await_ready() {
-            ((T*)this)->run();            
+            SafeRun();
             return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
         }
 
         int await_resume() {
             if (!ready) {
-                ((T*)this)->run();
+                SafeRun();
             }
             return ret;
+        }
+
+        void SafeRun() {
+            ((T*)this)->run();
+            if (ret < 0 && !(err == EINTR||err==EAGAIN||err==EINPROGRESS)) {
+                throw TSystemError();
+            }
         }
 
         TLoop* loop;

@@ -56,6 +56,48 @@ void test_accept(void**) {
     assert_true(memcmp(&addr1, &addr2, 4)==0);
 }
 
+void test_connection_refused(void**) {
+    TLoop loop;
+    int err = 0;
+
+    TSimpleTask h1 = [](TLoop* loop, int* err) -> TSimpleTask 
+    {
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop);
+        char buffer[] = "test";
+        try {
+            co_await clientSocket.Connect();
+            co_await clientSocket.Write(buffer, sizeof(buffer));
+        } catch (const TSystemError& ex) { 
+            *err = ex.Errno();
+        }
+        co_return;
+    }(&loop, &err);
+
+    loop.OneStep();
+    loop.HandleEvents(); 
+
+    assert_int_equal(err, ECONNREFUSED);
+
+    err = 0;
+    TSimpleTask h2 = [](TLoop* loop, int* err) -> TSimpleTask 
+    {
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop);
+        char buffer[] = "test";
+        try {
+            co_await clientSocket.Connect();
+            co_await clientSocket.Read(buffer, sizeof(buffer));
+        } catch (const TSystemError& ex) { 
+            *err = ex.Errno();
+        }
+        co_return;
+    }(&loop, &err);
+
+    loop.OneStep();
+    loop.HandleEvents(); 
+
+    assert_int_equal(err, ECONNREFUSED);
+}
+
 void test_timeout(void**) {
     TLoop loop;
     auto now = std::chrono::steady_clock::now();
@@ -77,7 +119,8 @@ int main() {
         cmocka_unit_test(test_addr),
         cmocka_unit_test(test_listen),
         cmocka_unit_test(test_timeout),
-        cmocka_unit_test(test_accept)
+        cmocka_unit_test(test_accept),
+        cmocka_unit_test(test_connection_refused)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
