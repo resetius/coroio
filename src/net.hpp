@@ -350,7 +350,7 @@ public:
         return awaitable{Loop_->Select(), ret,err,Fd_};
     }
 
-    auto Read(char* buf, size_t size) {
+    auto ReadSome(char* buf, size_t size) {
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             void run() {
                 ret = read(fd, b, s);
@@ -364,7 +364,7 @@ public:
         return TAwaitableRead{Loop_,Fd_,buf,size};
     }
 
-    auto Write(char* buf, size_t size) {
+    auto WriteSome(char* buf, size_t size) {
         struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             void run() {
                 ret = write(fd, b, s);

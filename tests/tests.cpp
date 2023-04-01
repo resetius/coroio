@@ -66,7 +66,7 @@ void test_connection_refused_on_write(void**) {
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
-            co_await clientSocket.Write(buffer, sizeof(buffer));
+            co_await clientSocket.WriteSome(buffer, sizeof(buffer));
         } catch (const TSystemError& ex) { 
             *err = ex.Errno();
         }
@@ -89,7 +89,7 @@ void test_connection_refused_on_read(void**) {
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
-            co_await clientSocket.Read(buffer, sizeof(buffer));
+            co_await clientSocket.ReadSome(buffer, sizeof(buffer));
         } catch (const TSystemError& ex) { 
             *err = ex.Errno();
         }

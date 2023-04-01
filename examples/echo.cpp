@@ -9,7 +9,7 @@ TSimpleTask client_handler(TSocket&& s, TLoop* loop ) {
 
     while (true) {
         buffer[0] = '\0';
-        auto size = co_await socket.Read(buffer, sizeof(buffer));
+        auto size = co_await socket.ReadSome(buffer, sizeof(buffer));
         if (size <= 0) {
             std::cerr << "Connection closed " << size << "\n";
         }
@@ -18,7 +18,7 @@ TSimpleTask client_handler(TSocket&& s, TLoop* loop ) {
             std::cerr << "Received from client: " << buffer << "\n";
         }
 
-        co_await socket.Write(buffer, sizeof(buffer));
+        co_await socket.WriteSome(buffer, sizeof(buffer));
         //co_await loop->Sleep(std::chrono::milliseconds(10));
     }
 
@@ -53,9 +53,9 @@ TSimpleTask client(TLoop* loop)
     co_await socket.Connect();
     std::cerr << "Connected\n";
     while (true) {
-        auto size = co_await socket.Write(buffer, sizeof(buffer));
+        auto size = co_await socket.WriteSome(buffer, sizeof(buffer));
         //std::cerr << "Bytes written : " << size << "\n";
-        size = co_await socket.Read(rcv, sizeof(rcv));
+        size = co_await socket.ReadSome(rcv, sizeof(rcv));
         std::cerr << "Received from server: " << rcv << std::endl;
         co_await loop->Sleep(std::chrono::milliseconds(1000));
     }
