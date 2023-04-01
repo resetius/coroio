@@ -435,10 +435,10 @@ private:
     }
 
     template<typename T>
-    struct TAwaitable { 
+    struct TAwaitable {         
         bool await_ready() {
             SafeRun();
-            return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
+            return (ready = (ret >= 0 || !SkipError(err)));
         }
 
         int await_resume() {
@@ -448,9 +448,13 @@ private:
             return ret;
         }
 
+        bool SkipError(int err) {
+            return err == EINTR||err==EAGAIN||err==EINPROGRESS;
+        }
+
         void SafeRun() {
             ((T*)this)->run();
-            if (ret < 0 && !(err == EINTR||err==EAGAIN||err==EINPROGRESS)) {
+            if (ret < 0 && !SkipError(err)) {
                 throw TSystemError();
             }
         }
