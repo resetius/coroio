@@ -13,6 +13,7 @@
 
 #include <arpa/inet.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -420,11 +421,15 @@ private:
     }
 
     void Setup(int s) {
-        int value;
-        value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) { throw TSystemError(); }
-        value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) { throw TSystemError(); }
+        struct stat statbuf;
+        fstat(s, &statbuf);
+        if (S_ISSOCK(statbuf.st_mode)) {
+            int value;
+            value = 1;
+            if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) { throw TSystemError(); }
+            value = 1;
+            if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) { throw TSystemError(); }
+        }
         auto flags = fcntl(s, F_GETFL, 0);
         if (flags < 0) { throw TSystemError(); }
         if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) { throw TSystemError(); }

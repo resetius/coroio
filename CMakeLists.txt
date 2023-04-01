@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(timers examples/timers.cpp)
 add_executable(echotest examples/echotest.cpp)
 add_executable(echoserver examples/echoserver.cpp)
+add_executable(echoclient examples/echoclient.cpp)
 
 add_executable(tests tests/tests.cpp)
 target_include_directories(tests PRIVATE ${CMOCKA_INCLUDE_DIRS})
