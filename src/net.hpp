@@ -198,8 +198,6 @@ public:
         : Addr_(addr)
     { }
 
-    TAddress() { /*TODO:remove*/ }
-
     auto Addr() const { return Addr_; }
 
 private:
@@ -269,14 +267,6 @@ public:
         , Addr_(addr)
         , Fd_(Create())
     { }
-
-    TSocket(TLoop* loop)
-        : Loop_(loop)
-        , Addr_{}
-        , Fd_(Create())
-    {
-
-    }
 
     TSocket(const TSocket& other) = delete;
 
@@ -404,7 +394,7 @@ private:
     template<typename T>
     struct TAwaitable { 
         bool await_ready() {
-            ((T*)this)->run();
+            ((T*)this)->run();            
             return (ready = (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS)));
         }
 

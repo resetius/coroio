@@ -68,7 +68,6 @@ task client(TLoop* loop)
     TSocket socket(address, loop);
     co_await socket.Connect();
     std::cerr << "Connected\n";
-
     while (true) {
         auto size = co_await socket.Write(buffer, sizeof(buffer));
         //std::cerr << "Bytes written : " << size << "\n";
