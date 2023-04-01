@@ -31,27 +31,27 @@ void test_listen(void**) {
 void test_accept(void**) {
     TLoop loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, &loop);
-    TSocket clientServer{};
+    TSocket clientSocket{};
     socket.Bind();
     socket.Listen();
 
     TSimpleTask h1 = [](TLoop* loop) -> TSimpleTask 
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop);
-        co_await clientSocket.Connect();
+        TSocket client(TAddress{"127.0.0.1", 8888}, loop);
+        co_await client.Connect();
         co_return;
     }(&loop);
 
-    TSimpleTask h2 = [](TSocket* socket, TSocket* clientServer) -> TSimpleTask 
+    TSimpleTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TSimpleTask 
     {
-        *clientServer = std::move(co_await socket->Accept());
+        *clientSocket = std::move(co_await socket->Accept());
         co_return;
-    }(&socket, &clientServer);
+    }(&socket, &clientSocket);
 
     loop.OneStep();
     loop.HandleEvents(); 
 
-    in_addr addr1 = clientServer.Addr().Addr().sin_addr;
+    in_addr addr1 = clientSocket.Addr().Addr().sin_addr;
     in_addr addr2 = socket.Addr().Addr().sin_addr;
     assert_true(memcmp(&addr1, &addr2, 4)==0);
 }
