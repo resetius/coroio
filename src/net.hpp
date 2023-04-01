@@ -5,6 +5,7 @@
 #include <coroutine>
 #include <chrono>
 #include <iostream>
+#include <queue>
 
 #include <cstdint>
 #include <cstdio>
@@ -23,8 +24,16 @@ namespace NNet {
 
 class TEvent {
 public:
+    using TTime = std::chrono::steady_clock::time_point;
+
     TEvent(i64 id, std::coroutine_handle<> h)
         : Id_(id)
+        , H_(h)
+    { }
+
+    TEvent(TTime deadline, i64 id, std::coroutine_handle<> h)
+        : Id_(id)
+        , Deadline_(deadline)
         , H_(h)
     { }
 
@@ -36,72 +45,66 @@ public:
         return Id_;
     }
 
-private:
-    i64 Id_;
-    std::coroutine_handle<> H_;
-};
-
-class TTimer {
-public:
-    using TTime = std::chrono::steady_clock::time_point;
-
-    TTimer(i64 id, TTime end)
-        : Id_(id)
-        , EndTime_(end)
-    { }
-
-    i64 Id() const {
-        return Id_;
+    auto Deadline() const {
+        return Deadline_;
     }
 
-    void Handle() {
-        H_.resume();
-    }
-
-    auto Awaitable() {
-        struct awaitable {
-            std::coroutine_handle<>* H;
-
-            bool await_ready() const { return false; }
-            void await_suspend(std::coroutine_handle<> h) {
-                *H = h;
-            }
-            void await_resume() { }
-        };
-
-        return awaitable{&H_};
-    }
-
-    auto EndTime() const {
-        return EndTime_;
+    bool operator<(const TEvent& e) const {
+        if (Deadline_ < e.Deadline_) {
+            return true;
+        } else if (Deadline_ == e.Deadline_) {
+            return Id_<e.Id_;
+        } else {
+            return false;
+        }
     }
 
 private:
     i64 Id_;
-    TTime EndTime_;
+    TTime Deadline_;
     std::coroutine_handle<> H_;
 };
 
 class TSelect {
-    std::unordered_map<i64,TTimer> Timers_;
     std::unordered_map<i64,TEvent> Writes_;
     std::unordered_map<i64,TEvent> Reads_;
-    std::vector<TTimer> ReadyTimers_;
+    std::priority_queue<TEvent> Timers_;
     std::vector<TEvent> ReadyEvents_;
     bool Running_ = true;
+    TEvent::TTime Deadline_ = TEvent::TTime::max();
     fd_set ReadFds_;
     fd_set WriteFds_;
     fd_set ErrorFds_;
 
+    timeval Timeval() const {
+        auto now = std::chrono::steady_clock::now();
+        if (now>Deadline_) {
+            return {0,1000};
+        } else {
+            auto duration = (Deadline_-now);
+            if (duration > std::chrono::milliseconds(1000)) {
+                duration = std::chrono::milliseconds(1000);
+            }
+            auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+            duration -= seconds;
+            auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
+            timeval tv;
+            tv.tv_sec = seconds.count();
+            tv.tv_usec = microseconds.count();
+            return tv;
+        }
+    }
+
 public:
     TSelect() {
+        FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
         FD_ZERO(&ErrorFds_);
     }
 
-    TTimer& Add(TTimer&& timer) {
-        auto id = timer.Id();
-        return Timers_.emplace(id, std::move(timer)).first->second;
+    void AddTimer(TEvent&& timer) {
+        Deadline_ = std::min(Deadline_, timer.Deadline());
+        Timers_.emplace(std::move(timer));
     }
 
     void AddWrite(TEvent&& event) {
@@ -115,10 +118,13 @@ public:
     }
 
     bool Ready() {
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100;
+        auto tv = Timeval();
         i64 max_fd = -1;
+
+        FD_ZERO(&ReadFds_);
+        FD_ZERO(&WriteFds_);
+        FD_ZERO(&ErrorFds_);
+
         for (auto& [k, _] : Writes_) {
             FD_SET(k, &WriteFds_);
             FD_SET(k, &ErrorFds_);
@@ -131,18 +137,11 @@ public:
             max_fd = std::max(max_fd, k);
         }
         select(max_fd+1, &ReadFds_, &WriteFds_, &ErrorFds_, &tv); // TODO: return code
+        Deadline_ = TEvent::TTime::max();
         auto now = std::chrono::steady_clock::now();
-        ReadyTimers_.clear();
-        for (auto& [k, v]: Timers_) {
-            if (now >= v.EndTime()) {
-                ReadyTimers_.emplace_back(std::move(v));
-            }
-        }
-        for (auto& v : ReadyTimers_) {
-            Timers_.erase(v.Id());
-        };
 
         ReadyEvents_.clear();
+
         for (auto& [k, v]: Writes_) {
             if (FD_ISSET(k, &ErrorFds_)) {
                 int error;
@@ -172,11 +171,13 @@ public:
             Writes_.erase(v.Id());
             Reads_.erase(v.Id());
         }
-        return Running_;
-    }
+        // TODO: timer id collision with fd
+        while (!Timers_.empty()&&Timers_.top().Deadline() <= now) {
+            ReadyEvents_.emplace_back(std::move(Timers_.top()));
+            Timers_.pop();
+        }
 
-    auto& ReadyTimers() {
-        return ReadyTimers_;
+        return Running_;
     }
 
     auto& ReadyEvents() {
@@ -214,17 +215,28 @@ public:
     auto Sleep(std::chrono::duration<Rep,Period> duration) {
         auto now = std::chrono::steady_clock::now();
         auto next= now+duration;
-        TTimer t(TimerId_++, next);
-        return Select_.Add(std::move(t)).Awaitable();
+        struct awaitable {
+            bool await_ready() {
+                return false;
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                loop->Select().AddTimer(TEvent{n,id,h});
+            }
+
+            void await_resume() { }
+
+            TLoop* loop;
+            i64 id;
+            TEvent::TTime n;
+        };
+        return awaitable{this,TimerId_++,next};
     }
 
     void Loop() {
         std::vector<TEvent> events;
 
         while (Select_.Ready()) {
-            for (auto& ev : Select_.ReadyTimers()) {
-                ev.Handle();
-            }
             for (auto& ev : Select_.ReadyEvents()) {
                 ev.Handle();
             }

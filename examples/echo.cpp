@@ -34,7 +34,7 @@ task client_handler(TSocket&& s, TLoop* loop ) {
         }
 
         co_await socket.Write(buffer, sizeof(buffer));
-        co_await loop->Sleep(std::chrono::milliseconds(200));
+        //co_await loop->Sleep(std::chrono::milliseconds(10));
     }
 
     std::cerr << "Return\n";
@@ -48,12 +48,13 @@ task server(TLoop* loop)
     TSocket socket(std::move(address), loop);
     socket.Bind();
     socket.Listen();
+    int i = 1;
 
     while (true) {
         auto client = co_await socket.Accept();
-        std::cerr << "Accepted\n";
-        client_handler(std::move(client), loop); // TODO: destroy coro on client disconnect
-        co_await loop->Sleep(std::chrono::milliseconds(1000));
+        std::cerr << "Accepted " << i++ << "\n";
+        task h = client_handler(std::move(client), loop); // TODO: destroy coro on client disconnect
+        // co_await loop->Sleep(std::chrono::milliseconds(1000));
     }
 }
 
