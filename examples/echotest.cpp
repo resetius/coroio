@@ -30,12 +30,11 @@ TSimpleTask server(TLoop* loop)
 
 TSimpleTask client(TLoop* loop, int clientId)
 {
-    TAddress address("127.0.0.1", 8888);
     char buffer[128] = "Hello XXX/YYY";
-    char rcv[1024] = {0};
+    char rcv[128] = {0};
     int messageNo = 1;
 
-    TSocket socket(address, loop);
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop);
     co_await socket.Connect();
 
     while (true) {
