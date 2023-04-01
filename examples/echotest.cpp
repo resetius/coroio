@@ -3,26 +3,21 @@
 
 using namespace NNet;
 
-TSimpleTask client_handler(TSocket&& s, TLoop* loop ) {
+TSimpleTask client_handler(TSocket socket, TLoop* loop) {
     char buffer[128] = {0};
-    TSocket socket(std::move(s));
 
     while (true) {
-        buffer[0] = '\0';
         auto size = co_await socket.ReadSome(buffer, sizeof(buffer));
-        buffer[size] = 0;
-        std::cerr << "Received from client: " << buffer << "\n";
+        std::cerr << "Received from client: " << buffer << " (" << size << ") bytes \n";
 
         co_await socket.WriteSome(buffer, sizeof(buffer));
     }
-
     co_return;
 }
 
 TSimpleTask server(TLoop* loop)
 {
-    TAddress address("127.0.0.1", 8888);
-    TSocket socket(std::move(address), loop);
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop);
     socket.Bind();
     socket.Listen();
 
@@ -45,9 +40,9 @@ TSimpleTask client(TLoop* loop, int clientId)
 
     while (true) {
         snprintf(buffer+6, sizeof(buffer)-6, "%03d/%03d", messageNo++, clientId);
-        auto size = co_await socket.WriteSome(buffer, strlen(buffer));
+        auto size = co_await socket.WriteSome(buffer, sizeof(buffer));
         size = co_await socket.ReadSome(rcv, sizeof(rcv));
-        std::cerr << "Received from server: " << rcv << std::endl;
+        std::cerr << "Received from server: " << rcv << " (" << size << ") bytes \n";
         co_await loop->Sleep(std::chrono::milliseconds(1000));
     }
     co_return;
