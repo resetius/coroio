@@ -387,8 +387,9 @@ public:
             TSocket await_resume() {
                 sockaddr_in clientaddr;
                 socklen_t len = sizeof(clientaddr);
-                // TODO: return code
+
                 int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
+                if (clientfd < 0) { throw TSystemError(); }
 
                 return TSocket{clientaddr, clientfd, loop};
             }
@@ -401,15 +402,14 @@ public:
     }
 
     void Bind() {
-        // TODO: return code
         auto addr = Addr_.Addr();
-        bind(Fd_, (struct sockaddr*)&addr, sizeof(addr));
+        if (bind(Fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            throw TSystemError();
+        }
     }
 
-    void Listen() {
-        // TODO: return code
-        // TODO: backlog
-        listen(Fd_, 128);
+    void Listen(int backlog = 128) {
+        if (listen(Fd_, backlog) < 0) { throw TSystemError(); }
     }
 
     const TAddress& Addr() const {
@@ -418,8 +418,8 @@ public:
 
 private:
     int Create() {
-        /* TODO: return code */
         auto s = socket(PF_INET, SOCK_STREAM, 0);
+        if (s < 0) { throw TSystemError(); }
         Setup(s);
         return s;
     }
@@ -427,11 +427,12 @@ private:
     void Setup(int s) {
         int value;
         value = 1;
-        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int));
+        if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) { throw TSystemError(); }
         value = 1;
-        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int));
+        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) { throw TSystemError(); }
         auto flags = fcntl(s, F_GETFL, 0);
-        fcntl(s, F_SETFL, flags | O_NONBLOCK);
+        if (flags < 0) { throw TSystemError(); }
+        if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) { throw TSystemError(); }
     }
 
     template<typename T>
