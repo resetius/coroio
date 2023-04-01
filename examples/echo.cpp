@@ -1,4 +1,5 @@
 #include "net.hpp"
+#include <signal.h>
 
 using namespace NNet;
 
