@@ -18,8 +18,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-using i64 = int64_t;
-
 namespace NNet {
 
 class TSystemError: public std::exception
@@ -63,13 +61,14 @@ class TEvent {
 public:
     using TTime = std::chrono::steady_clock::time_point;
 
-    TEvent(i64 id, std::coroutine_handle<> h)
-        : Id_(id)
+    TEvent(int fd, std::coroutine_handle<> h)
+        : Fd_(fd)
+        , Deadline_(TTime::max())
         , H_(h)
     { }
 
-    TEvent(TTime deadline, i64 id, std::coroutine_handle<> h)
-        : Id_(id)
+    TEvent(TTime deadline, std::coroutine_handle<> h)
+        : Fd_(-1)
         , Deadline_(deadline)
         , H_(h)
     { }
@@ -78,8 +77,8 @@ public:
         H_.resume();
     }
 
-    i64 Id() const {
-        return Id_;
+    int Fd() const {
+        return Fd_;
     }
 
     auto Deadline() const {
@@ -90,21 +89,21 @@ public:
         if (Deadline_ < e.Deadline_) {
             return true;
         } else if (Deadline_ == e.Deadline_) {
-            return Id_<e.Id_;
+            return Fd_<e.Fd_;
         } else {
             return false;
         }
     }
 
 private:
-    i64 Id_;
+    int Fd_;
     TTime Deadline_;
     std::coroutine_handle<> H_;
 };
 
 class TSelect {
-    std::unordered_map<i64,TEvent> Writes_;
-    std::unordered_map<i64,TEvent> Reads_;
+    std::unordered_map<int,TEvent> Writes_;
+    std::unordered_map<int,TEvent> Reads_;
     std::priority_queue<TEvent> Timers_;
     std::vector<TEvent> ReadyEvents_;
     bool Running_ = true;
@@ -143,32 +142,31 @@ public:
     }
 
     void AddWrite(TEvent&& event) {
-        auto id = event.Id();
-        Writes_.emplace(id, std::move(event));
+        auto fd = event.Fd();
+        Writes_.emplace(fd, std::move(event));
     }
 
     void AddRead(TEvent&& event) {
-        auto id = event.Id();
-        Reads_.emplace(id, std::move(event));
+        auto fd = event.Fd();
+        Reads_.emplace(fd, std::move(event));
     }
 
     bool Ready() {
         auto tv = Timeval();
-        i64 max_fd = -1;
+        int maxFd = -1;
 
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
 
         for (auto& [k, _] : Writes_) {
             FD_SET(k, &WriteFds_);
-            max_fd = std::max(max_fd, k);
+            maxFd = std::max(maxFd, k);
         }
-        // TODO: remove copy paste
         for (auto& [k, _] : Reads_) {
             FD_SET(k, &ReadFds_);
-            max_fd = std::max(max_fd, k);
+            maxFd = std::max(maxFd, k);
         }
-        select(max_fd+1, &ReadFds_, &WriteFds_, nullptr, &tv); // TODO: return code
+        select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv); // TODO: return code
         Deadline_ = TEvent::TTime::max();
         auto now = std::chrono::steady_clock::now();
 
@@ -184,12 +182,11 @@ public:
                 ReadyEvents_.emplace_back(std::move(v));
             }
         }
-        // TODO: remove copy-paste
+
         for (auto& v : ReadyEvents_) {
-            Writes_.erase(v.Id());
-            Reads_.erase(v.Id());
+            Writes_.erase(v.Fd());
+            Reads_.erase(v.Fd());
         }
-        // TODO: timer id collision with fd
         while (!Timers_.empty()&&Timers_.top().Deadline() <= now) {
             ReadyEvents_.emplace_back(std::move(Timers_.top()));
             Timers_.pop();
@@ -230,29 +227,27 @@ private:
 
 class TLoop {
     TSelect Select_;
-    i64 TimerId_ = 0;
 
 public:
     template<typename Rep, typename Period>
     auto Sleep(std::chrono::duration<Rep,Period> duration) {
         auto now = std::chrono::steady_clock::now();
         auto next= now+duration;
-        struct awaitable {
+        struct TAwaitable {
             bool await_ready() {
                 return false;
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                loop->Select().AddTimer(TEvent{n,id,h});
+                loop->Select().AddTimer(TEvent{n,h});
             }
 
             void await_resume() { }
 
             TLoop* loop;
-            i64 id;
             TEvent::TTime n;
         };
-        return awaitable{this,TimerId_++,next};
+        return TAwaitable{this,next};
     }
 
     void Loop() {
@@ -333,7 +328,7 @@ public:
             err = errno;
         }
         // TODO: connection timeout
-        struct awaitable {
+        struct TAwaitable {
             bool await_ready() {
                 return (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS));
             }
@@ -347,7 +342,7 @@ public:
             TSelect& select;
             int ret, err, fd;
         };
-        return awaitable{Loop_->Select(), ret,err,Fd_};
+        return TAwaitable{Loop_->Select(), ret,err,Fd_};
     }
 
     auto ReadSome(char* buf, size_t size) {
