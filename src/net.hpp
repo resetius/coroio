@@ -379,7 +379,7 @@ public:
     }
 
     auto Accept() {
-        struct awaitable {
+        struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 loop->Select().AddRead(TEvent(fd, h));
@@ -398,7 +398,7 @@ public:
             int fd;
         };
 
-        return awaitable{Loop_, Fd_};
+        return TAwaitable{Loop_, Fd_};
     }
 
     void Bind() {
