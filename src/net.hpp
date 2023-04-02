@@ -43,6 +43,8 @@ private:
     std::string Message_;
 };
 
+class TTimeout: public std::exception { public: };
+
 struct TVoidPromise;
 
 struct TSimpleTask : std::coroutine_handle<TVoidPromise>
@@ -123,6 +125,12 @@ public:
         }
     }
 
+    bool RemoveTimer(int fd) {
+        bool r = !!Events_[fd].Timeout;
+        Events_[fd].Timeout = {};
+        return r;
+    }
+
     void AddRead(int fd, THandle h) {
         Events_[fd].Read = std::move(h);
     }
@@ -193,9 +201,12 @@ public:
         while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
             TTimer timer = std::move(Timers_.top());
             if (timer.Fd >= 0) {
-                Events_[timer.Fd].Timeout = {};
+                auto& ev = Events_[timer.Fd];
+                ReadyHandles_.emplace_back(ev.Timeout);
+                ev = {};
+            } else {
+                ReadyHandles_.emplace_back(timer.Handle);
             }
-            ReadyHandles_.emplace_back(timer.Handle);
             Timers_.pop();
         }
     }
@@ -311,8 +322,7 @@ public:
         return *this;
     }
 
-    auto Connect() {
-        // TODO: connection timeout
+    auto Connect(TTime deadline = TTime::max()) {
         struct TAwaitable {
             bool await_ready() {
                 int ret = connect(fd, (struct sockaddr*) &addr, sizeof(addr));
@@ -323,16 +333,24 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                select->AddWrite(fd, h);
+                poller->AddWrite(fd, h);
+                if (deadline != TTime::max()) {
+                    poller->AddTimer(fd, deadline, h);
+                }
             }
 
-            void await_resume() { }
+            void await_resume() {
+                if (deadline != TTime::max() && poller->RemoveTimer(fd)) {
+                    throw TTimeout();
+                }
+            }
 
-            TSelect* select;
+            TSelect* poller;
             int fd;
             sockaddr_in addr;
+            TTime deadline;
         };
-        return TAwaitable{Poller_, Fd_, Addr_.Addr()};
+        return TAwaitable{Poller_, Fd_, Addr_.Addr(), deadline};
     }
 
     auto ReadSome(char* buf, size_t size) {
@@ -456,8 +474,8 @@ private:
         bool ready;
     };
 
-    int Fd_;
-    TSelect* Poller_;
+    int Fd_ = -1;
+    TSelect* Poller_ = nullptr;
     TAddress Addr_;
 };
 

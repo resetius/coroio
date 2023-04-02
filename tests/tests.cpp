@@ -57,6 +57,30 @@ void test_accept(void**) {
     assert_true(memcmp(&addr1, &addr2, 4)==0);
 }
 
+void test_connection_timeout(void**) {
+    TLoop loop;
+    TSocket socket(TAddress{"127.0.0.1", 8889}, loop.Poller());
+    bool timeout = false;
+    socket.Bind();
+    socket.Listen();
+
+    TSimpleTask h1 = [](TLoop& loop, bool& timeout) -> TSimpleTask
+    {
+        TSocket client(TAddress{"127.0.0.1", 8889}, loop.Poller());
+        try {
+            co_await client.Connect(TClock::now()+std::chrono::milliseconds(100));
+        } catch (const TTimeout& ) {
+            timeout = true;
+        }
+        co_return;
+    }(loop, timeout);
+
+    loop.OneStep();
+    loop.HandleEvents();
+
+    assert_true(timeout);
+}
+
 void test_connection_refused_on_write(void**) {
     TLoop loop;
     int err = 0;
@@ -126,6 +150,7 @@ int main() {
         cmocka_unit_test(test_listen),
         cmocka_unit_test(test_timeout),
         cmocka_unit_test(test_accept),
+        cmocka_unit_test(test_connection_timeout),
         cmocka_unit_test(test_connection_refused_on_write),
         cmocka_unit_test(test_connection_refused_on_read),
     };
