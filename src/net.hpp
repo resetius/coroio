@@ -18,6 +18,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <assert.h>
 
 namespace NNet {
 
@@ -156,9 +157,11 @@ public:
             auto& ev = Events_[k];
             if (FD_ISSET(k, &WriteFds_)) {
                 ReadyHandles_.emplace_back(std::move(ev.Write));
+                ev.Write = {};
             }
             if (FD_ISSET(k, &ReadFds_)) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
+                ev.Read = {};
             }
         }
 
