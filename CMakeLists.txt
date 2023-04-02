@@ -1,5 +1,6 @@
-project(netlib)
 cmake_minimum_required(VERSION 3.22)
+
+project(netlib)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CMOCKA REQUIRED cmocka)
 
