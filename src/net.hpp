@@ -107,7 +107,6 @@ class TSelect {
     std::unordered_map<int,TEvent> Events_;
     std::priority_queue<TTimer> Timers_;
     std::vector<THandle> ReadyHandles_;
-    TTime Deadline_ = TTime::max();
     fd_set ReadFds_;
     fd_set WriteFds_;
 
@@ -118,7 +117,6 @@ public:
     }
 
     void AddTimer(int fd, TTime deadline, THandle h) {
-        Deadline_ = std::min(Deadline_, deadline);
         Timers_.emplace(deadline, fd, h);
         if (fd >= 0) {
             Events_[fd].Timeout = std::move(h);
@@ -165,7 +163,8 @@ public:
     }
 
     void Poll() {
-        auto tv = GetTimeval(TClock::now(), Deadline_);
+        auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
+        auto tv = GetTimeval(TClock::now(), deadline);
         int maxFd = -1;
 
         FD_ZERO(&ReadFds_);
@@ -181,7 +180,6 @@ public:
             maxFd = std::max(maxFd, k);
         }
         if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }
-        Deadline_ = TTime::max();
         auto now = TClock::now();
 
         ReadyHandles_.clear();
