@@ -32,4 +32,4 @@ jobs:
       uses: EnricoMi/publish-unit-test-result-action@v1.28
       if: always()
       with:
-         files: build/ut/*.xml
+         files: build/*.xml
