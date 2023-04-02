@@ -117,7 +117,7 @@ public:
     }
 
     void AddTimer(int fd, TTime deadline, THandle h) {
-        Timers_.emplace(deadline, fd, h);
+        Timers_.emplace(TTimer{deadline, fd, h});
         if (fd >= 0) {
             Events_[fd].Timeout = std::move(h);
         }
