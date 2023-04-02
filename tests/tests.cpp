@@ -108,12 +108,12 @@ void test_timeout(void**) {
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
-    TSimpleTask h = [](TLoop* loop, TTime* next, std::chrono::milliseconds timeout) -> TSimpleTask
+    TSimpleTask h = [](TSelect& poller, TTime* next, std::chrono::milliseconds timeout) -> TSimpleTask
     {
-        co_await loop->Sleep(timeout);
+        co_await poller.Sleep(timeout);
         *next = std::chrono::steady_clock::now();
         co_return;
-    } (&loop, &next, timeout);
+    } (loop.Poller(), &next, timeout);
     loop.OneStep();
     loop.HandleEvents();
     assert_true(next >= now + timeout);

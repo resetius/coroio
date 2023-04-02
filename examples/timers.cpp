@@ -5,7 +5,7 @@ using namespace NNet;
 TSimpleTask infinite_task(TLoop* loop) {
     int i = 0;
     while (true) {
-        co_await loop->Sleep(std::chrono::milliseconds(10));
+        co_await loop->Poller().Sleep(std::chrono::milliseconds(10));
         printf("Ok %d\n", i++);
     }
 }

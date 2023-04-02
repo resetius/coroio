@@ -14,7 +14,7 @@ TSimpleTask client_handler(TSocket socket, TLoop* loop) {
     } catch (const std::exception& ex) {
         std::cerr << "Exception: " << ex.what() << "\n";
     }
-    if (size == 0) { 
+    if (size == 0) {
         std::cerr << "Client disconnected\n";
     }
     co_return;
@@ -53,7 +53,7 @@ TSimpleTask client(TLoop* loop, int clientId)
             size = co_await socket.WriteSome(buffer, sizeof(buffer));
             size = co_await socket.ReadSome(rcv, sizeof(rcv));
             std::cerr << "Received from server: " << std::string_view(rcv, size) << " (" << size << ") bytes \n";
-            co_await loop->Sleep(std::chrono::milliseconds(1000));
+            co_await loop->Poller().Sleep(std::chrono::milliseconds(1000));
         } while (size > 0);
     } catch (const std::exception& ex) {
         std::cout << "Exception: " << ex.what() << "\n";

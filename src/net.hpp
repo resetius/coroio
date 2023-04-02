@@ -78,6 +78,29 @@ struct TEvent {
     THandle Timeout;
 };
 
+namespace {
+
+timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000))
+{
+    if (now > deadline) {
+        return {0,0};
+    } else {
+        auto duration = (deadline - now);
+        if (duration > min_duration) {
+            duration = min_duration;
+        }
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+        duration -= seconds;
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
+        timeval tv;
+        tv.tv_sec = seconds.count();
+        tv.tv_usec = microseconds.count();
+        return tv;
+    }
+}
+
+}
+
 class TSelect {
     std::unordered_map<int,TEvent> Events_;
     std::priority_queue<TTimer> Timers_;
@@ -85,25 +108,6 @@ class TSelect {
     TTime Deadline_ = TTime::max();
     fd_set ReadFds_;
     fd_set WriteFds_;
-
-    timeval Timeval() const {
-        auto now = TClock::now();
-        if (now>Deadline_) {
-            return {0,0};
-        } else {
-            auto duration = (Deadline_-now);
-            if (duration > std::chrono::milliseconds(10000)) {
-                duration = std::chrono::milliseconds(10000);
-            }
-            auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
-            duration -= seconds;
-            auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
-            timeval tv;
-            tv.tv_sec = seconds.count();
-            tv.tv_usec = microseconds.count();
-            return tv;
-        }
-    }
 
 public:
     TSelect() {
@@ -131,8 +135,29 @@ public:
         Events_.erase(fd);
     }
 
+    template<typename Rep, typename Period>
+    auto Sleep(std::chrono::duration<Rep,Period> duration) {
+        auto now = TClock::now();
+        auto next= now+duration;
+        struct TAwaitable {
+            bool await_ready() {
+                return false;
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->AddTimer(-1, n, h);
+            }
+
+            void await_resume() { }
+
+            TSelect* poller;
+            TTime n;
+        };
+        return TAwaitable{this,next};
+    }
+
     void Poll() {
-        auto tv = Timeval();
+        auto tv = GetTimeval(TClock::now(), Deadline_);
         int maxFd = -1;
 
         FD_ZERO(&ReadFds_);
@@ -210,27 +235,6 @@ class TLoop {
     bool Running_ = true;
 
 public:
-    template<typename Rep, typename Period>
-    auto Sleep(std::chrono::duration<Rep,Period> duration) {
-        auto now = TClock::now();
-        auto next= now+duration;
-        struct TAwaitable {
-            bool await_ready() {
-                return false;
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                loop->Poller().AddTimer(-1, n, h);
-            }
-
-            void await_resume() { }
-
-            TLoop* loop;
-            TTime n;
-        };
-        return TAwaitable{this,next};
-    }
-
     void Loop() {
         while (Running_) {
             Poller_.Poll();
