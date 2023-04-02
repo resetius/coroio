@@ -54,7 +54,7 @@ struct TSimpleTask : std::coroutine_handle<TVoidPromise>
 
 struct TVoidPromise
 {
-    TSimpleTask get_return_object() { return {}; }
+    TSimpleTask get_return_object() { return { TSimpleTask::from_promise(*this) }; }
     std::suspend_never initial_suspend() { return {}; }
     std::suspend_never final_suspend() noexcept { return {}; }
     void return_void() {}
@@ -245,8 +245,7 @@ class TLoop {
 public:
     void Loop() {
         while (Running_) {
-            Poller_.Poll();
-            HandleEvents();
+            Step();
         }
     }
 
@@ -254,14 +253,9 @@ public:
         Running_ = false;
     }
 
-    void OneStep() {
+    void Step() {
         Poller_.Poll();
-    }
-
-    void HandleEvents() {
-        for (auto& ev : Poller_.ReadyHandles()) {
-            ev.resume();
-        }
+        HandleEvents();
     }
 
     TSelect& Poller() {
@@ -269,6 +263,12 @@ public:
     }
 
 private:
+    void HandleEvents() {
+        for (auto& ev : Poller_.ReadyHandles()) {
+            ev.resume();
+        }
+    }
+
     TSelect Poller_;
     bool Running_ = true;
 };

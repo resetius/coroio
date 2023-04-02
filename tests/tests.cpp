@@ -11,6 +11,22 @@ extern "C" {
 
 using namespace NNet;
 
+struct TTestPromise;
+
+struct TTestTask : std::coroutine_handle<TTestPromise>
+{
+    using promise_type = TTestPromise;
+};
+
+struct TTestPromise
+{
+    TTestTask get_return_object() { return { TTestTask::from_promise(*this) }; }
+    std::suspend_never initial_suspend() { return {}; }
+    std::suspend_always final_suspend() noexcept { return {}; }
+    void return_void() {}
+    void unhandled_exception() {}
+};
+
 void test_addr(void**) {
     TAddress address("127.0.0.1", 8888);
     auto low = address.Addr();
@@ -36,21 +52,22 @@ void test_accept(void**) {
     socket.Bind();
     socket.Listen();
 
-    TSimpleTask h1 = [](TLoop* loop) -> TSimpleTask
+    TTestTask h1 = [](TLoop* loop) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
         co_await client.Connect();
         co_return;
     }(&loop);
 
-    TSimpleTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TSimpleTask
+    TTestTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TTestTask
     {
         *clientSocket = std::move(co_await socket->Accept());
         co_return;
     }(&socket, &clientSocket);
 
-    loop.OneStep();
-    loop.HandleEvents();
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
 
     in_addr addr1 = clientSocket.Addr().Addr().sin_addr;
     in_addr addr2 = socket.Addr().Addr().sin_addr;
@@ -59,32 +76,30 @@ void test_accept(void**) {
 
 void test_write_after_connect(void**) {
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TSimpleTask h1 = [](TLoop* loop, char* buf, int size) -> TSimpleTask
+    TTestTask h1 = [](TLoop* loop, char* buf, int size) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
+        TSocket client(TAddress{"127.0.0.1", 8898}, loop->Poller());
         co_await client.Connect();
         co_await client.WriteSome(buf, size);
         co_return;
     }(&loop, send_buf, sizeof(send_buf));
 
-    TSimpleTask h2 = [](TSocket* socket, char* buf, int size) -> TSimpleTask
+    TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         co_await clientSocket.ReadSome(buf, size);
         co_return;
     }(&socket, rcv_buf, sizeof(rcv_buf));
 
-    loop.OneStep();
-    loop.HandleEvents();
-
-    loop.OneStep();
-    loop.HandleEvents();
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
 
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
@@ -97,23 +112,24 @@ void test_write_after_accept(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TSimpleTask h1 = [](TLoop* loop, char* buf, int size) -> TSimpleTask
+    TTestTask h1 = [](TLoop* loop, char* buf, int size) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
         co_await client.Connect();
-        co_await client.ReadSome(buf, size);        
+        co_await client.ReadSome(buf, size);
         co_return;
     }(&loop, rcv_buf, sizeof(rcv_buf));
 
-    TSimpleTask h2 = [](TSocket* socket, char* buf, int size) -> TSimpleTask
+    TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         auto s = co_await clientSocket.WriteSome(buf, size);
         co_return;
     }(&socket, send_buf, sizeof(send_buf));
 
-    loop.OneStep();
-    loop.HandleEvents();
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
 
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
@@ -125,7 +141,7 @@ void test_connection_timeout(void**) {
     socket.Bind();
     socket.Listen();
 
-    TSimpleTask h1 = [](TLoop& loop, bool& timeout) -> TSimpleTask
+    TTestTask h = [](TLoop& loop, bool& timeout) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8889}, loop.Poller());
         try {
@@ -136,8 +152,9 @@ void test_connection_timeout(void**) {
         co_return;
     }(loop, timeout);
 
-    loop.OneStep();
-    loop.HandleEvents();
+    while (!h.done()) {
+        loop.Step();
+    }
 
     assert_true(timeout);
 }
@@ -146,7 +163,7 @@ void test_connection_refused_on_write(void**) {
     TLoop loop;
     int err = 0;
 
-    TSimpleTask h1 = [](TLoop* loop, int* err) -> TSimpleTask
+    TTestTask h = [](TLoop* loop, int* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         char buffer[] = "test";
@@ -159,17 +176,19 @@ void test_connection_refused_on_write(void**) {
         co_return;
     }(&loop, &err);
 
-    loop.OneStep();
-    loop.HandleEvents();
+    while (!h.done()) {
+        loop.Step();
+    }
 
-    assert_int_equal(err, ECONNREFUSED);
+    // EPIPE in MacOS
+    assert_true(err == ECONNREFUSED || err == EPIPE);
 }
 
 void test_connection_refused_on_read(void**) {
     TLoop loop;
     int err = 0;
 
-    TSimpleTask h2 = [](TLoop* loop, int* err) -> TSimpleTask
+    TTestTask h = [](TLoop* loop, int* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         char buffer[] = "test";
@@ -182,8 +201,9 @@ void test_connection_refused_on_read(void**) {
         co_return;
     }(&loop, &err);
 
-    loop.OneStep();
-    loop.HandleEvents();
+    while (!h.done()) {
+        loop.Step();
+    }
 
     assert_int_equal(err, ECONNREFUSED);
 }
@@ -193,14 +213,17 @@ void test_timeout(void**) {
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
-    TSimpleTask h = [](TSelect& poller, TTime* next, std::chrono::milliseconds timeout) -> TSimpleTask
+    TTestTask h = [](TSelect& poller, TTime* next, std::chrono::milliseconds timeout) -> TTestTask
     {
         co_await poller.Sleep(timeout);
         *next = std::chrono::steady_clock::now();
         co_return;
     } (loop.Poller(), &next, timeout);
-    loop.OneStep();
-    loop.HandleEvents();
+
+    while (!h.done()) {
+        loop.Step();
+    }
+
     assert_true(next >= now + timeout);
 }
 
