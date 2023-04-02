@@ -22,7 +22,7 @@ TSimpleTask client_handler(TSocket socket, TLoop* loop) {
 
 TSimpleTask server(TLoop* loop)
 {
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Select());
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Poller());
     socket.Bind();
     socket.Listen();
 
@@ -45,7 +45,7 @@ TSimpleTask client(TLoop* loop, int clientId)
     ssize_t size = 0;
 
     try {
-        TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Select());
+        TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         co_await socket.Connect();
 
         do {

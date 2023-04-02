@@ -245,7 +245,7 @@ private:
 };
 
 class TLoop {
-    TSelect Select_;
+    TSelect Poller_;
     bool Running_ = true;
 
 public:
@@ -259,7 +259,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                loop->Select().AddTimer(TEvent{n,h});
+                loop->Poller().AddTimer(TEvent{n,h});
             }
 
             void await_resume() { }
@@ -272,7 +272,7 @@ public:
 
     void Loop() {
         while (Running_) {
-            Select_.Poll();
+            Poller_.Poll();
             HandleEvents();
         }
     }
@@ -282,38 +282,38 @@ public:
     }
 
     void OneStep() {
-        Select_.Poll();
+        Poller_.Poll();
     }
 
     void HandleEvents() {
-        for (auto& ev : Select_.ReadyEvents()) {
+        for (auto& ev : Poller_.ReadyEvents()) {
             ev.Handle();
         }
     }
 
-    TSelect& Select() {
-        return Select_;
+    TSelect& Poller() {
+        return Poller_;
     }
 };
 
 class TSocket {
 public:
-    TSocket(TAddress&& addr, TSelect& select)
-        : Select_(&select)
+    TSocket(TAddress&& addr, TSelect& poller)
+        : Poller_(&poller)
         , Addr_(std::move(addr))
         , Fd_(Create())
     { }
 
-    TSocket(const TAddress& addr, int fd, TSelect& select)
-        : Select_(&select)
+    TSocket(const TAddress& addr, int fd, TSelect& poller)
+        : Poller_(&poller)
         , Addr_(addr)
         , Fd_(fd)
     {
         Setup(Fd_);
     }
 
-    TSocket(const TAddress& addr, TSelect& select)
-        : Select_(&select)
+    TSocket(const TAddress& addr, TSelect& poller)
+        : Poller_(&poller)
         , Addr_(addr)
         , Fd_(Create())
     { }
@@ -323,7 +323,7 @@ public:
     TSocket(const TSocket& other) = delete;
 
     TSocket(TSocket&& other)
-        : Select_(other.Select_)
+        : Poller_(other.Poller_)
         , Addr_(other.Addr_)
         , Fd_(other.Fd_)
     {
@@ -334,12 +334,12 @@ public:
     {
         if (Fd_ >= 0) {
             close(Fd_);
-            Select_->RemoveEvent(Fd_);
+            Poller_->RemoveEvent(Fd_);
         }
     }
 
     TSocket& operator=(TSocket&& other) {
-        Select_ = other.Select_;
+        Poller_ = other.Poller_;
         Addr_ = other.Addr_;
         Fd_ = other.Fd_;
         other.Fd_ = -1;
@@ -347,16 +347,14 @@ public:
     }
 
     auto Connect() {
-        auto addr = Addr_.Addr();
-        int ret = connect(Fd_, (struct sockaddr*) &addr, sizeof(addr));
-        int err = 0;
-        if (ret < 0) {
-            err = errno;
-        }
         // TODO: connection timeout
         struct TAwaitable {
             bool await_ready() {
-                return (ret >= 0 || !(err == EINTR||err==EAGAIN||err==EINPROGRESS));
+                int ret = connect(fd, (struct sockaddr*) &addr, sizeof(addr));
+                if (ret < 0 && !(errno == EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
+                    throw TSystemError();
+                }
+                return ret >= 0;
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -366,9 +364,10 @@ public:
             void await_resume() { }
 
             TSelect* select;
-            int ret, err, fd;
+            int fd;
+            sockaddr_in addr;
         };
-        return TAwaitable{Select_, ret,err,Fd_};
+        return TAwaitable{Poller_, Fd_, Addr_.Addr()};
     }
 
     auto ReadSome(char* buf, size_t size) {
@@ -379,10 +378,10 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                select->AddEvent(fd, h, TEvent::EREAD);
+                poller->AddEvent(fd, h, TEvent::EREAD);
             }
         };
-        return TAwaitableRead{Select_,Fd_,buf,size};
+        return TAwaitableRead{Poller_,Fd_,buf,size};
     }
 
     auto WriteSome(char* buf, size_t size) {
@@ -393,17 +392,17 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                select->AddEvent(fd, h, TEvent::EWRITE);
+                poller->AddEvent(fd, h, TEvent::EWRITE);
             }
         };
-        return TAwaitableWrite{Select_,Fd_,buf,size};
+        return TAwaitableWrite{Poller_,Fd_,buf,size};
     }
 
     auto Accept() {
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                select->AddEvent(fd, h, TEvent::EREAD);
+                poller->AddEvent(fd, h, TEvent::EREAD);
             }
             TSocket await_resume() {
                 sockaddr_in clientaddr;
@@ -412,14 +411,14 @@ public:
                 int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
                 if (clientfd < 0) { throw TSystemError(); }
 
-                return TSocket{clientaddr, clientfd, *select};
+                return TSocket{clientaddr, clientfd, *poller};
             }
 
-            TSelect* select;
+            TSelect* poller;
             int fd;
         };
 
-        return TAwaitable{Select_, Fd_};
+        return TAwaitable{Poller_, Fd_};
     }
 
     void Bind() {
@@ -485,7 +484,7 @@ private:
             }
         }
 
-        TSelect* select;
+        TSelect* poller;
         int fd;
         char* b; size_t s;
         int ret, err;
@@ -493,7 +492,7 @@ private:
     };
 
     int Fd_;
-    TSelect* Select_;
+    TSelect* Poller_;
     TAddress Addr_;
 };
 

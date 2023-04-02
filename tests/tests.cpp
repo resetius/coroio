@@ -24,21 +24,21 @@ void test_addr(void**) {
 void test_listen(void**) {
     TLoop loop;
     TAddress address("127.0.0.1", 8888);
-    TSocket socket(std::move(address), loop.Select());
+    TSocket socket(std::move(address), loop.Poller());
     socket.Bind();
     socket.Listen();
 }
 
 void test_accept(void**) {
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Select());
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     TSocket clientSocket{};
     socket.Bind();
     socket.Listen();
 
     TSimpleTask h1 = [](TLoop* loop) -> TSimpleTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8888}, loop->Select());
+        TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
         co_await client.Connect();
         co_return;
     }(&loop);
@@ -63,7 +63,7 @@ void test_connection_refused_on_write(void**) {
 
     TSimpleTask h1 = [](TLoop* loop, int* err) -> TSimpleTask
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Select());
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
@@ -86,7 +86,7 @@ void test_connection_refused_on_read(void**) {
 
     TSimpleTask h2 = [](TLoop* loop, int* err) -> TSimpleTask
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Select());
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
