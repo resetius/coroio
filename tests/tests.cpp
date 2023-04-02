@@ -63,7 +63,7 @@ void test_write_after_connect(void**) {
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
-    char rcv_buf[128];
+    char rcv_buf[128] = {0};
 
     TSimpleTask h1 = [](TLoop* loop, char* buf, int size) -> TSimpleTask
     {
@@ -82,6 +82,35 @@ void test_write_after_connect(void**) {
 
     loop.OneStep();
     loop.HandleEvents();
+
+    loop.OneStep();
+    loop.HandleEvents();
+
+    assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
+}
+
+void test_write_after_accept(void**) {
+    TLoop loop;
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+    char send_buf[128] = "Hello";
+    char rcv_buf[128] = {0};
+
+    TSimpleTask h1 = [](TLoop* loop, char* buf, int size) -> TSimpleTask
+    {
+        TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
+        co_await client.Connect();
+        co_await client.ReadSome(buf, size);        
+        co_return;
+    }(&loop, rcv_buf, sizeof(rcv_buf));
+
+    TSimpleTask h2 = [](TSocket* socket, char* buf, int size) -> TSimpleTask
+    {
+        TSocket clientSocket = std::move(co_await socket->Accept());
+        auto s = co_await clientSocket.WriteSome(buf, size);
+        co_return;
+    }(&socket, send_buf, sizeof(send_buf));
 
     loop.OneStep();
     loop.HandleEvents();
@@ -183,6 +212,7 @@ int main() {
         cmocka_unit_test(test_timeout),
         cmocka_unit_test(test_accept),
         cmocka_unit_test(test_write_after_connect),
+        cmocka_unit_test(test_write_after_accept),
         cmocka_unit_test(test_connection_timeout),
         cmocka_unit_test(test_connection_refused_on_write),
         cmocka_unit_test(test_connection_refused_on_read),
