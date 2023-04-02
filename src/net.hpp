@@ -199,9 +199,11 @@ public:
         while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
             TTimer timer = std::move(Timers_.top());
             if (timer.Fd >= 0) {
-                auto& ev = Events_[timer.Fd];
-                ReadyHandles_.emplace_back(ev.Timeout);
-                ev = {};
+                auto it = Events_.find(timer.Fd);
+                if (it != Events_.end()) {
+                    ReadyHandles_.emplace_back(it->second.Timeout);
+                    it->second = {};
+                }
             } else {
                 ReadyHandles_.emplace_back(timer.Handle);
             }
@@ -240,9 +242,6 @@ private:
 };
 
 class TLoop {
-    TSelect Poller_;
-    bool Running_ = true;
-
 public:
     void Loop() {
         while (Running_) {
@@ -268,6 +267,10 @@ public:
     TSelect& Poller() {
         return Poller_;
     }
+
+private:
+    TSelect Poller_;
+    bool Running_ = true;
 };
 
 class TSocket {
@@ -292,16 +295,9 @@ public:
         , Fd_(Create())
     { }
 
-    TSocket() = default;
-
-    TSocket(const TSocket& other) = delete;
-
     TSocket(TSocket&& other)
-        : Poller_(other.Poller_)
-        , Addr_(other.Addr_)
-        , Fd_(other.Fd_)
     {
-        other.Fd_ = -1;
+        *this = std::move(other);
     }
 
     ~TSocket()
@@ -312,11 +308,17 @@ public:
         }
     }
 
+    TSocket() = default;
+    TSocket(const TSocket& other) = delete;
+    TSocket& operator=(TSocket& other) const = delete;
+
     TSocket& operator=(TSocket&& other) {
-        Poller_ = other.Poller_;
-        Addr_ = other.Addr_;
-        Fd_ = other.Fd_;
-        other.Fd_ = -1;
+        if (this != &other) {
+            Poller_ = other.Poller_;
+            Addr_ = other.Addr_;
+            Fd_ = other.Fd_;
+            other.Fd_ = -1;
+        }
         return *this;
     }
 
