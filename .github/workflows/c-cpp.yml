@@ -1,0 +1,32 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Checkout submodules
+      run: git submodule update --init --recursive
+    - name: apt-get update
+      run: sudo apt-get update
+    - name: Install packages
+      run: sudo apt-get install libcmocka-dev cmake ninja-build
+    - name: configure
+      run: mkdir build && cmake -B build -G Ninja
+    - name: make
+      run: cmake --build build
+    - name: test
+      run: cmake --build build --target test
+    - name: Publish Unit Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v1.28
+      if: always()
+      with:
+         files: build/ut/*.xml
