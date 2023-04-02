@@ -60,6 +60,12 @@ struct TVoidPromise
 
 class TEvent {
 public:
+    enum EFlag {
+        ENONE  = 0,
+	EREAD  = 1,
+	EWRITE = 2
+    };
+
     using TTime = std::chrono::steady_clock::time_point;
 
     TEvent(int fd, std::coroutine_handle<> h)
@@ -86,6 +92,16 @@ public:
         return Deadline_;
     }
 
+    void AddFlag(int flag) {
+        Flags_ |= flag;
+    }
+
+    void ClearFlag(int flag) {
+        Flags_ &= ~flag;
+    }
+
+    int Flags() { return Flags_; }
+
     bool operator<(const TEvent& e) const {
         if (Deadline_ < e.Deadline_) {
             return true;
@@ -97,14 +113,14 @@ public:
     }
 
 private:
-    int Fd_;
+    int Fd_ = -1;
+    int Flags_ = 0;
     TTime Deadline_;
     std::coroutine_handle<> H_;
 };
 
 class TSelect {
-    std::unordered_map<int,TEvent> Writes_;
-    std::unordered_map<int,TEvent> Reads_;
+    std::unordered_map<int,TEvent> Events_;
     std::priority_queue<TEvent> Timers_;
     std::vector<TEvent> ReadyEvents_;
     TEvent::TTime Deadline_ = TEvent::TTime::max();
@@ -141,14 +157,16 @@ public:
         Timers_.emplace(std::move(timer));
     }
 
-    void AddWrite(TEvent&& event) {
-        auto fd = event.Fd();
-        Writes_.emplace(fd, std::move(event));
+    void AddEvent(int fd, std::coroutine_handle<> h, int flags) {
+        auto it = Events_.find(fd);
+        if (it == Events_.end()) {
+            it = Events_.emplace(fd, TEvent{fd, h}).first;
+        }
+        it->second.AddFlag(flags);
     }
 
-    void AddRead(TEvent&& event) {
-        auto fd = event.Fd();
-        Reads_.emplace(fd, std::move(event));
+    void RemoveEvent(int fd) {
+        Events_.erase(fd);
     }
 
     void Poll() {
@@ -158,12 +176,13 @@ public:
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
 
-        for (auto& [k, _] : Writes_) {
-            FD_SET(k, &WriteFds_);
-            maxFd = std::max(maxFd, k);
-        }
-        for (auto& [k, _] : Reads_) {
-            FD_SET(k, &ReadFds_);
+        for (auto& [k, ev] : Events_) {
+            if (ev.Flags() & TEvent::EREAD) {
+                FD_SET(k, &ReadFds_);
+            } 
+            if (ev.Flags() & TEvent::EWRITE) {
+                FD_SET(k, &WriteFds_);
+	    }
             maxFd = std::max(maxFd, k);
         }
         if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }
@@ -172,21 +191,23 @@ public:
 
         ReadyEvents_.clear();
 
-        for (auto& [k, v]: Writes_) {
+        for (int k=0; k <= maxFd; ++k) {
+            int flags = 0;
             if (FD_ISSET(k, &WriteFds_)) {
-                ReadyEvents_.emplace_back(std::move(v));
+                flags |= TEvent::EWRITE;
             }
-        }
-        for (auto& [k, v]: Reads_) {
             if (FD_ISSET(k, &ReadFds_)) {
-                ReadyEvents_.emplace_back(std::move(v));
+                flags |= TEvent::EREAD;
+            }
+            if (flags) {
+                auto it = Events_.find(k);
+                if (it != Events_.end()) {
+                    it->second.ClearFlag(flags);
+                    ReadyEvents_.emplace_back(it->second);
+                }
             }
         }
 
-        for (auto& v : ReadyEvents_) {
-            Writes_.erase(v.Fd());
-            Reads_.erase(v.Fd());
-        }
         while (!Timers_.empty()&&Timers_.top().Deadline() <= now) {
             ReadyEvents_.emplace_back(std::move(Timers_.top()));
             Timers_.pop();
@@ -313,6 +334,7 @@ public:
     {
         if (Fd_ >= 0) {
             close(Fd_);
+            Loop_->Select().RemoveEvent(Fd_);
         }
     }
 
@@ -338,10 +360,10 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                select.AddWrite(TEvent(fd, h));
+                select.AddEvent(fd, h, TEvent::EWRITE);
             }
 
-            void await_resume() {}
+            void await_resume() { }
 
             TSelect& select;
             int ret, err, fd;
@@ -357,7 +379,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                loop->Select().AddRead(TEvent{fd,h});
+                loop->Select().AddEvent(fd, h, TEvent::EREAD);
             }
         };
         return TAwaitableRead{Loop_,Fd_,buf,size};
@@ -371,7 +393,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                loop->Select().AddWrite(TEvent(fd,h));
+                loop->Select().AddEvent(fd, h, TEvent::EWRITE);
             }
         };
         return TAwaitableWrite{Loop_,Fd_,buf,size};
@@ -381,7 +403,7 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                loop->Select().AddRead(TEvent(fd, h));
+                loop->Select().AddEvent(fd, h, TEvent::EREAD);
             }
             TSocket await_resume() {
                 sockaddr_in clientaddr;
