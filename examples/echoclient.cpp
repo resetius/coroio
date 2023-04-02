@@ -10,8 +10,8 @@ TSimpleTask client(TLoop* loop, TAddress addr)
     ssize_t size = 1;
 
     try {
-        TSocket input{TAddress{}, 0, loop}; // stdin
-        TSocket socket{addr, loop};
+        TSocket input{TAddress{}, 0, loop->Select()}; // stdin
+        TSocket socket{addr, loop->Select()};
 
         co_await socket.Connect();
         while (size && (size = co_await input.ReadSome(out, sizeof(out)))) {

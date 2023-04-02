@@ -22,7 +22,7 @@ TSimpleTask client_handler(TSocket socket, TLoop* loop) {
 
 TSimpleTask server(TLoop* loop, TAddress address)
 {
-    TSocket socket(std::move(address), loop);
+    TSocket socket(std::move(address), loop->Select());
     socket.Bind();
     socket.Listen();
 
