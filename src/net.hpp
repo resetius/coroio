@@ -357,7 +357,6 @@ public:
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             void run() {
                 ret = read(fd, b, s);
-                if (ret < 0) { err = errno; }
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -371,7 +370,6 @@ public:
         struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             void run() {
                 ret = write(fd, b, s);
-                if (ret < 0) { err = errno; }
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -446,7 +444,7 @@ private:
     struct TAwaitable {
         bool await_ready() {
             SafeRun();
-            return (ready = (ret >= 0 || !SkipError(err)));
+            return (ready = (ret >= 0));
         }
 
         int await_resume() {
@@ -456,13 +454,9 @@ private:
             return ret;
         }
 
-        bool SkipError(int err) {
-            return err == EINTR||err==EAGAIN||err==EINPROGRESS;
-        }
-
         void SafeRun() {
             ((T*)this)->run();
-            if (ret < 0 && !SkipError(err)) {
+            if (ret < 0 && !(errno==EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
                 throw TSystemError();
             }
         }
@@ -470,7 +464,7 @@ private:
         TSelect* poller;
         int fd;
         char* b; size_t s;
-        int ret, err;
+        int ret;
         bool ready;
     };
 
