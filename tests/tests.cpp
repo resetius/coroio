@@ -68,6 +68,7 @@ void test_accept(void**) {
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
+    h1.destroy(); h2.destroy();
 
     in_addr addr1 = clientSocket.Addr().Addr().sin_addr;
     in_addr addr2 = socket.Addr().Addr().sin_addr;
@@ -100,6 +101,7 @@ void test_write_after_connect(void**) {
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
+    h1.destroy(); h2.destroy();
 
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
@@ -130,6 +132,7 @@ void test_write_after_accept(void**) {
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
+    h1.destroy(); h2.destroy();
 
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
@@ -155,6 +158,7 @@ void test_connection_timeout(void**) {
     while (!h.done()) {
         loop.Step();
     }
+    h.destroy();
 
     assert_true(timeout);
 }
@@ -179,6 +183,7 @@ void test_connection_refused_on_write(void**) {
     while (!h.done()) {
         loop.Step();
     }
+    h.destroy();
 
     // EPIPE in MacOS
     assert_true(err == ECONNREFUSED || err == EPIPE);
@@ -204,6 +209,7 @@ void test_connection_refused_on_read(void**) {
     while (!h.done()) {
         loop.Step();
     }
+    h.destroy();
 
     assert_int_equal(err, ECONNREFUSED);
 }
@@ -223,6 +229,7 @@ void test_timeout(void**) {
     while (!h.done()) {
         loop.Step();
     }
+    h.destroy();
 
     assert_true(next >= now + timeout);
 }
