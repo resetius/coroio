@@ -8,7 +8,7 @@ TSimpleTask client_handler(TSocket socket, TLoop* loop) {
 
     try {
         while ((size = co_await socket.ReadSome(buffer, sizeof(buffer))) > 0) {
-            std::cerr << "Received from client: '" << std::string_view(buffer, size) << "' (" << size << ") bytes \n";
+            std::cerr << "Received: " << std::string_view(buffer, size) << "\n";
             co_await socket.WriteSome(buffer, size);
         }
     } catch (const std::exception& ex) {
