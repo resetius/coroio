@@ -12,8 +12,7 @@ class TPoll: public TPollerBase {
 public:
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        auto tv = GetTimeval(TClock::now(), deadline);
-        int timeout = tv.tv_sec * 1000 + tv.tv_usec / 1000000;
+        int timeout = GetMillis(TClock::now(), deadline);
 
         Fds_.clear();
         for (auto& [k, ev] : Events_) {
