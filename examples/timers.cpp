@@ -1,6 +1,8 @@
 #include "net.hpp"
 
-using namespace NNet;
+using NNet::TSimpleTask;
+using NNet::TSelect;
+using TLoop = NNet::TLoop<TSelect>;
 
 TSimpleTask infinite_task(TLoop* loop) {
     int i = 0;

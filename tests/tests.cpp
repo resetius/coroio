@@ -46,13 +46,13 @@ void test_listen(void**) {
 }
 
 void test_accept(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     TSocket clientSocket{};
     socket.Bind();
     socket.Listen();
 
-    TTestTask h1 = [](TLoop* loop) -> TTestTask
+    TTestTask h1 = [](TLoop<TSelect>* loop) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
         co_await client.Connect();
@@ -76,14 +76,14 @@ void test_accept(void**) {
 }
 
 void test_write_after_connect(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TTestTask h1 = [](TLoop* loop, char* buf, int size) -> TTestTask
+    TTestTask h1 = [](TLoop<TSelect>* loop, char* buf, int size) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8898}, loop->Poller());
         co_await client.Connect();
@@ -107,14 +107,14 @@ void test_write_after_connect(void**) {
 }
 
 void test_write_after_accept(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TTestTask h1 = [](TLoop* loop, char* buf, int size) -> TTestTask
+    TTestTask h1 = [](TLoop<TSelect>* loop, char* buf, int size) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
         co_await client.Connect();
@@ -138,13 +138,13 @@ void test_write_after_accept(void**) {
 }
 
 void test_connection_timeout(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     TSocket socket(TAddress{"127.0.0.1", 8889}, loop.Poller());
     bool timeout = false;
     socket.Bind();
     socket.Listen();
 
-    TTestTask h = [](TLoop& loop, bool& timeout) -> TTestTask
+    TTestTask h = [](TLoop<TSelect>& loop, bool& timeout) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8889}, loop.Poller());
         try {
@@ -164,10 +164,10 @@ void test_connection_timeout(void**) {
 }
 
 void test_connection_refused_on_write(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     int err = 0;
 
-    TTestTask h = [](TLoop* loop, int* err) -> TTestTask
+    TTestTask h = [](TLoop<TSelect>* loop, int* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         char buffer[] = "test";
@@ -190,10 +190,10 @@ void test_connection_refused_on_write(void**) {
 }
 
 void test_connection_refused_on_read(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     int err = 0;
 
-    TTestTask h = [](TLoop* loop, int* err) -> TTestTask
+    TTestTask h = [](TLoop<TSelect>* loop, int* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
         char buffer[] = "test";
@@ -215,7 +215,7 @@ void test_connection_refused_on_read(void**) {
 }
 
 void test_timeout(void**) {
-    TLoop loop;
+    TLoop<TSelect> loop;
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;

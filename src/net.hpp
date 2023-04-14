@@ -145,6 +145,7 @@ private:
     struct sockaddr_in Addr_;
 };
 
+template<typename TPoller = TSelect>
 class TLoop {
 public:
     void Loop() {
@@ -162,7 +163,7 @@ public:
         HandleEvents();
     }
 
-    TSelect& Poller() {
+    TPoller& Poller() {
         return Poller_;
     }
 
@@ -173,19 +174,19 @@ private:
         }
     }
 
-    TSelect Poller_;
+    TPoller Poller_;
     bool Running_ = true;
 };
 
 class TSocket {
 public:
-    TSocket(TAddress&& addr, TSelect& poller)
+    TSocket(TAddress&& addr, TPollerBase& poller)
         : Poller_(&poller)
         , Addr_(std::move(addr))
         , Fd_(Create())
     { }
 
-    TSocket(const TAddress& addr, int fd, TSelect& poller)
+    TSocket(const TAddress& addr, int fd, TPollerBase& poller)
         : Poller_(&poller)
         , Addr_(addr)
         , Fd_(fd)
@@ -193,7 +194,7 @@ public:
         Setup(Fd_);
     }
 
-    TSocket(const TAddress& addr, TSelect& poller)
+    TSocket(const TAddress& addr, TPollerBase& poller)
         : Poller_(&poller)
         , Addr_(addr)
         , Fd_(Create())
@@ -249,7 +250,7 @@ public:
                 }
             }
 
-            TSelect* poller;
+            TPollerBase* poller;
             int fd;
             sockaddr_in addr;
             TTime deadline;
@@ -299,7 +300,7 @@ public:
                 return TSocket{clientaddr, clientfd, *poller};
             }
 
-            TSelect* poller;
+            TPollerBase* poller;
             int fd;
         };
 
@@ -365,7 +366,7 @@ private:
             }
         }
 
-        TSelect* poller;
+        TPollerBase* poller;
         int fd;
         char* b; size_t s;
         int ret;
@@ -373,7 +374,7 @@ private:
     };
 
     int Fd_ = -1;
-    TSelect* Poller_ = nullptr;
+    TPollerBase* Poller_ = nullptr;
     TAddress Addr_;
 };
 
