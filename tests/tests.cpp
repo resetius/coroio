@@ -8,6 +8,10 @@
 #include <select.hpp>
 #include <poll.hpp>
 
+#ifdef __linux__ 
+#include <epoll.hpp>
+#endif
+
 extern "C" {
 #include <cmocka.h>
 }
@@ -245,28 +249,33 @@ void test_timeout(void**) {
     assert_true(next >= now + timeout);
 }
 
-#define my_unit_test(f, a) { #f "&lt;" #a "&gt;", f<a>, NULL, NULL, NULL }
+#define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
+#define my_unit_test2(f, a, b) \
+    { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
+    { #f "(" #b ")", f<b>, NULL, NULL, NULL }
+#define my_unit_test3(f, a, b, c) \
+    { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
+    { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
+    { #f "(" #c ")", f<c>, NULL, NULL, NULL }
+
+#ifdef __linux__ 
+#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
+#else
+#define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
+#endif
 
 int main() {
     signal(SIGPIPE, SIG_IGN);
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
-        my_unit_test(test_listen, TSelect),
-        my_unit_test(test_listen, TPoll),
-        my_unit_test(test_timeout, TSelect),
-        my_unit_test(test_timeout, TPoll),
-        my_unit_test(test_accept, TSelect),
-        my_unit_test(test_accept, TPoll),
-        my_unit_test(test_write_after_connect, TSelect),
-        my_unit_test(test_write_after_connect, TPoll),
-        my_unit_test(test_write_after_accept, TSelect),
-        my_unit_test(test_write_after_accept, TPoll),
-        my_unit_test(test_connection_timeout, TSelect),
-        my_unit_test(test_connection_timeout, TPoll),
-        my_unit_test(test_connection_refused_on_write, TSelect),
-        my_unit_test(test_connection_refused_on_write, TPoll),
-        my_unit_test(test_connection_refused_on_read, TSelect),
-        my_unit_test(test_connection_refused_on_read, TPoll),
+        my_unit_poller(test_listen),
+        my_unit_poller(test_timeout),
+        my_unit_poller(test_accept),
+        my_unit_poller(test_write_after_connect),
+        my_unit_poller(test_write_after_accept),
+        my_unit_poller(test_connection_timeout),
+        my_unit_poller(test_connection_refused_on_write),
+        my_unit_poller(test_connection_refused_on_read),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
