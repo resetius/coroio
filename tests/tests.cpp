@@ -34,6 +34,39 @@ struct TTestPromise
     void unhandled_exception() {}
 };
 
+void test_timeval(void**) {
+    auto t1 =  std::chrono::seconds(4);
+    auto t2 =  std::chrono::seconds(10);
+    auto tv = GetTimeval(TTime(t1), TTime(t2));
+    assert_int_equal(tv.tv_sec, 6);
+    assert_int_equal(tv.tv_usec, 0);
+
+    auto t3 =  std::chrono::milliseconds(10001);
+    tv = GetTimeval(TTime(t1), TTime(t3));
+    assert_int_equal(tv.tv_sec, 6);
+    assert_int_equal(tv.tv_usec, 1000);
+
+    auto t4 = std::chrono::minutes(10000);
+    tv = GetTimeval(TTime(t1), TTime(t4));
+    assert_int_equal(tv.tv_sec, 10);
+    assert_int_equal(tv.tv_usec, 0);
+}
+
+void test_millis(void**) {
+    auto t1 =  std::chrono::seconds(4);
+    auto t2 =  std::chrono::seconds(10);
+    auto m= GetMillis(TTime(t1), TTime(t2));
+    assert_int_equal(m, 6000);
+
+    auto t3 =  std::chrono::milliseconds(10001);
+    m = GetMillis(TTime(t1), TTime(t3));
+    assert_int_equal(m, 6001);
+
+    auto t4 =  std::chrono::minutes(10000);
+    m = GetMillis(TTime(t1), TTime(t4));
+    assert_int_equal(m, 10000);
+}
+
 void test_addr(void**) {
     TAddress address("127.0.0.1", 8888);
     auto low = address.Addr();
@@ -268,6 +301,8 @@ int main() {
     signal(SIGPIPE, SIG_IGN);
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
+        cmocka_unit_test(test_timeval),
+        cmocka_unit_test(test_millis),
         my_unit_poller(test_listen),
         my_unit_poller(test_timeout),
         my_unit_poller(test_accept),

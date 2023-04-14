@@ -69,4 +69,9 @@ inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds m
     }
 }
 
+inline int GetMillis(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000)) {
+    auto tv = GetTimeval(now, deadline);
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
 } // namespace NNet

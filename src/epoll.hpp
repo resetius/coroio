@@ -25,8 +25,7 @@ public:
 
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        auto tv = GetTimeval(TClock::now(), deadline);
-        int timeout = tv.tv_sec * 1000 + tv.tv_usec / 1000000;
+        int timeout = GetMillis(TClock::now(), deadline);
 
         for (auto& [k, ev] : Events_) {
             epoll_event eev = {};
