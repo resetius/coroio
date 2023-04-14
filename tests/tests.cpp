@@ -52,12 +52,12 @@ void test_accept(void**) {
     socket.Bind();
     socket.Listen();
 
-    TTestTask h1 = [](TLoop<TSelect>* loop) -> TTestTask
+    TTestTask h1 = [](TPollerBase& poller) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
+        TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
         co_return;
-    }(&loop);
+    }(loop.Poller());
 
     TTestTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TTestTask
     {
@@ -83,13 +83,13 @@ void test_write_after_connect(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TTestTask h1 = [](TLoop<TSelect>* loop, char* buf, int size) -> TTestTask
+    TTestTask h1 = [](TPollerBase& poller, char* buf, int size) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8898}, loop->Poller());
+        TSocket client(TAddress{"127.0.0.1", 8898}, poller);
         co_await client.Connect();
         co_await client.WriteSome(buf, size);
         co_return;
-    }(&loop, send_buf, sizeof(send_buf));
+    }(loop.Poller(), send_buf, sizeof(send_buf));
 
     TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
     {
@@ -114,13 +114,13 @@ void test_write_after_accept(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TTestTask h1 = [](TLoop<TSelect>* loop, char* buf, int size) -> TTestTask
+    TTestTask h1 = [](TPollerBase& poller, char* buf, int size) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8888}, loop->Poller());
+        TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
         co_await client.ReadSome(buf, size);
         co_return;
-    }(&loop, rcv_buf, sizeof(rcv_buf));
+    }(loop.Poller(), rcv_buf, sizeof(rcv_buf));
 
     TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
     {
@@ -144,16 +144,16 @@ void test_connection_timeout(void**) {
     socket.Bind();
     socket.Listen();
 
-    TTestTask h = [](TLoop<TSelect>& loop, bool& timeout) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8889}, loop.Poller());
+        TSocket client(TAddress{"127.0.0.1", 8889}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(100));
         } catch (const TTimeout& ) {
             timeout = true;
         }
         co_return;
-    }(loop, timeout);
+    }(loop.Poller(), timeout);
 
     while (!h.done()) {
         loop.Step();
@@ -167,9 +167,9 @@ void test_connection_refused_on_write(void**) {
     TLoop<TSelect> loop;
     int err = 0;
 
-    TTestTask h = [](TLoop<TSelect>* loop, int* err) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, int* err) -> TTestTask
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
@@ -178,7 +178,7 @@ void test_connection_refused_on_write(void**) {
             *err = ex.Errno();
         }
         co_return;
-    }(&loop, &err);
+    }(loop.Poller(), &err);
 
     while (!h.done()) {
         loop.Step();
@@ -193,9 +193,9 @@ void test_connection_refused_on_read(void**) {
     TLoop<TSelect> loop;
     int err = 0;
 
-    TTestTask h = [](TLoop<TSelect>* loop, int* err) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, int* err) -> TTestTask
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, loop->Poller());
+        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
@@ -204,7 +204,7 @@ void test_connection_refused_on_read(void**) {
             *err = ex.Errno();
         }
         co_return;
-    }(&loop, &err);
+    }(loop.Poller(), &err);
 
     while (!h.done()) {
         loop.Step();
@@ -219,7 +219,7 @@ void test_timeout(void**) {
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
-    TTestTask h = [](TSelect& poller, TTime* next, std::chrono::milliseconds timeout) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, TTime* next, std::chrono::milliseconds timeout) -> TTestTask
     {
         co_await poller.Sleep(timeout);
         *next = std::chrono::steady_clock::now();
