@@ -17,7 +17,7 @@ TSimpleTask client(TLoop* loop, TAddress addr)
         while (size && (size = co_await input.ReadSome(out, sizeof(out)))) {
             co_await socket.WriteSome(out, size);
             size = co_await socket.ReadSome(in, sizeof(in));
-            std::cout << "Received from server: " << std::string_view(in, size) << " (" << size << ") bytes \n";
+            std::cout << "Received: " << std::string_view(in, size) << "\n";
         }
     } catch (const std::exception& ex) {
         std::cout << "Exception: " << ex.what() << "\n";
