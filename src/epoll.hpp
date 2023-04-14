@@ -1,7 +1,5 @@
 #pragma once
 
-#include <asm-generic/errno-base.h>
-#include <cerrno>
 #include <sys/epoll.h>
 #include <unistd.h>
 
