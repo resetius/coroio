@@ -50,5 +50,23 @@ struct TEvent {
     THandle Timeout;
 };
 
+inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000))
+{
+    if (now > deadline) {
+        return {0,0};
+    } else {
+        auto duration = (deadline - now);
+        if (duration > min_duration) {
+            duration = min_duration;
+        }
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+        duration -= seconds;
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
+        timeval tv;
+        tv.tv_sec = seconds.count();
+        tv.tv_usec = microseconds.count();
+        return tv;
+    }
+}
 
 } // namespace NNet

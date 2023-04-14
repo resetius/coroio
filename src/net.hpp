@@ -9,7 +9,6 @@
 #include <cstdio>
 
 #include <arpa/inet.h>
-#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -18,6 +17,7 @@
 #include <assert.h>
 
 #include "poller.hpp"
+#include "select.hpp"
 
 namespace NNet {
 
@@ -35,89 +35,6 @@ struct TVoidPromise
     std::suspend_never final_suspend() noexcept { return {}; }
     void return_void() {}
     void unhandled_exception() {}
-};
-
-namespace {
-
-timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000))
-{
-    if (now > deadline) {
-        return {0,0};
-    } else {
-        auto duration = (deadline - now);
-        if (duration > min_duration) {
-            duration = min_duration;
-        }
-        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
-        duration -= seconds;
-        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
-        timeval tv;
-        tv.tv_sec = seconds.count();
-        tv.tv_usec = microseconds.count();
-        return tv;
-    }
-}
-
-}
-
-class TSelect: public TPollerBase {
-    fd_set ReadFds_;
-    fd_set WriteFds_;
-
-public:
-    TSelect() {
-        FD_ZERO(&ReadFds_);
-        FD_ZERO(&WriteFds_);
-    }
-
-    void Poll() {
-        auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        auto tv = GetTimeval(TClock::now(), deadline);
-        int maxFd = -1;
-
-        FD_ZERO(&ReadFds_);
-        FD_ZERO(&WriteFds_);
-
-        for (auto& [k, ev] : Events_) {
-            if (ev.Read) {
-                FD_SET(k, &ReadFds_);
-            }
-            if (ev.Write) {
-                FD_SET(k, &WriteFds_);
-            }
-            maxFd = std::max(maxFd, k);
-        }
-        if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }
-        auto now = TClock::now();
-
-        ReadyHandles_.clear();
-
-        for (int k=0; k <= maxFd; ++k) {
-            auto& ev = Events_[k];
-            if (FD_ISSET(k, &WriteFds_)) {
-                ReadyHandles_.emplace_back(std::move(ev.Write));
-                ev.Write = {};
-            }
-            if (FD_ISSET(k, &ReadFds_)) {
-                ReadyHandles_.emplace_back(std::move(ev.Read));
-                ev.Read = {};
-            }
-        }
-
-        while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
-            TTimer timer = std::move(Timers_.top());
-            if (timer.Fd >= 0) {
-                auto it = Events_.find(timer.Fd);
-                if (it != Events_.end()) {
-                    ReadyHandles_.emplace_back(it->second.Timeout);
-                    it->second = {};
-                }
-            } else {
-                ReadyHandles_.emplace_back(timer.Handle);
-            }
-            Timers_.pop();
-        }
-    }
 };
 
 class TAddress {
