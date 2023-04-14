@@ -7,7 +7,10 @@
 #include <net.hpp>
 #include <select.hpp>
 #include <poll.hpp>
+
+#ifdef __linux__ 
 #include <epoll.hpp>
+#endif
 
 extern "C" {
 #include <cmocka.h>
@@ -255,18 +258,24 @@ void test_timeout(void**) {
     { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
     { #f "(" #c ")", f<c>, NULL, NULL, NULL }
 
+#ifdef __linux__ 
+#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
+#else
+#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll)
+#endif
+
 int main() {
     signal(SIGPIPE, SIG_IGN);
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
-        my_unit_test3(test_listen, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_timeout, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_accept, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_write_after_connect, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_write_after_accept, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_connection_timeout, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_connection_refused_on_write, TSelect, TPoll, TEPoll),
-        my_unit_test3(test_connection_refused_on_read, TSelect, TPoll, TEPoll),
+        my_unit_poller(test_listen),
+        my_unit_poller(test_timeout),
+        my_unit_poller(test_accept),
+        my_unit_poller(test_write_after_connect),
+        my_unit_poller(test_write_after_accept),
+        my_unit_poller(test_connection_timeout),
+        my_unit_poller(test_connection_refused_on_write),
+        my_unit_poller(test_connection_refused_on_read),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
