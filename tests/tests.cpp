@@ -261,7 +261,7 @@ void test_timeout(void**) {
 #ifdef __linux__ 
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
 #else
-#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll)
+#define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
 
 int main() {
