@@ -2,14 +2,11 @@
 
 #include <unordered_map>
 #include <vector>
-#include <coroutine>
-#include <chrono>
 #include <iostream>
 #include <queue>
 
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 
 #include <arpa/inet.h>
 #include <sys/select.h>
@@ -20,30 +17,9 @@
 #include <fcntl.h>
 #include <assert.h>
 
+#include "poller.hpp"
+
 namespace NNet {
-
-class TSystemError: public std::exception
-{
-public:
-    TSystemError()
-        : Errno_(errno)
-        , Message_(strerror(Errno_))
-    { }
-
-    const char* what() const noexcept {
-        return Message_.c_str();
-    }
-
-    int Errno() const {
-        return Errno_;
-    }
-
-private:
-    int Errno_;
-    std::string Message_;
-};
-
-class TTimeout: public std::exception { public: };
 
 struct TVoidPromise;
 
@@ -59,25 +35,6 @@ struct TVoidPromise
     std::suspend_never final_suspend() noexcept { return {}; }
     void return_void() {}
     void unhandled_exception() {}
-};
-
-using TClock = std::chrono::steady_clock;
-using TTime = TClock::time_point;
-using THandle = std::coroutine_handle<>;
-
-struct TTimer {
-    TTime Deadline;
-    int Fd;
-    THandle Handle;
-    bool operator<(const TTimer& e) const {
-        return std::tuple(Deadline, Fd) < std::tuple(e.Deadline, e.Fd);
-    }
-};
-
-struct TEvent {
-    THandle Read;
-    THandle Write;
-    THandle Timeout;
 };
 
 namespace {
@@ -103,10 +60,7 @@ timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_dura
 
 }
 
-class TSelect {
-    std::unordered_map<int,TEvent> Events_;
-    std::priority_queue<TTimer> Timers_;
-    std::vector<THandle> ReadyHandles_;
+class TSelect: public TPollerBase {
     fd_set ReadFds_;
     fd_set WriteFds_;
 
@@ -114,52 +68,6 @@ public:
     TSelect() {
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
-    }
-
-    void AddTimer(int fd, TTime deadline, THandle h) {
-        Timers_.emplace(TTimer{deadline, fd, h});
-        if (fd >= 0) {
-            Events_[fd].Timeout = std::move(h);
-        }
-    }
-
-    bool RemoveTimer(int fd) {
-        bool r = !!Events_[fd].Timeout;
-        Events_[fd].Timeout = {};
-        return r;
-    }
-
-    void AddRead(int fd, THandle h) {
-        Events_[fd].Read = std::move(h);
-    }
-
-    void AddWrite(int fd, THandle h) {
-        Events_[fd].Write = std::move(h);
-    }
-
-    void RemoveEvent(int fd) {
-        Events_.erase(fd);
-    }
-
-    template<typename Rep, typename Period>
-    auto Sleep(std::chrono::duration<Rep,Period> duration) {
-        auto now = TClock::now();
-        auto next= now+duration;
-        struct TAwaitable {
-            bool await_ready() {
-                return false;
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                poller->AddTimer(-1, n, h);
-            }
-
-            void await_resume() { }
-
-            TSelect* poller;
-            TTime n;
-        };
-        return TAwaitable{this,next};
     }
 
     void Poll() {
@@ -209,10 +117,6 @@ public:
             }
             Timers_.pop();
         }
-    }
-
-    auto& ReadyHandles() {
-        return ReadyHandles_;
     }
 };
 
