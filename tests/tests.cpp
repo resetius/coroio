@@ -1,9 +1,12 @@
+#include <exception>
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
 #include <signal.h>
 
 #include <net.hpp>
+#include <select.hpp>
+#include <poll.hpp>
 
 extern "C" {
 #include <cmocka.h>
@@ -37,16 +40,18 @@ void test_addr(void**) {
     assert_true(memcmp(&low.sin_addr, &value, 4) == 0);
 }
 
+template<typename TPoller>
 void test_listen(void**) {
-    TLoop loop;
+    TLoop<TPoller> loop;
     TAddress address("127.0.0.1", 8888);
     TSocket socket(std::move(address), loop.Poller());
     socket.Bind();
     socket.Listen();
 }
 
+template<typename TPoller>
 void test_accept(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     TSocket clientSocket{};
     socket.Bind();
@@ -75,8 +80,9 @@ void test_accept(void**) {
     assert_true(memcmp(&addr1, &addr2, 4)==0);
 }
 
+template<typename TPoller>
 void test_write_after_connect(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
     socket.Bind();
     socket.Listen();
@@ -106,8 +112,9 @@ void test_write_after_connect(void**) {
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
 
+template<typename TPoller>
 void test_write_after_accept(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     socket.Bind();
     socket.Listen();
@@ -137,8 +144,9 @@ void test_write_after_accept(void**) {
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
 
+template<typename TPoller>
 void test_connection_timeout(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     TSocket socket(TAddress{"127.0.0.1", 8889}, loop.Poller());
     bool timeout = false;
     socket.Bind();
@@ -163,8 +171,9 @@ void test_connection_timeout(void**) {
     assert_true(timeout);
 }
 
+template<typename TPoller>
 void test_connection_refused_on_write(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     int err = 0;
 
     TTestTask h = [](TPollerBase& poller, int* err) -> TTestTask
@@ -189,8 +198,9 @@ void test_connection_refused_on_write(void**) {
     assert_true(err == ECONNREFUSED || err == EPIPE);
 }
 
+template<typename TPoller>
 void test_connection_refused_on_read(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     int err = 0;
 
     TTestTask h = [](TPollerBase& poller, int* err) -> TTestTask
@@ -214,8 +224,9 @@ void test_connection_refused_on_read(void**) {
     assert_int_equal(err, ECONNREFUSED);
 }
 
+template<typename TPoller>
 void test_timeout(void**) {
-    TLoop<TSelect> loop;
+    TLoop<TPoller> loop;
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
@@ -238,14 +249,22 @@ int main() {
     signal(SIGPIPE, SIG_IGN);
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
-        cmocka_unit_test(test_listen),
-        cmocka_unit_test(test_timeout),
-        cmocka_unit_test(test_accept),
-        cmocka_unit_test(test_write_after_connect),
-        cmocka_unit_test(test_write_after_accept),
-        cmocka_unit_test(test_connection_timeout),
-        cmocka_unit_test(test_connection_refused_on_write),
-        cmocka_unit_test(test_connection_refused_on_read),
+        cmocka_unit_test(test_listen<TSelect>),
+        cmocka_unit_test(test_listen<TPoll>),
+        cmocka_unit_test(test_timeout<TSelect>),
+        cmocka_unit_test(test_timeout<TPoll>),
+        cmocka_unit_test(test_accept<TSelect>),
+        cmocka_unit_test(test_accept<TPoll>),
+        cmocka_unit_test(test_write_after_connect<TSelect>),
+        cmocka_unit_test(test_write_after_connect<TPoll>),
+        cmocka_unit_test(test_write_after_accept<TSelect>),
+        cmocka_unit_test(test_write_after_accept<TPoll>),
+        cmocka_unit_test(test_connection_timeout<TSelect>),
+        cmocka_unit_test(test_connection_timeout<TPoll>),
+        cmocka_unit_test(test_connection_refused_on_write<TSelect>),
+        cmocka_unit_test(test_connection_refused_on_write<TPoll>),
+        cmocka_unit_test(test_connection_refused_on_read<TSelect>),
+        cmocka_unit_test(test_connection_refused_on_read<TPoll>),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

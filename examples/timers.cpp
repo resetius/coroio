@@ -1,4 +1,6 @@
-#include "net.hpp"
+#include <net.hpp>
+#include <select.hpp>
+#include <poll.hpp>
 
 using NNet::TSimpleTask;
 using NNet::TSelect;

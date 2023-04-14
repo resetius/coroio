@@ -1,4 +1,7 @@
 #include <net.hpp>
+#include <select.hpp>
+#include <poll.hpp>
+
 #include <signal.h>
 
 using NNet::TSimpleTask;
