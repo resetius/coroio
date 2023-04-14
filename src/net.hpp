@@ -17,7 +17,6 @@
 #include <assert.h>
 
 #include "poller.hpp"
-#include "select.hpp"
 
 namespace NNet {
 
@@ -62,7 +61,7 @@ private:
     struct sockaddr_in Addr_;
 };
 
-template<typename TPoller = TSelect>
+template<typename TPoller>
 class TLoop {
 public:
     void Loop() {

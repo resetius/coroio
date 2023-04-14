@@ -61,6 +61,24 @@ public:
     }
 
 protected:
+    void ProcessTimers() {
+        auto now = TClock::now();
+
+        while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
+            TTimer timer = std::move(Timers_.top());
+            if (timer.Fd >= 0) {
+                auto it = Events_.find(timer.Fd);
+                if (it != Events_.end()) {
+                    ReadyHandles_.emplace_back(it->second.Timeout);
+                    it->second = {};
+                }
+            } else {
+                ReadyHandles_.emplace_back(timer.Handle);
+            }
+            Timers_.pop();
+        }
+    }
+
     std::unordered_map<int,TEvent> Events_;
     std::priority_queue<TTimer> Timers_;
     std::vector<THandle> ReadyHandles_;

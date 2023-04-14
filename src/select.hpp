@@ -7,9 +7,6 @@
 namespace NNet {
 
 class TSelect: public TPollerBase {
-    fd_set ReadFds_;
-    fd_set WriteFds_;
-
 public:
     TSelect() {
         FD_ZERO(&ReadFds_);
@@ -33,8 +30,7 @@ public:
             }
             maxFd = std::max(maxFd, k);
         }
-        if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }
-        auto now = TClock::now();
+        if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }        
 
         ReadyHandles_.clear();
 
@@ -50,20 +46,12 @@ public:
             }
         }
 
-        while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
-            TTimer timer = std::move(Timers_.top());
-            if (timer.Fd >= 0) {
-                auto it = Events_.find(timer.Fd);
-                if (it != Events_.end()) {
-                    ReadyHandles_.emplace_back(it->second.Timeout);
-                    it->second = {};
-                }
-            } else {
-                ReadyHandles_.emplace_back(timer.Handle);
-            }
-            Timers_.pop();
-        }
+        ProcessTimers();
     }
+
+private:
+    fd_set ReadFds_;
+    fd_set WriteFds_;
 };
 
 } // namespace NNet
