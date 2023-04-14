@@ -1,7 +1,11 @@
 #include <net.hpp>
 #include <signal.h>
 
-using namespace NNet;
+using NNet::TSimpleTask;
+using NNet::TSocket;
+using NNet::TSelect;
+using NNet::TAddress;
+using TLoop = NNet::TLoop<TSelect>;
 
 TSimpleTask client_handler(TSocket socket, TLoop* loop) {
     char buffer[128] = {0}; ssize_t size = 0;
