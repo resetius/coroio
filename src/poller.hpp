@@ -10,6 +10,10 @@ namespace NNet {
 
 class TPollerBase {
 public:
+    TPollerBase() = default;
+    TPollerBase(const TPollerBase& ) = delete;
+    TPollerBase& operator=(const TPollerBase& ) = delete;
+
     void AddTimer(int fd, TTime deadline, THandle h) {
         Timers_.emplace(TTimer{deadline, fd, h});
         if (fd >= 0) {
