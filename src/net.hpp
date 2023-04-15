@@ -238,6 +238,10 @@ public:
         return Addr_;
     }
 
+    int Fd() const {
+        return Fd_;
+    }
+
 private:
     int Create() {
         auto s = socket(PF_INET, SOCK_STREAM, 0);
