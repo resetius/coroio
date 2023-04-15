@@ -36,6 +36,22 @@ struct TVoidPromise
     void unhandled_exception() {}
 };
 
+struct TTestPromise;
+
+struct TTestTask : std::coroutine_handle<TTestPromise>
+{
+    using promise_type = TTestPromise;
+};
+
+struct TTestPromise
+{
+    TTestTask get_return_object() { return { TTestTask::from_promise(*this) }; }
+    std::suspend_never initial_suspend() { return {}; }
+    std::suspend_always final_suspend() noexcept { return {}; }
+    void return_void() {}
+    void unhandled_exception() {}
+};
+
 class TAddress {
 public:
     TAddress(const std::string& addr, int port)

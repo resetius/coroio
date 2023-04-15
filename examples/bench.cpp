@@ -1,4 +1,5 @@
 #include <chrono>
+#include <coroutine>
 #include <exception>
 #include <string.h>
 #include <stdlib.h>
@@ -29,7 +30,7 @@ struct Stat {
     int out = 0;
 };
 
-TSimpleTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
+TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     ssize_t size;
     char buf[1] = {0};
 
@@ -51,7 +52,7 @@ TSimpleTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     co_return;
 }
 
-TSimpleTask write_one(TSocket& w, Stat& s) {
+TTestTask write_one(TSocket& w, Stat& s) {
     char buf[1] = {'e'};
     co_await w.WriteSome(buf, 1);
     s.fired ++;
@@ -59,11 +60,13 @@ TSimpleTask write_one(TSocket& w, Stat& s) {
 }
 
 template<typename TPoller>
-void run_test(int num_pipes, int num_writes, int num_active) {
+std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active) {
     Stat s;
     TLoop<TPoller> loop;
     vector<TSocket> pipes;
+    vector<coroutine_handle<>> handles;
     pipes.reserve(num_pipes*2);
+    handles.reserve(num_pipes+num_writes);
     int fired = 0;
     for (int i = 0; i < num_pipes; i++) {
         int p[2];
@@ -75,11 +78,11 @@ void run_test(int num_pipes, int num_writes, int num_active) {
     s.writes = num_writes;
 
     for (int i = 0; i < num_pipes; i++) {
-        pipe_reader(pipes[i*2], pipes[i*2+1], s);
+        handles.emplace_back(pipe_reader(pipes[i*2], pipes[i*2+1], s));
     }
 
     for (int i = 0; i < num_active; i++) {
-        write_one(pipes[i*2+1], s);
+        handles.emplace_back(write_one(pipes[i*2+1], s));
     }
 
     auto t1 = TClock::now();
@@ -88,11 +91,32 @@ void run_test(int num_pipes, int num_writes, int num_active) {
     } while (s.fired != s.count);
     auto t2 = TClock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1);
-    printf("fired: %d, writes: %d, count: %d, failures: %d, out: %d\n", s.fired, s.writes, s.count, s.failures, s.out);
-    printf("elapsed: %ld\n", duration.count());
+    fprintf(stderr, "fired: %d, writes: %d, count: %d, failures: %d, out: %d\n", s.fired, s.writes, s.count, s.failures, s.out);
+    fprintf(stderr, "elapsed: %ld\n", duration.count());
 
-    // TODO: free mem
-    // TODO: multiple runs
+    for (auto& h : handles) {
+        h.destroy();
+    }
+
+    return duration;
+}
+
+template<typename TPoller>
+void run_test(int num_pipes, int num_writes, int num_active) {
+    int runs = 25;
+    vector<uint64_t> results;
+    results.reserve(runs);
+    for (int i = 0; i < runs; i++) {
+        auto d = run_one<TPoller>(num_pipes, num_writes, num_active).count();
+        results.emplace_back(d);
+    }
+    std::sort(results.begin(), results.end());
+    fprintf(stdout, "min: %lu\n", results[0]);
+    fprintf(stdout, "max: %lu\n", results[runs-1]);
+    fprintf(stdout, "p50: %lu\n", results[0.5*runs]);
+    fprintf(stdout, "p90: %lu\n", results[0.9*runs]);
+    fprintf(stdout, "p95: %lu\n", results[0.95*runs]);
+    fprintf(stdout, "p99: %lu\n", results[0.99*runs]);
 }
 
 } // namespace {
