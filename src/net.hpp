@@ -203,6 +203,24 @@ public:
         return TAwaitableRead{Poller_,Fd_,buf,size};
     }
 
+    // force read on next loop iteration
+    auto ReadSomeYield(char* buf, size_t size) {
+        struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
+            bool await_ready() {
+                return (ready = false);
+            }
+
+            void run() {
+                ret = read(fd, b, s);
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->AddRead(fd, h);
+            }
+        };
+        return TAwaitableRead{Poller_,Fd_,buf,size};
+    }
+
     auto WriteSome(char* buf, size_t size) {
         struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             void run() {
