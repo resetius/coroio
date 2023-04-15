@@ -18,22 +18,6 @@ extern "C" {
 
 using namespace NNet;
 
-struct TTestPromise;
-
-struct TTestTask : std::coroutine_handle<TTestPromise>
-{
-    using promise_type = TTestPromise;
-};
-
-struct TTestPromise
-{
-    TTestTask get_return_object() { return { TTestTask::from_promise(*this) }; }
-    std::suspend_never initial_suspend() { return {}; }
-    std::suspend_always final_suspend() noexcept { return {}; }
-    void return_void() {}
-    void unhandled_exception() {}
-};
-
 void test_timeval(void**) {
     auto t1 =  std::chrono::seconds(4);
     auto t2 =  std::chrono::seconds(10);
