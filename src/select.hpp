@@ -31,8 +31,17 @@ public:
             if (ev.Write) {
                 FD_SET(k, WriteFds());
             }
-            maxFd = std::max(maxFd, k);
+            if (!ev.Read && !ev.Write) {
+                Removed_.emplace_back(k);
+            } else {
+                maxFd = std::max(maxFd, k);
+            }
         }
+        for (auto k : Removed_) {
+            Events_.erase(k);
+        }
+        Removed_.clear();
+
         if (select(maxFd+1, ReadFds(), WriteFds(), nullptr, &tv) < 0) { throw TSystemError(); }        
 
         ReadyHandles_.clear();
@@ -64,6 +73,7 @@ private:
 
     std::vector<fd_mask> ReadFds_;
     std::vector<fd_mask> WriteFds_;
+    std::vector<int> Removed_;
 };
 
 } // namespace NNet

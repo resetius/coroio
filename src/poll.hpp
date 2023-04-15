@@ -23,8 +23,18 @@ public:
             if (ev.Write) {
                 pev.events |= POLLOUT;
             }
-            Fds_.emplace_back(std::move(pev));
+
+            if (pev.events) {
+                Fds_.emplace_back(std::move(pev));
+            } else {
+                Removed_.emplace_back(k); // resume coroutines ?
+            }
         }
+
+        for (auto k : Removed_) {
+            Events_.erase(k);
+        }
+        Removed_.clear();
 
         if (poll(&Fds_[0], Fds_.size(), timeout) < 0) { throw TSystemError(); }
 
@@ -56,6 +66,7 @@ public:
 
 private:
     std::vector<pollfd> Fds_;
+    std::vector<int> Removed_;
 };
 
 } // namespace NNet

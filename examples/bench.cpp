@@ -35,7 +35,7 @@ TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     char buf[1] = {0};
 
     try {
-        while ((size = co_await r.ReadSome(buf, 1)) != 0) {
+        while ((size = co_await r.ReadSomeYield(buf, 1)) != 0) {
             s.count += size;
             if (s.writes) {
                 if (co_await w.WriteSome(buf, 1) != 1) {
@@ -56,6 +56,11 @@ TTestTask write_one(TSocket& w, Stat& s) {
     char buf[1] = {'e'};
     co_await w.WriteSome(buf, 1);
     s.fired ++;
+    co_return;
+}
+
+TTestTask yield(TPollerBase& poller) {
+    co_await poller.Sleep(std::chrono::milliseconds(0));
     co_return;
 }
 
@@ -81,17 +86,22 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
         handles.emplace_back(pipe_reader(pipes[i*2], pipes[i*2+1], s));
     }
 
+    handles.emplace_back(yield(loop.Poller())); // initialize events (sleep in readers)
+    loop.Step();
+
     for (int i = 0; i < num_active; i++) {
         handles.emplace_back(write_one(pipes[i*2+1], s));
     }
 
     auto t1 = TClock::now();
+    int xcount = 0;
     do {
         loop.Step();
+        xcount ++;
     } while (s.fired != s.count);
     auto t2 = TClock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1);
-    fprintf(stderr, "fired: %d, writes: %d, count: %d, failures: %d, out: %d\n", s.fired, s.writes, s.count, s.failures, s.out);
+    fprintf(stderr, "fired: %d, writes: %d, count: %d, xcount: %d, failures: %d, out: %d\n", s.fired, s.writes, s.count, xcount, s.failures, s.out);
     fprintf(stderr, "elapsed: %ld\n", duration.count());
 
     for (auto& h : handles) {
