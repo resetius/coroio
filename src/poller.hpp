@@ -1,7 +1,7 @@
 #pragma once
 
 #include <vector>
-#include <unordered_map>
+#include <map>
 #include <queue>
 
 #include "base.hpp"
@@ -84,7 +84,7 @@ protected:
         }
     }
 
-    std::unordered_map<int,TEvent> Events_;
+    std::map<int,TEvent> Events_;
     std::priority_queue<TTimer> Timers_;
     std::vector<THandle> ReadyHandles_;
 };
