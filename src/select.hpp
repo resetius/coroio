@@ -8,9 +8,8 @@ namespace NNet {
 
 class TSelect: public TPollerBase {
 public:
-    TSelect() {
-        FD_ZERO(&ReadFds_);
-        FD_ZERO(&WriteFds_);
+    TSelect() { 
+
     }
 
     void Poll() {
@@ -18,40 +17,53 @@ public:
         auto tv = GetTimeval(TClock::now(), deadline);
         int maxFd = -1;
 
-        FD_ZERO(&ReadFds_);
-        FD_ZERO(&WriteFds_);
+        constexpr int bits = sizeof(fd_mask)*8;
 
         for (auto& [k, ev] : Events_) {
+            if (k >= ReadFds_.size()*bits) {
+                ReadFds_.resize((k+bits-1)/bits);
+                WriteFds_.resize((k+bits-1)/bits);
+            }
+
             if (ev.Read) {
-                FD_SET(k, &ReadFds_);
+                FD_SET(k, ReadFds());
             }
             if (ev.Write) {
-                FD_SET(k, &WriteFds_);
+                FD_SET(k, WriteFds());
             }
             maxFd = std::max(maxFd, k);
         }
-        if (select(maxFd+1, &ReadFds_, &WriteFds_, nullptr, &tv) < 0) { throw TSystemError(); }        
+        if (select(maxFd+1, ReadFds(), WriteFds(), nullptr, &tv) < 0) { throw TSystemError(); }        
 
         ReadyHandles_.clear();
 
         for (int k=0; k <= maxFd; ++k) {
             auto& ev = Events_[k];
-            if (FD_ISSET(k, &WriteFds_)) {
+            if (FD_ISSET(k, WriteFds())) {
                 ReadyHandles_.emplace_back(std::move(ev.Write));
                 ev.Write = {};
             }
-            if (FD_ISSET(k, &ReadFds_)) {
+            if (FD_ISSET(k, ReadFds())) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
                 ev.Read = {};
             }
+            FD_CLR(k, WriteFds());
+            FD_CLR(k, ReadFds());
         }
 
         ProcessTimers();
     }
 
 private:
-    fd_set ReadFds_;
-    fd_set WriteFds_;
+    fd_set* ReadFds() {
+        return reinterpret_cast<fd_set*>(&ReadFds_[0]);
+    }
+    fd_set* WriteFds() {
+        return reinterpret_cast<fd_set*>(&WriteFds_[0]);
+    }
+
+    std::vector<fd_mask> ReadFds_;
+    std::vector<fd_mask> WriteFds_;
 };
 
 } // namespace NNet
