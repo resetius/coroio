@@ -36,6 +36,7 @@ public:
     }
 
     void RemoveEvent(int fd) {
+        // TODO: resume waiting coroutines here
         Events_.erase(fd);
     }
 
