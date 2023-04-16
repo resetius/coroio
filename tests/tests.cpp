@@ -7,6 +7,7 @@
 #include <net.hpp>
 #include <select.hpp>
 #include <poll.hpp>
+#include <system_error>
 
 #ifdef __linux__
 #include <epoll.hpp>
@@ -198,8 +199,12 @@ void test_connection_timeout(void**) {
         TSocket client(TAddress{"10.0.0.1", 18889}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(100));
-        } catch (const TTimeout& ) {
-            timeout = true;
+        } catch (const std::system_error& ex) {
+            if (ex.code() == std::errc::timed_out) {
+                timeout = true;
+            } else {
+                throw;
+            }
         }
         co_return;
     }(loop.Poller(), timeout);
@@ -215,17 +220,17 @@ void test_connection_timeout(void**) {
 template<typename TPoller>
 void test_connection_refused_on_write(void**) {
     TLoop<TPoller> loop;
-    int err = 0;
+    std::error_code err;
 
-    TTestTask h = [](TPollerBase& poller, int* err) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, std::error_code* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
             co_await clientSocket.WriteSome(buffer, sizeof(buffer));
-        } catch (const TSystemError& ex) {
-            *err = ex.Errno();
+        } catch (const std::system_error& ex) {
+            *err = ex.code();
         }
         co_return;
     }(loop.Poller(), &err);
@@ -236,23 +241,23 @@ void test_connection_refused_on_write(void**) {
     h.destroy();
 
     // EPIPE in MacOS
-    assert_true(err == ECONNREFUSED || err == EPIPE);
+    assert_true(err.value() == ECONNREFUSED || err.value() == EPIPE);
 }
 
 template<typename TPoller>
 void test_connection_refused_on_read(void**) {
     TLoop<TPoller> loop;
-    int err = 0;
+    std::error_code err;
 
-    TTestTask h = [](TPollerBase& poller, int* err) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, std::error_code* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
             co_await clientSocket.ReadSome(buffer, sizeof(buffer));
-        } catch (const TSystemError& ex) {
-            *err = ex.Errno();
+        } catch (const std::system_error& ex) {
+            *err = ex.code();
         }
         co_return;
     }(loop.Poller(), &err);
@@ -262,7 +267,7 @@ void test_connection_refused_on_read(void**) {
     }
     h.destroy();
 
-    assert_int_equal(err, ECONNREFUSED);
+    assert_int_equal(err.value(), ECONNREFUSED);
 }
 
 template<typename TPoller>

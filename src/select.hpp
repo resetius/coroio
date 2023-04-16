@@ -42,7 +42,9 @@ public:
         }
         Removed_.clear();
 
-        if (select(maxFd+1, ReadFds(), WriteFds(), nullptr, &tv) < 0) { throw TSystemError(); }        
+        if (select(maxFd+1, ReadFds(), WriteFds(), nullptr, &tv) < 0) {
+            throw std::system_error(errno, std::generic_category(), "select");
+        }
 
         ReadyHandles_.clear();
 

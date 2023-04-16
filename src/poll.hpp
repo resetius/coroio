@@ -36,7 +36,9 @@ public:
         }
         Removed_.clear();
 
-        if (poll(&Fds_[0], Fds_.size(), timeout) < 0) { throw TSystemError(); }
+        if (poll(&Fds_[0], Fds_.size(), timeout) < 0) {
+            throw std::system_error(errno, std::generic_category(), "poll");
+        }
 
         ReadyHandles_.clear();
         for (auto& pev : Fds_) {

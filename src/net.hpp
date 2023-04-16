@@ -1,5 +1,6 @@
 #pragma once
 
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 #include <iostream>
@@ -165,7 +166,7 @@ public:
             bool await_ready() {
                 int ret = connect(fd, (struct sockaddr*) &addr, sizeof(addr));
                 if (ret < 0 && !(errno == EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
-                    throw TSystemError();
+                    throw std::system_error(errno, std::generic_category(), "connect");
                 }
                 return ret >= 0;
             }
@@ -179,7 +180,7 @@ public:
 
             void await_resume() {
                 if (deadline != TTime::max() && poller->RemoveTimer(fd)) {
-                    throw TTimeout();
+                    throw std::system_error(std::make_error_code(std::errc::timed_out));
                 }
             }
 
@@ -246,7 +247,9 @@ public:
                 socklen_t len = sizeof(clientaddr);
 
                 int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
-                if (clientfd < 0) { throw TSystemError(); }
+                if (clientfd < 0) {
+                    throw std::system_error(errno, std::generic_category(), "accept");
+                }
 
                 return TSocket{clientaddr, clientfd, *poller};
             }
@@ -261,12 +264,14 @@ public:
     void Bind() {
         auto addr = Addr_.Addr();
         if (bind(Fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            throw TSystemError();
+            throw std::system_error(errno, std::generic_category(), "bind");
         }
     }
 
     void Listen(int backlog = 128) {
-        if (listen(Fd_, backlog) < 0) { throw TSystemError(); }
+        if (listen(Fd_, backlog) < 0) { 
+            throw std::system_error(errno, std::generic_category(), "listen");
+        }
     }
 
     const TAddress& Addr() const {
@@ -280,7 +285,9 @@ public:
 private:
     int Create() {
         auto s = socket(PF_INET, SOCK_STREAM, 0);
-        if (s < 0) { throw TSystemError(); }
+        if (s < 0) { 
+            throw std::system_error(errno, std::generic_category(), "socket");
+        }
         Setup(s);
         return s;
     }
@@ -291,13 +298,21 @@ private:
         if (S_ISSOCK(statbuf.st_mode)) {
             int value;
             value = 1;
-            if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) { throw TSystemError(); }
+            if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) {
+                throw std::system_error(errno, std::generic_category(), "setsockopt");
+            }
             value = 1;
-            if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) { throw TSystemError(); }
+            if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) {
+                throw std::system_error(errno, std::generic_category(), "setsockopt");
+            }
         }
         auto flags = fcntl(s, F_GETFL, 0);
-        if (flags < 0) { throw TSystemError(); }
-        if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) { throw TSystemError(); }
+        if (flags < 0) {
+            throw std::system_error(errno, std::generic_category(), "fcntl");
+        }
+        if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
+            throw std::system_error(errno, std::generic_category(), "fcntl");
+        }
     }
 
     template<typename T>
@@ -317,7 +332,7 @@ private:
         void SafeRun() {
             ((T*)this)->run();
             if (ret < 0 && !(errno==EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
-                throw TSystemError();
+                throw std::system_error(errno, std::generic_category());
             }
         }
 
