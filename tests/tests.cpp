@@ -218,6 +218,39 @@ void test_connection_timeout(void**) {
 }
 
 template<typename TPoller>
+void test_remove_connection_timeout(void**) {
+    TLoop<TPoller> loop;
+    TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    bool timeout = false;
+
+    TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
+    {
+        TSocket client(TAddress{"127.0.0.1", 18889}, poller);
+        try {
+            co_await client.Connect(TClock::now()+std::chrono::milliseconds(10));
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+        } catch (const std::system_error& ex) {
+            if (ex.code() == std::errc::timed_out) {
+                timeout = true;
+            } else {
+                throw;
+            }
+        }
+        co_return;
+    }(loop.Poller(), timeout);
+
+    while (!h.done()) {
+        loop.Step();
+    }
+    h.destroy();
+
+    assert_false(timeout);
+}
+
+template<typename TPoller>
 void test_connection_refused_on_write(void**) {
     TLoop<TPoller> loop;
     std::error_code err;
@@ -304,7 +337,6 @@ void test_timeout(void**) {
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
-//#define my_unit_poller(f) my_unit_test(f, TSelect)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
@@ -322,6 +354,7 @@ int main() {
         my_unit_poller(test_write_after_connect),
         my_unit_poller(test_write_after_accept),
         my_unit_poller(test_connection_timeout),
+        my_unit_poller(test_remove_connection_timeout),
         my_unit_poller(test_connection_refused_on_write),
         my_unit_poller(test_connection_refused_on_read),
     };
