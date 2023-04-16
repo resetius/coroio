@@ -13,7 +13,9 @@ public:
     TEPoll()
         : Fd_(epoll_create1(EPOLL_CLOEXEC))
     {
-        if (Fd_ < 0) { throw TSystemError(); }
+        if (Fd_ < 0) { 
+            throw std::system_error(errno, std::generic_category(), "epoll_create1");
+        }
     }
 
     ~TEPoll()
@@ -46,18 +48,18 @@ public:
                 old_ev = ev;
                 if (epoll_ctl(Fd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
                     if (errno != EBADF) { // closed descriptor after TSocket -> close
-                        throw TSystemError();
+                        throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                     }
                 }
             } else if (!old_ev.Write && !old_ev.Read) {
                 old_ev = ev;
                 if (epoll_ctl(Fd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
-                    throw TSystemError();
+                    throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             } else if (changed) {
                 old_ev = ev;
                 if (epoll_ctl(Fd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
-                    throw TSystemError();
+                    throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             }
         }
@@ -66,7 +68,9 @@ public:
         OutEvents_.resize(std::max<size_t>(1, InEvents_.size()));
 
         int nfds;
-        if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) { throw TSystemError(); }
+        if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) { 
+            throw std::system_error(errno, std::generic_category(), "epoll_wait");
+        }
 
         ReadyHandles_.clear();
         for (int i = 0; i < nfds; ++i) {

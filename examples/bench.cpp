@@ -10,6 +10,7 @@
 #include <net.hpp>
 #include <poll.hpp>
 #include <select.hpp>
+#include <system_error>
 
 #ifdef __linux__
 #include <epoll.hpp>
@@ -81,7 +82,9 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     int fired = 0;
     for (int i = 0; i < num_pipes; i++) {
         int p[2];
-        if (pipe(&p[0]) < 0) { throw TSystemError(); }
+        if (pipe(&p[0]) < 0) { 
+            throw std::system_error(errno, std::generic_category(), "pipe");
+        }
         pipes.emplace_back(std::move(TSocket{{}, p[0], loop.Poller()}));
         pipes.emplace_back(std::move(TSocket{{}, p[1], loop.Poller()}));
     }

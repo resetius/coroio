@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
+#include <system_error>
 
 #include "poller.hpp"
 
@@ -13,7 +14,9 @@ public:
     TKqueue()
         : Fd_(kqueue())
     {
-        if (Fd_ < 0) { throw TSystemError(); }
+        if (Fd_ < 0) {
+            throw std::system_error(errno, std::generic_category(), "kqueue");
+        }
     }
 
     ~TKqueue()
@@ -68,7 +71,7 @@ public:
                  &OutEvents_[0], OutEvents_.size(),
                  &ts)) < 0)
         {
-            throw TSystemError();
+            throw std::system_error(errno, std::generic_category(), "kevent");
         }
 
         ReadyHandles_.clear();
