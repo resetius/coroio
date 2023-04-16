@@ -226,12 +226,6 @@ void test_remove_connection_timeout(void**) {
 
     bool timeout = false;
 
-    /*TTestTask h1 = [](TSocket* socket) -> TTestTask
-    {
-        TSocket clientSocket = std::move(co_await socket->Accept());
-        co_return;
-    }(&socket);*/
-
     TTestTask h2 = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
         // TODO: use other addr
@@ -345,7 +339,6 @@ void test_timeout(void**) {
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
-//#define my_unit_poller(f) my_unit_test(f, TSelect)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
