@@ -190,14 +190,16 @@ void test_write_after_accept(void**) {
 template<typename TPoller>
 void test_connection_timeout(void**) {
     TLoop<TPoller> loop;
-    TSocket socket(TAddress{"127.0.0.1", 8889}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
     bool timeout = false;
     socket.Bind();
-    socket.Listen();
+    //if constexpr(!std::is_same_v<TPoller, TKqueue>) {
+    //    socket.Listen();
+    //}
 
     TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 8889}, poller);
+        TSocket client(TAddress{"127.0.0.1", 18889}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(100));
         } catch (const TTimeout& ) {
@@ -301,7 +303,7 @@ void test_timeout(void**) {
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
-//#define my_unit_poller(f) my_unit_test(f, TKqueue)
+//#define my_unit_poller(f) my_unit_test(f, TSelect)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif

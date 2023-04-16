@@ -16,9 +16,6 @@ public:
 
     void AddTimer(int fd, TTime deadline, THandle h) {
         Timers_.emplace(TTimer{deadline, fd, h});
-        if (fd >= 0) {
-            Events_[fd].Timeout = std::move(h);
-        }
     }
 
     bool RemoveTimer(int fd) {
@@ -72,14 +69,10 @@ protected:
         while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
             TTimer timer = std::move(Timers_.top());
             if (timer.Fd >= 0) {
-                auto it = Events_.find(timer.Fd);
-                if (it != Events_.end()) {
-                    ReadyHandles_.emplace_back(it->second.Timeout);
-                    it->second = {};
-                }
-            } else {
-                ReadyHandles_.emplace_back(timer.Handle);
+                Events_[timer.Fd].Timeout = timer.Handle;
             }
+
+            ReadyHandles_.emplace_back(timer.Handle);
             Timers_.pop();
         }
     }
