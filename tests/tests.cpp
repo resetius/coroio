@@ -193,9 +193,9 @@ void test_connection_timeout(void**) {
     TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
     bool timeout = false;
     socket.Bind();
-    //if constexpr(!std::is_same_v<TPoller, TKqueue>) {
-    //    socket.Listen();
-    //}
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
+    socket.Listen();
+#endif
 
     TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
