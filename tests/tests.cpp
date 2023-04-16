@@ -12,9 +12,9 @@
 #include <epoll.hpp>
 #endif
 
-//#if defined(__APPLE__) || defined(__FreeBSD__)
-//#include <kqueue.hpp>
-//#endif
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <kqueue.hpp>
+#endif
 
 extern "C" {
 #include <cmocka.h>
@@ -299,8 +299,9 @@ void test_timeout(void**) {
 
 #ifdef __linux__
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
-//#elif defined(__APPLE__) || defined(__FreeBSD__)
-//#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
+//#define my_unit_poller(f) my_unit_test(f, TKqueue)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
