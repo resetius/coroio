@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
+if (EXISTS ${CMAKE_BINARY_DIR}/local.cmake)
+include(${CMAKE_BINARY_DIR}/local.cmake)
+endif ()
 
 project(netlib)
 find_package(PkgConfig REQUIRED)

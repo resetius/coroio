@@ -15,6 +15,10 @@
 #include <epoll.hpp>
 #endif
 
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <kqueue.hpp>
+#endif
+
 using namespace NNet;
 using namespace std;
 
@@ -162,6 +166,13 @@ int main(int argc, char** argv) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
     }
 #endif
+
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    else if (!strcmp(method, "kqueue")) {
+        run_test<TKqueue>(num_pipes, num_writes, num_active);
+    }
+#endif
+
     else {
         std::cerr << "Unknown method: " << method << "\n";
     }
