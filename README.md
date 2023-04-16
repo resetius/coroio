@@ -13,3 +13,8 @@
 * Ubuntu 22.04, WSL2
 ![Benchmark One Active Connection](/bench/bench_11400F.png?raw=true)
 
+* CPU Apple M1
+* MacBook Air M1 16G
+* MacOS 12.6.3
+![Benchmark One Active Connection](/bench/bench_M1.png?raw=true)
+
