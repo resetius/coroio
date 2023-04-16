@@ -32,7 +32,7 @@ public:
             epoll_event eev = {};
             bool changed = false;
             eev.data.fd = k;
-            if (EpollEvents_.size() <= k) {
+            if (EpollInEvents_.size() <= k) {
                 EpollInEvents_.resize(k+1);
             }
             auto& old_ev = EpollInEvents_[k];
