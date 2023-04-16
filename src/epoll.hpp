@@ -11,14 +11,14 @@ namespace NNet {
 class TEPoll: public TPollerBase {
 public:
     TEPoll()
-        : EpollFd_(epoll_create1(EPOLL_CLOEXEC))
+        : Fd_(epoll_create1(EPOLL_CLOEXEC))
     {
-        if (EpollFd_ < 0) { throw TSystemError(); }
+        if (Fd_ < 0) { throw TSystemError(); }
     }
 
     ~TEPoll()
     {
-        if (EpollFd_ >= 0) { close(EpollFd_); }
+        if (Fd_ >= 0) { close(Fd_); }
     }
 
     void Poll() {
@@ -29,10 +29,10 @@ public:
             epoll_event eev = {};
             bool changed = false;
             eev.data.fd = k;
-            if (EpollInEvents_.size() <= k) {
-                EpollInEvents_.resize(k+1);
+            if (InEvents_.size() <= k) {
+                InEvents_.resize(k+1);
             }
-            auto& old_ev = EpollInEvents_[k];
+            auto& old_ev = InEvents_[k];
 
             if (ev.Read) {
                 eev.events |= EPOLLIN;
@@ -44,43 +44,43 @@ public:
             }
             if (!ev.Write && !ev.Read) {
                 old_ev = ev;
-                if (epoll_ctl(EpollFd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
+                if (epoll_ctl(Fd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
                     if (errno != EBADF) { // closed descriptor after TSocket -> close
                         throw TSystemError();
                     }
                 }
             } else if (!old_ev.Write && !old_ev.Read) {
                 old_ev = ev;
-                if (epoll_ctl(EpollFd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
+                if (epoll_ctl(Fd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
                     throw TSystemError();
                 }
             } else if (changed) {
                 old_ev = ev;
-                if (epoll_ctl(EpollFd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
+                if (epoll_ctl(Fd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
                     throw TSystemError();
                 }
             }
         }
 
         Events_.clear();
-        EpollOutEvents_.resize(std::max<size_t>(1, EpollInEvents_.size()));
+        OutEvents_.resize(std::max<size_t>(1, InEvents_.size()));
 
         int nfds;
-        if ((nfds =  epoll_wait(EpollFd_, &EpollOutEvents_[0], EpollOutEvents_.size(), timeout)) < 0) { throw TSystemError(); }
+        if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) { throw TSystemError(); }
 
         ReadyHandles_.clear();
         for (int i = 0; i < nfds; ++i) {
-            int fd = EpollOutEvents_[i].data.fd;
-            auto ev = EpollInEvents_[fd];
-            if (EpollOutEvents_[i].events & EPOLLIN) {
+            int fd = OutEvents_[i].data.fd;
+            auto ev = InEvents_[fd];
+            if (OutEvents_[i].events & EPOLLIN) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
                 ev.Read = {};
             }
-            if (EpollOutEvents_[i].events & EPOLLOUT) {
+            if (OutEvents_[i].events & EPOLLOUT) {
                 ReadyHandles_.emplace_back(std::move(ev.Write));
                 ev.Write = {};
             }
-            if (EpollOutEvents_[i].events & EPOLLHUP) {
+            if (OutEvents_[i].events & EPOLLHUP) {
                 if (ev.Read) {
                     ReadyHandles_.emplace_back(std::move(ev.Read));
                     ev.Read = {};
@@ -98,9 +98,9 @@ public:
     }
 
 private:
-    int EpollFd_;
-    std::vector<TEvent> EpollInEvents_;       // all events in epool
-    std::vector<epoll_event> EpollOutEvents_; // events out from epoll_wait
+    int Fd_;
+    std::vector<TEvent> InEvents_;       // all events in epool
+    std::vector<epoll_event> OutEvents_; // events out from epoll_wait
 };
 
 } // namespace NNet
