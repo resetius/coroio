@@ -81,6 +81,7 @@ public:
                 // closed socket?
                 continue;
             }
+            // TODO: check flags & EV_ERROR && errno = OutEvents_[i].data
             auto maybeEv = Events_.find(fd);
             TEvent ev;
             if (maybeEv == Events_.end()) {
@@ -89,13 +90,12 @@ public:
                 ev = maybeEv->second;
             }
             bool changed = false;
-            if (filter == EVFILT_READ) {
+            if (filter == EVFILT_READ && ev.Read) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
-                assert(ev.Read);
                 ev.Read = {};
                 changed |= true;
             }
-            if (filter == EVFILT_WRITE) {
+            if (filter == EVFILT_WRITE && ev.Write) {
                 ReadyHandles_.emplace_back(std::move(ev.Write));
                 assert(ev.Write);
                 ev.Write = {};
