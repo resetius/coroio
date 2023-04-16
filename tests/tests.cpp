@@ -226,7 +226,7 @@ void test_remove_connection_timeout(void**) {
 
     bool timeout = false;
 
-    TTestTask h2 = [](TPollerBase& poller, bool& timeout) -> TTestTask
+    TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
         // TODO: use other addr
         TSocket client(TAddress{"127.0.0.1", 18889}, poller);
@@ -243,11 +243,10 @@ void test_remove_connection_timeout(void**) {
         co_return;
     }(loop.Poller(), timeout);
 
-    while (!h2.done()) {
+    while (!h.done()) {
         loop.Step();
     }
-    //h1.destroy();
-    h2.destroy();
+    h.destroy();
 
     assert_false(timeout);
 }
