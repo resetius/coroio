@@ -190,16 +190,12 @@ void test_write_after_accept(void**) {
 template<typename TPoller>
 void test_connection_timeout(void**) {
     TLoop<TPoller> loop;
-    TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
     bool timeout = false;
-    socket.Bind();
-#if !defined(__APPLE__) && !defined(__FreeBSD__)
-    socket.Listen();
-#endif
 
     TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
-        TSocket client(TAddress{"127.0.0.1", 18889}, poller);
+        // TODO: use other addr
+        TSocket client(TAddress{"10.0.0.1", 18889}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(100));
         } catch (const TTimeout& ) {
