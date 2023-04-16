@@ -92,14 +92,16 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     s.writes = num_writes;
 
     for (int i = 0; i < num_pipes; i++) {
-        handles.emplace_back(pipe_reader(pipes[i*2], pipes[i*2+1], s));
+        handles.emplace_back(pipe_reader(pipes[i*2], pipes[((i+1)%num_pipes)*2+1], s));
     }
 
     handles.emplace_back(yield(loop.Poller())); // initialize events (sleep in readers)
     loop.Step();
 
+    int space = num_pipes/num_active;
+    space *= 2;
     for (int i = 0; i < num_active; i++) {
-        handles.emplace_back(write_one(pipes[i*2+1], s));
+        handles.emplace_back(write_one(pipes[i*space+1], s));
     }
 
     auto t1 = TClock::now();
