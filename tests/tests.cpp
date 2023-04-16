@@ -228,7 +228,6 @@ void test_remove_connection_timeout(void**) {
 
     TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
     {
-        // TODO: use other addr
         TSocket client(TAddress{"127.0.0.1", 18889}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(10));
