@@ -8,9 +8,13 @@
 #include <select.hpp>
 #include <poll.hpp>
 
-#ifdef __linux__ 
+#ifdef __linux__
 #include <epoll.hpp>
 #endif
+
+//#if defined(__APPLE__) || defined(__FreeBSD__)
+//#include <kqueue.hpp>
+//#endif
 
 extern "C" {
 #include <cmocka.h>
@@ -34,6 +38,24 @@ void test_timeval(void**) {
     tv = GetTimeval(TTime(t1), TTime(t4));
     assert_int_equal(tv.tv_sec, 10);
     assert_int_equal(tv.tv_usec, 0);
+}
+
+void test_timespec(void**) {
+    auto t1 =  std::chrono::seconds(4);
+    auto t2 =  std::chrono::seconds(10);
+    auto ts = GetTimespec(TTime(t1), TTime(t2));
+    assert_int_equal(ts.tv_sec, 6);
+    assert_int_equal(ts.tv_nsec, 0);
+
+    auto t3 =  std::chrono::milliseconds(10001);
+    ts = GetTimespec(TTime(t1), TTime(t3));
+    assert_int_equal(ts.tv_sec, 6);
+    assert_int_equal(ts.tv_nsec, 1000*1000);
+
+    auto t4 = std::chrono::minutes(10000);
+    ts = GetTimespec(TTime(t1), TTime(t4));
+    assert_int_equal(ts.tv_sec, 10);
+    assert_int_equal(ts.tv_nsec, 0);
 }
 
 void test_millis(void**) {
@@ -275,8 +297,10 @@ void test_timeout(void**) {
     { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
     { #f "(" #c ")", f<c>, NULL, NULL, NULL }
 
-#ifdef __linux__ 
+#ifdef __linux__
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
+//#elif defined(__APPLE__) || defined(__FreeBSD__)
+//#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
@@ -286,6 +310,7 @@ int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
         cmocka_unit_test(test_timeval),
+        cmocka_unit_test(test_timespec),
         cmocka_unit_test(test_millis),
         my_unit_poller(test_listen),
         my_unit_poller(test_timeout),
