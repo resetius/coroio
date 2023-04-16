@@ -1,6 +1,8 @@
 #include <chrono>
 #include <coroutine>
 #include <exception>
+#include <algorithm>
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -139,7 +141,7 @@ int main(int argc, char** argv) {
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-n") && i < argc-1) {
-            num_pipes = atoi(argv[++i]);            
+            num_pipes = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "-a") && i < argc-1) {
             num_active = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "-w") && i < argc-1) {
@@ -154,7 +156,7 @@ int main(int argc, char** argv) {
         run_test<TPoll>(num_pipes, num_writes, num_active);
     } else if (!strcmp(method, "select")) {
         run_test<TSelect>(num_pipes, num_writes, num_active);
-    } 
+    }
 #ifdef __linux__
     else if (!strcmp(method, "epoll")) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
