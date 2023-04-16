@@ -25,9 +25,6 @@ public:
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         int timeout = GetMillis(TClock::now(), deadline);
 
-        EpollModEvents_.clear();
-        EpollNewEvents_.clear();
-        EpollDelEvents_.clear();
         for (auto& [k, ev] : Events_) {
             epoll_event eev = {};
             bool changed = false;
@@ -47,32 +44,22 @@ public:
             }
             if (!ev.Write && !ev.Read) {
                 old_ev = ev;
-                EpollDelEvents_.emplace_back(eev);
+                if (epoll_ctl(EpollFd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
+                    if (errno != EBADF) { // closed descriptor after TSocket -> close
+                        throw TSystemError();
+                    }
+                }
             } else if (!old_ev.Write && !old_ev.Read) {
                 old_ev = ev;
-                EpollNewEvents_.emplace_back(eev);
+                if (epoll_ctl(EpollFd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
+                    throw TSystemError();
+                }
             } else if (changed) {
                 old_ev = ev;
-                EpollModEvents_.emplace_back(eev);
-            }
-        }
-        for (auto& eev : EpollNewEvents_) {
-            if (epoll_ctl(EpollFd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
-                throw TSystemError();
-            }
-        }
-        for (auto& eev : EpollModEvents_) {
-            if (epoll_ctl(EpollFd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
-                throw TSystemError();
-            }
-        }
-        for (auto& eev : EpollDelEvents_) {
-            if (epoll_ctl(EpollFd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
-                if (errno != EBADF) { // closed descriptor after TSocket -> close
+                if (epoll_ctl(EpollFd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
                     throw TSystemError();
                 }
             }
-            EpollInEvents_[eev.data.fd] = {};
         }
 
         Events_.clear();
@@ -114,9 +101,6 @@ private:
     int EpollFd_;
     std::vector<TEvent> EpollInEvents_;       // all events in epool
     std::vector<epoll_event> EpollOutEvents_; // events out from epoll_wait
-    std::vector<epoll_event> EpollNewEvents_; // new events for epoll_ctl
-    std::vector<epoll_event> EpollModEvents_; // changed events for epoll_ctl
-    std::vector<epoll_event> EpollDelEvents_; // changed events for epoll_ctl
 };
 
 } // namespace NNet
