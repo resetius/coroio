@@ -218,6 +218,47 @@ void test_connection_timeout(void**) {
 }
 
 template<typename TPoller>
+void test_remove_connection_timeout(void**) {
+    TLoop<TPoller> loop;
+    TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    bool timeout = false;
+
+    /*TTestTask h1 = [](TSocket* socket) -> TTestTask
+    {
+        TSocket clientSocket = std::move(co_await socket->Accept());
+        co_return;
+    }(&socket);*/
+
+    TTestTask h2 = [](TPollerBase& poller, bool& timeout) -> TTestTask
+    {
+        // TODO: use other addr
+        TSocket client(TAddress{"127.0.0.1", 18889}, poller);
+        try {
+            co_await client.Connect(TClock::now()+std::chrono::milliseconds(10));
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+        } catch (const std::system_error& ex) {
+            if (ex.code() == std::errc::timed_out) {
+                timeout = true;
+            } else {
+                throw;
+            }
+        }
+        co_return;
+    }(loop.Poller(), timeout);
+
+    while (!h2.done()) {
+        loop.Step();
+    }
+    //h1.destroy();
+    h2.destroy();
+
+    assert_false(timeout);
+}
+
+template<typename TPoller>
 void test_connection_refused_on_write(void**) {
     TLoop<TPoller> loop;
     std::error_code err;
@@ -322,6 +363,7 @@ int main() {
         my_unit_poller(test_write_after_connect),
         my_unit_poller(test_write_after_accept),
         my_unit_poller(test_connection_timeout),
+        my_unit_poller(test_remove_connection_timeout),
         my_unit_poller(test_connection_refused_on_write),
         my_unit_poller(test_connection_refused_on_read),
     };

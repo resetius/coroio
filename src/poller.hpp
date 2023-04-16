@@ -18,10 +18,16 @@ public:
         Timers_.emplace(TTimer{deadline, fd, h});
     }
 
-    bool RemoveTimer(int fd) {
-        bool r = !!Events_[fd].Timeout;
-        Events_[fd].Timeout = {};
-        return r;
+    bool RemoveTimer(int fd, TTime deadline) {
+        Timers_.emplace(TTimer{deadline, fd, {}}); // insert empty timer befor existing
+        auto it = Events_.find(fd);
+        if (it == Events_.end()) {
+            return false;
+        } else {
+            bool r = it->second.TimeoutFired;
+            it->second.TimeoutFired = false;
+            return r;
+        }
     }
 
     void AddRead(int fd, THandle h) {
@@ -65,14 +71,19 @@ public:
 protected:
     void ProcessTimers() {
         auto now = TClock::now();
-
+        int prevFd = -1;
         while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
-            TTimer timer = std::move(Timers_.top());
-            if (timer.Fd >= 0) {
-                Events_[timer.Fd].Timeout = timer.Handle;
+            TTimer timer = std::move(Timers_.top());            
+
+            if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
+                ReadyHandles_.emplace_back(timer.Handle);
+
+                if (timer.Fd >= 0) {
+                    Events_[timer.Fd].TimeoutFired = true;
+                }
             }
 
-            ReadyHandles_.emplace_back(timer.Handle);
+            prevFd = timer.Fd;
             Timers_.pop();
         }
     }

@@ -20,14 +20,14 @@ struct TTimer {
     int Fd;
     THandle Handle;
     bool operator<(const TTimer& e) const {
-        return std::tuple(Deadline, Fd) < std::tuple(e.Deadline, e.Fd);
+        return std::tuple(Deadline, Fd, !static_cast<bool>(Handle)) < std::tuple(e.Deadline, e.Fd, !static_cast<bool>(e.Handle));
     }
 };
 
 struct TEvent {
     THandle Read;
     THandle Write;
-    THandle Timeout;
+    bool TimeoutFired = false;
 };
 
 template<typename T1, typename T2>

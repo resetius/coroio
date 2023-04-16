@@ -179,7 +179,7 @@ public:
             }
 
             void await_resume() {
-                if (deadline != TTime::max() && poller->RemoveTimer(fd)) {
+                if (deadline != TTime::max() && poller->RemoveTimer(fd, deadline)) {
                     throw std::system_error(std::make_error_code(std::errc::timed_out));
                 }
             }
