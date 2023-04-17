@@ -25,5 +25,5 @@ Performance comparison using different event notification mechansims in Libevent
 * MacBook Air M1 16G
 * MacOS 12.6.3
 
-<img src="/bench/bench_M1.png?raw=true" width="400"/>
+<img src="/bench/bench_M1.png?raw=true" width="400"/><img src="/bench/bench_M1_100.png?raw=true" width="400"/>
 
