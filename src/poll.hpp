@@ -18,7 +18,7 @@ public:
 
         for (auto& [k, ev] : Events_) {
             if (InEvents_.size() <= k) {
-                InEvents_.resize(k+1, {{}, -1});
+                InEvents_.resize(k+1, std::make_tuple(TEvent{}, -1));
             }
             auto& [old_ev, idx] = InEvents_[k];
             pollfd pev = {.fd = k, .events = 0, .revents = 0};
