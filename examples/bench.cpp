@@ -82,7 +82,7 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     int fired = 0;
     for (int i = 0; i < num_pipes; i++) {
         int p[2];
-        if (pipe(&p[0]) < 0) { 
+        if (pipe(&p[0]) < 0) {
             throw std::system_error(errno, std::generic_category(), "pipe");
         }
         pipes.emplace_back(std::move(TSocket{{}, p[0], loop.Poller()}));
@@ -112,8 +112,13 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     } while (s.fired != s.count);
     auto t2 = TClock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1);
-    fprintf(stderr, "fired: %d, writes: %d, count: %d, xcount: %d, failures: %d, out: %d\n", s.fired, s.writes, s.count, xcount, s.failures, s.out);
-    fprintf(stderr, "elapsed: %ld\n", duration.count());
+    cerr << "fired: " << s.fired << ", "
+         << "writes: " << s.writes << ", "
+         << "count: " << s.count << ", "
+         << "xcount: " << xcount << ", "
+         << "failures: " << s.failures << ", "
+         << "out: " << s.out << endl;
+    cerr << "elapsed: " <<  duration.count() << endl;
 
     for (auto& h : handles) {
         h.destroy();
@@ -131,13 +136,13 @@ void run_test(int num_pipes, int num_writes, int num_active) {
         auto d = run_one<TPoller>(num_pipes, num_writes, num_active).count();
         results.emplace_back(d);
     }
-    std::sort(results.begin(), results.end());
-    fprintf(stdout, "min: %lu\n", results[0]);
-    fprintf(stdout, "max: %lu\n", results[runs-1]);
-    fprintf(stdout, "p50: %lu\n", results[0.5*runs]);
-    fprintf(stdout, "p90: %lu\n", results[0.9*runs]);
-    fprintf(stdout, "p95: %lu\n", results[0.95*runs]);
-    fprintf(stdout, "p99: %lu\n", results[0.99*runs]);
+    sort(results.begin(), results.end());
+    cout << "min: " << results[0] << endl;
+    cout << "max: " << results[runs-1] << endl;
+    cout << "p50: " << results[0.5*runs] << endl;
+    cout << "p90: " << results[0.9*runs] << endl;
+    cout << "p95: " << results[0.95*runs] << endl;
+    cout << "p99: " << results[0.99*runs] << endl;
 }
 
 } // namespace {
@@ -167,7 +172,7 @@ int main(int argc, char** argv) {
         run_test<TSelect>(num_pipes, num_writes, num_active);
     }
 #ifdef __linux__
-    else if (!strcmp(method, "epoll")) {
+   else if (!strcmp(method, "epoll")) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
     }
 #endif
