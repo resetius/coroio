@@ -15,7 +15,6 @@ public:
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         auto tv = GetTimeval(TClock::now(), deadline);
-        int maxFd = -1;
 
         constexpr int bits = sizeof(fd_mask)*8;
 
@@ -27,40 +26,60 @@ public:
             if (InEvents_.size() <= k) {
                 InEvents_.resize(k+1);
             }
+            auto& old_ev = InEvents_[k];
 
-            if (ev.Read) {
+            if (ev.Read&&!old_ev.Read) {
                 FD_SET(k, ReadFds());
-                InEvents_[k].Read = ev.Read;
+                old_ev.Read = ev.Read;
             }
-            if (ev.Write) {
+            if (ev.Write&&!old_ev.Write) {
                 FD_SET(k, WriteFds());
-                InEvents_[k].Write = ev.Write;
+                old_ev.Write = ev.Write;
             }
-            maxFd = std::max(maxFd, k);
+            if (!ev.Read&&old_ev.Read) {
+                FD_CLR(k, ReadFds());
+                old_ev.Read = ev.Read;
+            }
+            if (!ev.Write&&old_ev.Write) {
+                FD_CLR(k, WriteFds());
+                old_ev.Write = ev.Write;
+            }
+
+            while (!InEvents_.empty() && !InEvents_.back().Write && !InEvents_.back().Read) {
+                InEvents_.pop_back();
+            }
         }
 
         Events_.clear();
         ReadyHandles_.clear();
 
-        if (select(maxFd+1, ReadFds(), WriteFds(), nullptr, &tv) < 0) {
+        if (select(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &tv) < 0) {
             throw std::system_error(errno, std::generic_category(), "select");
         }
 
-        for (int k=0; k <= maxFd; ++k) {
-            auto& ev = InEvents_[k];
+        for (size_t k=0; k < InEvents_.size(); ++k) {
+            auto ev = InEvents_[k];
+            bool changed = false;
 
             if (FD_ISSET(k, WriteFds())) {
                 ReadyHandles_.emplace_back(std::move(ev.Write));
                 ev.Write = {};
-                FD_CLR(k, WriteFds());
+                changed |= true;
+            } else if (ev.Write) {
+                // fd was cleared by select, set it
+                FD_SET(k, WriteFds());
             }
             if (FD_ISSET(k, ReadFds())) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
                 ev.Read = {};
-                FD_CLR(k, ReadFds());
+                changed |= true;
+            } else if (ev.Read) {
+                // fd was cleared by select, set it
+                FD_SET(k, ReadFds());
             }
 
-            if (ev.Read || ev.Write) {
+            if (changed) {
+                // keep changes small
                 Events_.emplace(k, ev);
             }
         }
