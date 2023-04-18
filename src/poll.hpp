@@ -16,6 +16,9 @@ public:
 
         Fds_.clear();
         for (auto& [k, ev] : Events_) {
+            if (InEvents_.size() <= k) {
+                InEvents_.resize(k+1);
+            }
             pollfd pev = {.fd = k, .events = 0, .revents = 0};
             if (ev.Read) {
                 pev.events |= POLLIN;
@@ -26,23 +29,19 @@ public:
 
             if (pev.events) {
                 Fds_.emplace_back(std::move(pev));
-            } else {
-                Removed_.emplace_back(k); // resume coroutines ?
+                InEvents_[k] = ev;
             }
         }
 
-        for (auto k : Removed_) {
-            Events_.erase(k);
-        }
-        Removed_.clear();
+        Events_.clear();
+        ReadyHandles_.clear();
 
         if (poll(&Fds_[0], Fds_.size(), timeout) < 0) {
             throw std::system_error(errno, std::generic_category(), "poll");
         }
 
-        ReadyHandles_.clear();
         for (auto& pev : Fds_) {
-            auto& ev = Events_[pev.fd];
+            auto& ev = InEvents_[pev.fd];
             if (pev.revents & POLLIN) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
                 ev.Read = {};
@@ -61,14 +60,18 @@ public:
                     ev.Write = {};
                 }
             }
+
+            if (ev.Read || ev.Write) {
+                Events_.emplace(pev.fd, ev);
+            }
         }
 
         ProcessTimers();
     }
 
 private:
+    std::vector<TEvent> InEvents_;
     std::vector<pollfd> Fds_;
-    std::vector<int> Removed_;
 };
 
 } // namespace NNet
