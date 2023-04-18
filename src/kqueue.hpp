@@ -63,6 +63,8 @@ public:
         }
 
         Events_.clear();
+        ReadyHandles_.clear();
+
         OutEvents_.resize(std::max<size_t>(1, 2*InEvents_.size()));
         int nfds;
         if ((nfds = kevent(
@@ -73,8 +75,6 @@ public:
         {
             throw std::system_error(errno, std::generic_category(), "kevent");
         }
-
-        ReadyHandles_.clear();
 
         for (int i = 0; i < nfds; i++) {
             int fd = OutEvents_[i].ident;

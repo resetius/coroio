@@ -88,7 +88,7 @@ protected:
         }
     }
 
-    std::map<int,TEvent> Events_;
+    std::map<int,TEvent> Events_;  // changes
     std::priority_queue<TTimer> Timers_;
     std::vector<THandle> ReadyHandles_;
 };

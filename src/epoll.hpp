@@ -65,6 +65,8 @@ public:
         }
 
         Events_.clear();
+        ReadyHandles_.clear();
+
         OutEvents_.resize(std::max<size_t>(1, InEvents_.size()));
 
         int nfds;
@@ -72,7 +74,6 @@ public:
             throw std::system_error(errno, std::generic_category(), "epoll_wait");
         }
 
-        ReadyHandles_.clear();
         for (int i = 0; i < nfds; ++i) {
             int fd = OutEvents_[i].data.fd;
             auto ev = InEvents_[fd];
@@ -103,7 +104,7 @@ public:
 
 private:
     int Fd_;
-    std::vector<TEvent> InEvents_;       // all events in epool
+    std::vector<TEvent> InEvents_;       // all events in epoll
     std::vector<epoll_event> OutEvents_; // events out from epoll_wait
 };
 
