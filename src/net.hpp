@@ -269,7 +269,7 @@ public:
     }
 
     void Listen(int backlog = 128) {
-        if (listen(Fd_, backlog) < 0) { 
+        if (listen(Fd_, backlog) < 0) {
             throw std::system_error(errno, std::generic_category(), "listen");
         }
     }
@@ -285,7 +285,7 @@ public:
 private:
     int Create() {
         auto s = socket(PF_INET, SOCK_STREAM, 0);
-        if (s < 0) { 
+        if (s < 0) {
             throw std::system_error(errno, std::generic_category(), "socket");
         }
         Setup(s);

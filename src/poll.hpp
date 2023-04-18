@@ -31,14 +31,14 @@ public:
 
             if (pev.events) {
                 if (idx == -1) {
-                    idx = Fds_.size(); 
+                    idx = Fds_.size();
                     Fds_.emplace_back(std::move(pev));
                 } else {
                     Fds_[idx] = pev;
                 }
                 old_ev = ev;
             } else {
-                if (idx != -1) {                    
+                if (idx != -1) {
                     std::swap(Fds_[idx], Fds_.back());
                     std::get<1>(InEvents_[Fds_[idx].fd]) = idx;
                     Fds_.back() = {};
@@ -47,7 +47,7 @@ public:
                 while (!Fds_.empty() && !Fds_.back().events) {
                     Fds_.pop_back();
                 }
-            }        
+            }
         }
 
         Events_.clear();

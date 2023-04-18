@@ -13,7 +13,7 @@ public:
     TEPoll()
         : Fd_(epoll_create1(EPOLL_CLOEXEC))
     {
-        if (Fd_ < 0) { 
+        if (Fd_ < 0) {
             throw std::system_error(errno, std::generic_category(), "epoll_create1");
         }
     }
@@ -70,7 +70,7 @@ public:
         OutEvents_.resize(std::max<size_t>(1, InEvents_.size()));
 
         int nfds;
-        if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) { 
+        if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) {
             throw std::system_error(errno, std::generic_category(), "epoll_wait");
         }
 

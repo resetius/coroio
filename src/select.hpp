@@ -8,10 +8,6 @@ namespace NNet {
 
 class TSelect: public TPollerBase {
 public:
-    TSelect() { 
-
-    }
-
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         auto tv = GetTimeval(TClock::now(), deadline);

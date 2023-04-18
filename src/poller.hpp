@@ -73,7 +73,7 @@ protected:
         auto now = TClock::now();
         int prevFd = -1;
         while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
-            TTimer timer = std::move(Timers_.top());            
+            TTimer timer = std::move(Timers_.top());
 
             if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
                 ReadyHandles_.emplace_back(timer.Handle);
