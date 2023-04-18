@@ -24,42 +24,45 @@ public:
                 ReadFds_.resize((k+bits-1)/bits);
                 WriteFds_.resize((k+bits-1)/bits);
             }
+            if (InEvents_.size() <= k) {
+                InEvents_.resize(k+1);
+            }
 
             if (ev.Read) {
                 FD_SET(k, ReadFds());
+                InEvents_[k].Read = ev.Read;
             }
             if (ev.Write) {
                 FD_SET(k, WriteFds());
+                InEvents_[k].Write = ev.Write;
             }
-            if (!ev.Read && !ev.Write) {
-                Removed_.emplace_back(k);
-            } else {
-                maxFd = std::max(maxFd, k);
-            }
+            maxFd = std::max(maxFd, k);
         }
-        for (auto k : Removed_) {
-            Events_.erase(k);
-        }
-        Removed_.clear();
+
+        Events_.clear();
+        ReadyHandles_.clear();
 
         if (select(maxFd+1, ReadFds(), WriteFds(), nullptr, &tv) < 0) {
             throw std::system_error(errno, std::generic_category(), "select");
         }
 
-        ReadyHandles_.clear();
-
         for (int k=0; k <= maxFd; ++k) {
-            auto& ev = Events_[k];
+            auto& ev = InEvents_[k];
+
             if (FD_ISSET(k, WriteFds())) {
                 ReadyHandles_.emplace_back(std::move(ev.Write));
                 ev.Write = {};
+                FD_CLR(k, WriteFds());
             }
             if (FD_ISSET(k, ReadFds())) {
                 ReadyHandles_.emplace_back(std::move(ev.Read));
                 ev.Read = {};
+                FD_CLR(k, ReadFds());
             }
-            FD_CLR(k, WriteFds());
-            FD_CLR(k, ReadFds());
+
+            if (ev.Read || ev.Write) {
+                Events_.emplace(k, ev);
+            }
         }
 
         ProcessTimers();
@@ -73,9 +76,9 @@ private:
         return reinterpret_cast<fd_set*>(&WriteFds_[0]);
     }
 
+    std::vector<TEvent> InEvents_;
     std::vector<fd_mask> ReadFds_;
     std::vector<fd_mask> WriteFds_;
-    std::vector<int> Removed_;
 };
 
 } // namespace NNet
