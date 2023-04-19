@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
         run_test<TSelect>(num_pipes, num_writes, num_active);
     }
 #ifdef __linux__
-   else if (!strcmp(method, "epoll")) {
+    else if (!strcmp(method, "epoll")) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
     }
 #endif
