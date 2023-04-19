@@ -27,7 +27,6 @@ struct TTimer {
 struct TEvent {
     THandle Read;
     THandle Write;
-    bool TimeoutFired = false;
 };
 
 template<typename T1, typename T2>

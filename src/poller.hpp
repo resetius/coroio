@@ -19,15 +19,11 @@ public:
     }
 
     bool RemoveTimer(int fd, TTime deadline) {
-        Timers_.emplace(TTimer{deadline, fd, {}}); // insert empty timer befor existing
-        auto it = Events_.find(fd);
-        if (it == Events_.end()) {
-            return false;
-        } else {
-            bool r = it->second.TimeoutFired;
-            it->second.TimeoutFired = false;
-            return r;
+        bool fired = deadline < LastTimersProcessTime_;
+        if (!fired) {
+            Timers_.emplace(TTimer{deadline, fd, {}}); // insert empty timer before existing
         }
+        return fired;
     }
 
     void AddRead(int fd, THandle h) {
@@ -77,20 +73,18 @@ protected:
 
             if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
                 ReadyHandles_.emplace_back(timer.Handle);
-
-                if (timer.Fd >= 0) {
-                    Events_[timer.Fd].TimeoutFired = true;
-                }
             }
 
             prevFd = timer.Fd;
             Timers_.pop();
         }
+        LastTimersProcessTime_ = now;
     }
 
     std::map<int,TEvent> Events_;  // changes
     std::priority_queue<TTimer> Timers_;
     std::vector<THandle> ReadyHandles_;
+    TTime LastTimersProcessTime_;
 };
 
 } // namespace NNet
