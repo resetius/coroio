@@ -11,6 +11,7 @@
 
 #ifdef __linux__
 #include <epoll.hpp>
+#include <uring.hpp>
 #endif
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
