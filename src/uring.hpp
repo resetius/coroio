@@ -19,6 +19,7 @@ public:
     TUring(int queueSize)
         : RingFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK))
         , EpollFd_(epoll_create1(EPOLL_CLOEXEC))
+        , Buffer_(32768)
     {
         int err;
         if (RingFd_ < 0) {
@@ -30,15 +31,20 @@ public:
         if ((err = io_uring_queue_init(queueSize, &Ring_, 0)) < 0) {
             throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
         }
-        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
-            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
-        }
+//        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
+//            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
+//        }
 
-        epoll_event eev = {};
-        eev.data.fd = RingFd_;
-        eev.events  = EPOLLIN;
-        if (epoll_ctl(EpollFd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
-            throw std::system_error(errno, std::generic_category(), "epoll_ctl");
+//        epoll_event eev = {};
+//        eev.data.fd = RingFd_;
+//        eev.events  = EPOLLIN;
+//        if (epoll_ctl(EpollFd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
+//            throw std::system_error(errno, std::generic_category(), "epoll_ctl");
+//        }
+
+        iovec iov = {.iov_base = Buffer_.data(), .iov_len = Buffer_.size() };
+        if ((err = io_uring_register_buffers(&Ring_, &iov, 1)) < 0) {
+            throw std::system_error(-err, std::generic_category(), "io_uring_register_buffers");       
         }
     }
 
@@ -51,12 +57,15 @@ public:
     void Read(int fd, char* buf, int size, std::coroutine_handle<> handle) {
         struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
         io_uring_prep_read(sqe, fd, buf, size, 0);
+        //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
         Submit(sqe, handle);
     }
 
     void Write(int fd, char* buf, int size, std::coroutine_handle<> handle) {
         struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
         io_uring_prep_write(sqe, fd, buf, size, 0);
+        //memcpy(Buffer_.data(), buf, size);
+        //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
         Submit(sqe, handle);
     }
 
@@ -73,21 +82,30 @@ public:
 
         int nfds = 0;
         int timeout = 1000; // ms
-        epoll_event outEvents[1];
+//        epoll_event outEvents[1];
 
-        while ((nfds =  epoll_wait(EpollFd_, &outEvents[0], 1, timeout)) < 0) {
-            if (errno != EINTR) {
-                throw std::system_error(errno, std::generic_category(), "epoll_wait");
-            }
-        }
+//        while ((nfds =  epoll_wait(EpollFd_, &outEvents[0], 1, timeout)) < 0) {
+//            if (errno != EINTR) {
+//                throw std::system_error(errno, std::generic_category(), "epoll_wait");
+//            }
+//        }
 
-        if (nfds == 1) {
-            eventfd_t v;
-            eventfd_read(RingFd_, &v);
-        }
+//        if (nfds == 1) {
+//            eventfd_t v;
+//            eventfd_read(RingFd_, &v);
+//        }
 
-        struct __kernel_timespec ts = {0, 0};
-        if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &ts)) < 0) {
+//        if ((err = io_uring_submit(&Ring_) < 0)) {
+//            throw std::system_error(-err, std::generic_category(), "io_uring_submit");
+//        }
+ 
+        struct __kernel_timespec ts = {10, 0};
+//        if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &ts)) < 0) {
+//            if (-err != ETIME) {
+//                throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
+//            }
+//        }
+        if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &ts, nullptr)) < 0) {
             if (-err != ETIME) {
                 throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
             }
@@ -117,16 +135,17 @@ public:
 private:
     void Submit(io_uring_sqe *sqe, std::coroutine_handle<> handle) {
         io_uring_sqe_set_data(sqe, handle.address());
-        int err;
-        if ((err = io_uring_submit(&Ring_) < 0)) {
-            throw std::system_error(-err, std::generic_category(), "io_uring_submit");
-        }
+        //int err;
+        //if ((err = io_uring_submit(&Ring_) < 0)) {
+        //    throw std::system_error(-err, std::generic_category(), "io_uring_submit");
+        //}
     }
 
     int RingFd_;
     int EpollFd_;
     struct io_uring Ring_;
     std::queue<int> Results_;
+    std::vector<char> Buffer_;
 };
 
 // TODO: XXX
