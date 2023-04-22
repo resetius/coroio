@@ -325,6 +325,79 @@ void test_timeout(void**) {
     assert_true(next >= now + timeout);
 }
 
+#ifdef __linux__
+void test_uring_create(void**) {
+    TUring uring(256);
+}
+
+void test_uring_write(void**) {
+    TUring uring(256);
+    char buf[1] = {'e'};
+    char rbuf[1] = {'k'};
+    int p[2];
+    pipe(p);
+    uring.Write(p[1], buf, 1, nullptr);
+    assert_int_equal(uring.Wait(), 1);
+    int err = read(p[0], rbuf, 1);
+    assert_true(rbuf[0] == 'e');
+}
+
+void test_uring_read(void**) {
+    TUring uring(256);
+    char buf[1] = {'e'};
+    char rbuf[1] = {'k'};
+    int p[2];
+    pipe(p);
+    write(p[1], buf, 1);
+    uring.Read(p[0], rbuf, 1, nullptr);
+    assert_int_equal(uring.Wait(), 1);
+    assert_true(rbuf[0] == 'k');
+}
+
+void test_uring_write_resume(void**) {
+    TUring uring(256);
+    char buf[1] = {'e'};
+    char rbuf[1] = {'k'};
+    int p[2];
+    pipe(p);
+    int r = 31337;
+    TTestSuspendTask h = [&]() -> TTestSuspendTask {
+        r = uring.Result();
+        co_return;
+    }();
+    uring.Write(p[1], buf, 1, h);
+    assert_true(!h.done());
+    assert_int_equal(uring.Wait(), 1);
+    int err = read(p[0], rbuf, 1);
+    assert_true(rbuf[0] == 'e');
+    assert_int_equal(r, 1);
+    assert_true(h.done());
+    h.destroy();
+}
+
+void test_uring_read_resume(void**) {
+    TUring uring(256);
+    char buf[1] = {'e'};
+    char rbuf[1] = {'k'};
+    int p[2];
+    pipe(p);
+    int r = 31337;
+    TTestSuspendTask h = [&]() -> TTestSuspendTask {
+        r = uring.Result();
+        co_return;
+    }();
+    write(p[1], buf, 1);
+    uring.Read(p[0], rbuf, 1, h);
+    assert_true(!h.done());
+    assert_int_equal(uring.Wait(), 1);
+    assert_true(rbuf[0] == 'k');
+    assert_int_equal(r, 1);
+    assert_true(h.done());
+    h.destroy();
+}
+
+#endif
+
 #define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
 #define my_unit_test2(f, a, b) \
     { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
@@ -358,6 +431,13 @@ int main() {
         my_unit_poller(test_remove_connection_timeout),
         my_unit_poller(test_connection_refused_on_write),
         my_unit_poller(test_connection_refused_on_read),
+#ifdef __linux__
+        cmocka_unit_test(test_uring_create),
+        cmocka_unit_test(test_uring_write),
+        cmocka_unit_test(test_uring_read),
+        cmocka_unit_test(test_uring_write_resume),
+        cmocka_unit_test(test_uring_read_resume),
+#endif
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
