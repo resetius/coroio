@@ -362,10 +362,10 @@ void test_uring_write_resume(void**) {
     int p[2];
     pipe(p);
     int r = 31337;
-    TTestSuspendTask h = [&]() -> TTestSuspendTask {
-        r = uring.Result();
+    TTestSuspendTask h = [](TUring* uring, int* r) -> TTestSuspendTask {
+        *r = uring->Result();
         co_return;
-    }();
+    }(&uring, &r);
     uring.Write(p[1], buf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
@@ -383,10 +383,10 @@ void test_uring_read_resume(void**) {
     int p[2];
     pipe(p);
     int r = 31337;
-    TTestSuspendTask h = [&]() -> TTestSuspendTask {
-        r = uring.Result();
+    TTestSuspendTask h = [](TUring* uring, int* r) -> TTestSuspendTask {
+        *r = uring->Result();
         co_return;
-    }();
+    }(&uring, &r);
     write(p[1], buf, 1);
     uring.Read(p[0], rbuf, 1, h);
     assert_true(!h.done());
