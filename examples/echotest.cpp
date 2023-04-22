@@ -1,6 +1,7 @@
 #include <net.hpp>
 #include <select.hpp>
 #include <poll.hpp>
+#include <socket.hpp>
 
 #include <signal.h>
 
