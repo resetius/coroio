@@ -1,5 +1,7 @@
 #pragma once
 
+#include "socket.hpp"
+
 #include <liburing.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
@@ -28,7 +30,7 @@ public:
         if ((err = io_uring_queue_init(queueSize, &Ring_, 0)) < 0) {
             throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
         }
-        if ((err = io_uring_register_eventfd_async(&Ring_, RingFd_)) < 0) {
+        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
             throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
         }
 
@@ -47,14 +49,20 @@ public:
     }
 
     void Read(int fd, char* buf, int size, std::coroutine_handle<> handle) {
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_);
-        io_uring_prep_read(sqe, fd, &buf, size, 0);
+        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
+        io_uring_prep_read(sqe, fd, buf, size, 0);
         Submit(sqe, handle);
     }
 
     void Write(int fd, char* buf, int size, std::coroutine_handle<> handle) {
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_);
+        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
         io_uring_prep_write(sqe, fd, buf, size, 0);
+        Submit(sqe, handle);
+    }
+
+    void Accept(int fd, struct sockaddr_in* addr, socklen_t* len, std::coroutine_handle<> handle) {
+        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
+        io_uring_prep_accept(sqe, fd, reinterpret_cast<struct sockaddr*>(addr), len, 0);
         Submit(sqe, handle);
     }
 
@@ -119,6 +127,100 @@ private:
     int EpollFd_;
     struct io_uring Ring_;
     std::queue<int> Results_;
+};
+
+// TODO: XXX
+class TUringSocket: public TSocket
+{
+public:
+    TUringSocket(TAddress&& addr, TUring& poller)
+        : TSocket(addr, *(TPollerBase*)nullptr) // TODO: XXX
+        , Uring_(&poller)
+    { }
+
+    TUringSocket(const TAddress& addr, int fd, TUring& poller) // TODO: XXX
+        : TSocket(addr, fd, *(TPollerBase*)nullptr)
+        , Uring_(&poller)
+    { }
+
+    auto Accept() {
+        struct TAwaitable {
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->Accept(fd, &addr, &len, h);
+            }
+
+            TUringSocket await_resume() {
+                int clientfd = poller->Result();
+                if (clientfd < 0) {
+                    throw std::system_error(-clientfd, std::generic_category(), "accept");
+                }
+
+                return TUringSocket{addr, clientfd, *poller};
+            }
+
+            TUring* poller;
+            int fd;
+
+            sockaddr_in addr;
+            socklen_t len = sizeof(addr);
+        };
+
+        return TAwaitable{Uring_, Fd_};
+    }
+
+    auto ReadSome(char* buf, size_t size) {
+        struct TAwaitable {
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->Read(fd, buf, size, h);
+            }
+
+            ssize_t await_resume() {
+                int ret = poller->Result();
+                if (ret < 0 && !(-ret==EINTR||-ret==EAGAIN||-ret==EINPROGRESS)) {
+                    throw std::system_error(-ret, std::generic_category());
+                }
+                return ret;
+            }
+
+            TUring* poller;
+            int fd;
+
+            char* buf;
+            size_t size;
+        };
+
+        return TAwaitable{Uring_, Fd_, buf, size};
+    }
+
+    auto WriteSome(char* buf, size_t size) {
+        struct TAwaitable {
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->Write(fd, buf, size, h);
+            }
+
+            ssize_t await_resume() {
+                int ret = poller->Result();
+                if (ret < 0 && !(-ret==EINTR||-ret==EAGAIN||-ret==EINPROGRESS)) {
+                    throw std::system_error(-ret, std::generic_category());
+                }
+                return ret;
+            }
+
+            TUring* poller;
+            int fd;
+
+            char* buf;
+            size_t size;
+        };
+
+        return TAwaitable{Uring_, Fd_, buf, size};
+    }
+
+private:
+    TUring* Uring_;
 };
 
 } // namespace NNet

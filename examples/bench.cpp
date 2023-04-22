@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 #include <net.hpp>
+#include <socket.hpp>
 #include <poll.hpp>
 #include <select.hpp>
 #include <system_error>

@@ -7,6 +7,7 @@
 #include <net.hpp>
 #include <select.hpp>
 #include <poll.hpp>
+#include <socket.hpp>
 #include <system_error>
 
 #ifdef __linux__
@@ -351,7 +352,7 @@ void test_uring_read(void**) {
     write(p[1], buf, 1);
     uring.Read(p[0], rbuf, 1, nullptr);
     assert_int_equal(uring.Wait(), 1);
-    assert_true(rbuf[0] == 'k');
+    assert_true(rbuf[0] == 'e');
 }
 
 void test_uring_write_resume(void**) {
@@ -390,7 +391,7 @@ void test_uring_read_resume(void**) {
     uring.Read(p[0], rbuf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
-    assert_true(rbuf[0] == 'k');
+    assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
     h.destroy();
