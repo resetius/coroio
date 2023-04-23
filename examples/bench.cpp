@@ -111,10 +111,11 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
 
     auto t1 = TClock::now();
     int xcount = 0;
+    int target = (num_writes+num_active);
     do {
         loop.Step();
         xcount ++;
-    } while (s.fired != s.count);
+    } while (s.fired != s.count || s.fired != target);
     auto t2 = TClock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1);
     cerr << "fired: " << s.fired << ", "
