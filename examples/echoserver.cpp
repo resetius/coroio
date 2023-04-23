@@ -19,15 +19,15 @@ using NNet::TUring;
 using TLoop = NNet::TLoop<TEPoll>;
 
 template<bool debug>
-TSimpleTask client_handler(TSocket socket, TLoop* loop) {
-    char buffer[128] = {0}; ssize_t size = 0;
+TSimpleTask client_handler(TSocket socket, int buffer_size) {
+    std::vector<char> buffer(buffer_size); ssize_t size = 0;
 
     try {
-        while ((size = co_await socket.ReadSome(buffer, sizeof(buffer))) > 0) {
+        while ((size = co_await socket.ReadSome(buffer.data(), buffer_size)) > 0) {
             if constexpr(debug) {
-                std::cerr << "Received: " << std::string_view(buffer, size) << "\n";
+                std::cerr << "Received: " << std::string_view(buffer.data(), size) << "\n";
             }
-            co_await socket.WriteSome(buffer, size);
+            co_await socket.WriteSome(buffer.data(), size);
         }
     } catch (const std::exception& ex) {
         std::cerr << "Exception: " << ex.what() << "\n";
@@ -39,7 +39,7 @@ TSimpleTask client_handler(TSocket socket, TLoop* loop) {
 }
 
 template<bool debug>
-TSimpleTask server(TLoop* loop, TAddress address)
+TSimpleTask server(TLoop* loop, TAddress address, int buffer_size)
 {
     TSocket socket(std::move(address), loop->Poller());
     socket.Bind();
@@ -47,21 +47,21 @@ TSimpleTask server(TLoop* loop, TAddress address)
 
     while (true) {
         auto client = co_await socket.Accept();
-        client_handler<debug>(std::move(client), loop);
+        client_handler<debug>(std::move(client), buffer_size);
     }
     co_return;
 }
 
 template<bool debug>
-TSimpleTask client_handler_ur(NNet::TUringSocket socket, TUring* uring) {
-    char buffer[128] = {0}; ssize_t size = 0;
+TSimpleTask client_handler_ur(NNet::TUringSocket socket, int buffer_size) {
+    std::vector<char> buffer(buffer_size); ssize_t size = 0;
 
     try {
-        while ((size = co_await socket.ReadSome(buffer, sizeof(buffer))) > 0) {
+        while ((size = co_await socket.ReadSome(buffer.data(), buffer_size)) > 0) {
             if constexpr(debug) {
-                std::cerr << "Received: " << std::string_view(buffer, size) << "\n";
+                std::cerr << "Received: " << std::string_view(buffer.data(), size) << "\n";
             }
-            co_await socket.WriteSome(buffer, size);
+            co_await socket.WriteSome(buffer.data(), size);
         }
     } catch (const std::exception& ex) {
         std::cerr << "Exception: " << ex.what() << "\n";
@@ -73,7 +73,7 @@ TSimpleTask client_handler_ur(NNet::TUringSocket socket, TUring* uring) {
 }
 
 template<bool debug>
-TSimpleTask server_ur(TUring* uring, TAddress address)
+TSimpleTask server_ur(TUring* uring, TAddress address, int buffer_size)
 {
     NNet::TUringSocket socket(std::move(address), *uring);
     socket.Bind();
@@ -81,7 +81,7 @@ TSimpleTask server_ur(TUring* uring, TAddress address)
 
     while (true) {
         auto client = co_await socket.Accept();
-        client_handler_ur<debug>(std::move(client), uring);
+        client_handler_ur<debug>(std::move(client), buffer_size);
     }
     co_return;
 }
@@ -89,6 +89,7 @@ TSimpleTask server_ur(TUring* uring, TAddress address)
 int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     int port = 0;
+    int buffer_size = 128;
     bool uring = false;
     bool debug = false;
     for (int i = 1; i < argc; i++) {
@@ -98,9 +99,12 @@ int main(int argc, char** argv) {
             uring = true;
         } else if (!strcmp(argv[i], "--debug")) {
             debug = true;
+        } else if (!strcmp(argv[i], "--buffer-size") && i < argc-1) {
+            buffer_size = atoi(argv[++i]);
         }
     }
     if (port == 0) { port = 8888; }
+    if (buffer_size == 0) { buffer_size = 128; }
 
     TAddress address{"0.0.0.0", port};
 #ifdef __linux__
@@ -108,9 +112,9 @@ int main(int argc, char** argv) {
         std::cout << "Using uring \n";
         NNet::TLoop<NNet::TUring> loop;
         if (debug) {
-            server_ur<true>(&loop.Poller(), std::move(address));
+            server_ur<true>(&loop.Poller(), std::move(address), buffer_size);
         } else {
-            server_ur<false>(&loop.Poller(), std::move(address));
+            server_ur<false>(&loop.Poller(), std::move(address), buffer_size);
         }
         loop.Loop();
     } else
@@ -118,9 +122,9 @@ int main(int argc, char** argv) {
     {
         TLoop loop;
         if (debug) {
-            server<true>(&loop, std::move(address));
+            server<true>(&loop, std::move(address), buffer_size);
         } else {
-            server<false>(&loop, std::move(address));
+            server<false>(&loop, std::move(address), buffer_size);
         }
         loop.Loop();
     }
