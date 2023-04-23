@@ -47,15 +47,14 @@ public:
         int ver[3];
         const char* sep = ".";
         char* p = buffer.release;
+        KernelStr_ = buffer.release;
+
         int i = 0;
         for (p = strtok(p, sep); p && i < 3; p = strtok(nullptr, sep)) {
             ver[i++] = atoi(p);
         }
 
-        if (std::make_tuple(ver[0], ver[1], ver[2]) >= std::make_tuple(5, 19, 0)) {
-            CancelFd_ = true;
-        }
-
+        Kernel_ = std::make_tuple(ver[0], ver[1], ver[2]);
 
 //        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
 //            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
@@ -108,14 +107,10 @@ public:
     }
 
     void Cancel(int fd) {
-        if (CancelFd_) {
-            struct io_uring_sqe *sqe = GetSqe();
-            // io_uring_prep_cancel_fd(sqe, fd, 0);
-            io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
-            sqe->cancel_flags = (1U << 1);
-        } else {
-            std::cerr << "Unsupported Operation: Cancel(" << fd << ")\n";
-        }
+        struct io_uring_sqe *sqe = GetSqe();
+        // io_uring_prep_cancel_fd(sqe, fd, 0);
+        io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
+        sqe->cancel_flags = (1U << 1);
     }
 
     void Cancel(std::coroutine_handle<> h) {
@@ -213,6 +208,14 @@ public:
         }
     }
 
+    std::tuple<int, int, int> Kernel() const {
+        return Kernel_;
+    }
+
+    const std::string& KernelStr() const {
+        return KernelStr_;
+    }
+
 private:
     io_uring_sqe* GetSqe() {
         io_uring_sqe* r = io_uring_get_sqe(&Ring_);
@@ -236,7 +239,8 @@ private:
     std::queue<int> Results_;
     std::vector<char> Buffer_;
     std::queue<io_uring_sqe> Backlog_;
-    bool CancelFd_ = false;
+    std::tuple<int, int, int> Kernel_;
+    std::string KernelStr_;
 };
 
 // TODO: XXX

@@ -9,6 +9,7 @@
 #include <poll.hpp>
 #include <socket.hpp>
 #include <system_error>
+#include <tuple>
 
 #ifdef __linux__
 #include <epoll.hpp>
@@ -24,6 +25,18 @@ extern "C" {
 }
 
 using namespace NNet;
+
+#define DISABLE_URING1 \
+    if (uring.Kernel() < std::make_tuple(6, 0, 0)) { \
+        std::cerr << "Temporary disable " << __FUNCTION__ << " for " << uring.KernelStr() << "\n"; \
+        return; \
+    } \
+
+#define DISABLE_URING \
+    if constexpr(std::is_same_v<TPoller, TUring>) { \
+        TUring& uring = static_cast<TUring&>(loop.Poller()); \
+        DISABLE_URING1 \
+    }
 
 void test_timeval(void**) {
     auto t1 =  std::chrono::seconds(4);
@@ -133,11 +146,13 @@ void test_write_after_connect(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
+    DISABLE_URING
+
     TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
-    char rcv_buf[128] = {0};
+    char rcv_buf[256] = {0};
 
     TTestTask h1 = [](TPoller& poller, char* buf, int size) -> TTestTask
     {
@@ -167,11 +182,13 @@ void test_write_after_accept(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
+    DISABLE_URING
+
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
-    char rcv_buf[128] = {0};
+    char rcv_buf[256] = {0};
 
     TTestTask h1 = [](TPoller& poller, char* buf, int size) -> TTestTask
     {
@@ -371,6 +388,21 @@ void test_uring_read(void**) {
     assert_true(rbuf[0] == 'e');
 }
 
+void test_uring_read_more_then_write(void**) {
+    TUring uring(256);
+    char buf[1] = {'e'};
+    char rbuf[10] = "test test";
+    int p[2];
+    pipe(p);
+    write(p[1], buf, 1);
+    TTestSuspendTask h = []() -> TTestSuspendTask { co_return; }();
+    uring.Read(p[0], rbuf, sizeof(rbuf), h);
+    assert_int_equal(uring.Wait(), 1);
+    assert_int_equal(uring.Result(), 1);
+    assert_true(rbuf[0] == 'e');
+    h.destroy();
+}
+
 void test_uring_write_resume(void**) {
     TUring uring(256);
     char buf[1] = {'e'};
@@ -429,6 +461,8 @@ void test_uring_no_sqe(void** ) {
 
 void test_uring_cancel(void** ) {
     TUring uring(16);
+    DISABLE_URING1
+
     char rbuf[1] = {'k'};
     int p[2]; pipe(p);
     write(p[1], rbuf, 1);
@@ -485,6 +519,7 @@ int main() {
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
         cmocka_unit_test(test_uring_read),
+        cmocka_unit_test(test_uring_read_more_then_write),
         cmocka_unit_test(test_uring_write_resume),
         cmocka_unit_test(test_uring_read_resume),
         cmocka_unit_test(test_uring_no_sqe),
