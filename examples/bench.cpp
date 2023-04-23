@@ -15,6 +15,7 @@
 
 #ifdef __linux__
 #include <epoll.hpp>
+#include <uring.hpp>
 #endif
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
@@ -38,6 +39,7 @@ struct Stat {
     int out = 0;
 };
 
+template<typename TSocket>
 TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     ssize_t size;
     char buf[1] = {0};
@@ -60,6 +62,7 @@ TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     co_return;
 }
 
+template<typename TSocket>
 TTestTask write_one(TSocket& w, Stat& s) {
     char buf[1] = {'e'};
     co_await w.WriteSome(buf, 1);
@@ -75,6 +78,7 @@ TTestTask yield(TPollerBase& poller) {
 template<typename TPoller>
 std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active) {
     Stat s;
+    using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     vector<TSocket> pipes;
     vector<coroutine_handle<>> handles;
@@ -175,6 +179,9 @@ int main(int argc, char** argv) {
 #ifdef __linux__
     else if (!strcmp(method, "epoll")) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
+    }
+    else if (!strcmp(method, "uring")) {
+        run_test<TUring>(num_pipes, num_writes, num_active);
     }
 #endif
 
