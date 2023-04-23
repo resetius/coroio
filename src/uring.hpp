@@ -99,7 +99,11 @@ public:
         unsigned head;
         int err;
 
-        assert(Events_.empty()); // unsupported
+        for (auto& [k, ev] : Events_) {
+            assert(!ev.Read);
+            assert(!ev.Write);
+            Cancel(k);
+        }
 
 //        int nfds = 0;
 //        int timeout = 1000; // ms
