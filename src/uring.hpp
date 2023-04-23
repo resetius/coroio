@@ -230,7 +230,7 @@ public:
 
             ssize_t await_resume() {
                 int ret = poller->Result();
-                if (ret < 0 && !(-ret==EINTR||-ret==EAGAIN||-ret==EINPROGRESS)) {
+                if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category());
                 }
                 return ret;
@@ -255,7 +255,7 @@ public:
 
             ssize_t await_resume() {
                 int ret = poller->Result();
-                if (ret < 0 && !(-ret==EINTR||-ret==EAGAIN||-ret==EINPROGRESS)) {
+                if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category());
                 }
                 return ret;
