@@ -97,13 +97,15 @@ void test_listen(void**) {
 
 template<typename TPoller>
 void test_accept(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     TSocket clientSocket{};
     socket.Bind();
     socket.Listen();
 
-    TTestTask h1 = [](TPollerBase& poller) -> TTestTask
+    TTestTask h1 = [](TPoller& poller) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
@@ -128,14 +130,16 @@ void test_accept(void**) {
 
 template<typename TPoller>
 void test_write_after_connect(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TTestTask h1 = [](TPollerBase& poller, char* buf, int size) -> TTestTask
+    TTestTask h1 = [](TPoller& poller, char* buf, int size) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8898}, poller);
         co_await client.Connect();
@@ -160,14 +164,16 @@ void test_write_after_connect(void**) {
 
 template<typename TPoller>
 void test_write_after_accept(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[128] = {0};
 
-    TTestTask h1 = [](TPollerBase& poller, char* buf, int size) -> TTestTask
+    TTestTask h1 = [](TPoller& poller, char* buf, int size) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
@@ -192,10 +198,12 @@ void test_write_after_accept(void**) {
 
 template<typename TPoller>
 void test_connection_timeout(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     bool timeout = false;
 
-    TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
+    TTestTask h = [](TPoller& poller, bool& timeout) -> TTestTask
     {
         // TODO: use other addr
         TSocket client(TAddress{"10.0.0.1", 18889}, poller);
@@ -221,14 +229,16 @@ void test_connection_timeout(void**) {
 
 template<typename TPoller>
 void test_remove_connection_timeout(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
     bool timeout = false;
 
-    TTestTask h = [](TPollerBase& poller, bool& timeout) -> TTestTask
+    TTestTask h = [](TPoller& poller, bool& timeout) -> TTestTask
     {
         TSocket client(TAddress{"127.0.0.1", 18889}, poller);
         try {
@@ -254,10 +264,12 @@ void test_remove_connection_timeout(void**) {
 
 template<typename TPoller>
 void test_connection_refused_on_write(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     std::error_code err;
 
-    TTestTask h = [](TPollerBase& poller, std::error_code* err) -> TTestTask
+    TTestTask h = [](TPoller& poller, std::error_code* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
@@ -281,10 +293,12 @@ void test_connection_refused_on_write(void**) {
 
 template<typename TPoller>
 void test_connection_refused_on_read(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     std::error_code err;
 
-    TTestTask h = [](TPollerBase& poller, std::error_code* err) -> TTestTask
+    TTestTask h = [](TPoller& poller, std::error_code* err) -> TTestTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
@@ -307,7 +321,9 @@ void test_connection_refused_on_read(void**) {
 
 template<typename TPoller>
 void test_timeout(void**) {
-    TLoop<TPoller> loop;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
@@ -411,6 +427,18 @@ void test_uring_no_sqe(void** ) {
     assert_int_equal(1, uring.Wait());
 }
 
+void test_uring_cancel(void** ) {
+    TUring uring(16);
+    char rbuf[1] = {'k'};
+    int p[2]; pipe(p);
+    write(p[1], rbuf, 1);
+    write(p[1], rbuf, 1);
+    uring.Read(p[0], rbuf, 1, nullptr);
+    uring.Cancel(p[0]);
+    assert_int_equal(1, uring.Wait());
+    assert_true(rbuf[0] == 'k');
+}
+
 #endif
 
 #define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
@@ -421,9 +449,14 @@ void test_uring_no_sqe(void** ) {
     { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
     { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
     { #f "(" #c ")", f<c>, NULL, NULL, NULL }
+#define my_unit_test4(f, a, b, c, d) \
+    { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
+    { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
+    { #f "(" #c ")", f<c>, NULL, NULL, NULL }, \
+    { #f "(" #d ")", f<d>, NULL, NULL, NULL }
 
 #ifdef __linux__
-#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
+#define my_unit_poller(f) my_unit_test4(f, TSelect, TPoll, TEPoll, TUring)
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
 #else
@@ -453,6 +486,7 @@ int main() {
         cmocka_unit_test(test_uring_write_resume),
         cmocka_unit_test(test_uring_read_resume),
         cmocka_unit_test(test_uring_no_sqe),
+        cmocka_unit_test(test_uring_cancel),
 #endif
     };
     return cmocka_run_group_tests(tests, NULL, NULL);

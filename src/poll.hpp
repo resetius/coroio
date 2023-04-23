@@ -7,11 +7,14 @@
 
 #include "base.hpp"
 #include "poller.hpp"
+#include "socket.hpp"
 
 namespace NNet {
 
 class TPoll: public TPollerBase {
 public:
+    using TSocket = NNet::TSocket;
+
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         int timeout = GetMillis(TClock::now(), deadline);

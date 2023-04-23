@@ -4,6 +4,7 @@
 #include "poller.hpp"
 
 #include <liburing.h>
+#include <assert.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
 
@@ -15,8 +16,12 @@
 
 namespace NNet {
 
+class TUringSocket;
+
 class TUring: public TPollerBase {
 public:
+    using TSocket = NNet::TUringSocket;
+
     TUring(int queueSize = 256)
         : RingFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK))
         , EpollFd_(epoll_create1(EPOLL_CLOEXEC))
@@ -76,13 +81,26 @@ public:
         io_uring_sqe_set_data(sqe, handle.address());
     }
 
-    int Wait() {
+    void Connect(int fd, struct sockaddr_in* addr, socklen_t len, std::coroutine_handle<> handle) {
+        struct io_uring_sqe *sqe = GetSqe();
+        io_uring_prep_connect(sqe, fd, reinterpret_cast<struct sockaddr*>(addr), len);
+        io_uring_sqe_set_data(sqe, handle.address());
+    }
+
+    void Cancel(int fd) {
+        struct io_uring_sqe *sqe = GetSqe();
+        io_uring_prep_cancel_fd(sqe, fd, 0);
+    }
+
+    int Wait(timespec ts = {10,0}) {
         struct io_uring_cqe *cqe;
         unsigned head;
         int err;
 
-        int nfds = 0;
-        int timeout = 1000; // ms
+        assert(Events_.empty()); // unsupported
+
+//        int nfds = 0;
+//        int timeout = 1000; // ms
 //        epoll_event outEvents[1];
 
 //        while ((nfds =  epoll_wait(EpollFd_, &outEvents[0], 1, timeout)) < 0) {
@@ -96,7 +114,7 @@ public:
 //            eventfd_read(RingFd_, &v);
 //        }
 
-        struct __kernel_timespec ts = {1, 0};
+        struct __kernel_timespec kts = {ts.tv_sec, ts.tv_nsec};
 //        if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &ts, nullptr)) < 0) {
 //            if (-err != ETIME) {
 //                throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
@@ -107,7 +125,7 @@ public:
             throw std::system_error(-err, std::generic_category(), "io_uring_submit");
         }
 
-        if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &ts)) < 0) {
+        if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &kts)) < 0) {
             if (-err != ETIME) {
                 throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
             }
@@ -128,12 +146,15 @@ public:
         io_uring_cq_advance(&Ring_, completed);
 
         ProcessBacklog();
+        ProcessTimers();
 
         return completed;
     }
 
     void Poll() {
-        Wait();
+        auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
+        auto ts = GetTimespec(TClock::now(), deadline);
+        Wait(ts);
     }
 
     void Process() {
@@ -195,6 +216,8 @@ public:
         , Uring_(&poller)
     { }
 
+    TUringSocket() = default;
+
     auto Accept() {
         struct TAwaitable {
             bool await_ready() const { return false; }
@@ -219,6 +242,32 @@ public:
         };
 
         return TAwaitable{Uring_, Fd_};
+    }
+
+    auto Connect(TTime deadline = TTime::max()) {
+        struct TAwaitable {
+            bool await_ready() const { return false; }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->Connect(fd, &addr, sizeof(addr), h);
+                if (deadline != TTime::max()) {
+                    poller->AddTimer(fd, deadline, h);
+                }
+            }
+
+            void await_resume() {
+                if (deadline != TTime::max() && poller->RemoveTimer(fd, deadline)) {
+                    poller->Cancel(fd);
+                    throw std::system_error(std::make_error_code(std::errc::timed_out));
+                }
+            }
+
+            TUring* poller;
+            int fd;
+            sockaddr_in addr;
+            TTime deadline;
+        };
+        return TAwaitable{Uring_, Fd_, Addr().Addr(), deadline};
     }
 
     auto ReadSome(char* buf, size_t size) {
@@ -269,6 +318,14 @@ public:
         };
 
         return TAwaitable{Uring_, Fd_, buf, size};
+    }
+
+    auto WriteSomeYield(char* buf, size_t size) {
+        return WriteSome(buf, size);
+    }
+
+    auto ReadSomeYield(char* buf, size_t size) {
+        return ReadSome(buf, size);
     }
 
 private:
