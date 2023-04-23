@@ -369,6 +369,7 @@ void test_uring_write_resume(void**) {
     uring.Write(p[1], buf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
+    uring.Process();
     int err = read(p[0], rbuf, 1);
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
@@ -391,6 +392,7 @@ void test_uring_read_resume(void**) {
     uring.Read(p[0], rbuf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
+    uring.Process();
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());

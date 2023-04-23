@@ -68,9 +68,7 @@ public:
     {
         if (Fd_ >= 0) {
             close(Fd_);
-            if (&Poller_ != nullptr) { // TODO: XXX
-                // Poller_->RemoveEvent(Fd_);
-            }
+            Poller_->RemoveEvent(Fd_);
         }
     }
 
