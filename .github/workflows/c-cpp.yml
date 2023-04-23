@@ -23,7 +23,11 @@ jobs:
     - name: Install packages
       run: sudo apt-get install libcmocka-dev liburing-dev cmake ninja-build
     - name: configure
-      run: mkdir build && cmake -B build -G Ninja
+      run: |        
+        mkdir build 
+        echo 'add_compile_options(-fsanitize=address)' > build/local.cmake
+        echo 'add_link_options(-fsanitize=address)' >> build/local.cmake
+        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
     - name: make
       run: cmake --build build
     - name: test
