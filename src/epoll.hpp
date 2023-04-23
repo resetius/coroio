@@ -5,11 +5,14 @@
 
 #include "base.hpp"
 #include "poller.hpp"
+#include "socket.hpp"
 
 namespace NNet {
 
 class TEPoll: public TPollerBase {
 public:
+    using TSocket = NNet::TSocket;
+
     TEPoll()
         : Fd_(epoll_create1(EPOLL_CLOEXEC))
     {

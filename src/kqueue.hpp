@@ -11,6 +11,8 @@ namespace NNet {
 
 class TKqueue: public TPollerBase {
 public:
+    using TSocket = NNet::TSocket;
+
     TKqueue()
         : Fd_(kqueue())
     {

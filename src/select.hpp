@@ -3,11 +3,14 @@
 #include <sys/select.h>
 
 #include "poller.hpp"
+#include "socket.hpp"
 
 namespace NNet {
 
 class TSelect: public TPollerBase {
 public:
+    using TSocket = NNet::TSocket;
+
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         auto tv = GetTimeval(TClock::now(), deadline);
@@ -16,8 +19,8 @@ public:
 
         for (auto& [k, ev] : Events_) {
             if (k >= ReadFds_.size()*bits) {
-                ReadFds_.resize((k+bits-1)/bits);
-                WriteFds_.resize((k+bits-1)/bits);
+                ReadFds_.resize((k+bits)/bits);
+                WriteFds_.resize((k+bits)/bits);
             }
             if (InEvents_.size() <= k) {
                 InEvents_.resize(k+1);
