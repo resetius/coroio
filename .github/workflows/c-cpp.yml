@@ -32,11 +32,9 @@ jobs:
       run: cmake --build build
     - name: test
       run: cmake --build build --target test
-    - uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: test-log
-        run: build/Testing/Temporary/LastTest.log
+    - name: test-log
+      if: failure()
+      run: cat build/Testing/Temporary/LastTest.log
     - name: Publish Unit Test Results
       uses: EnricoMi/publish-unit-test-result-action@v1.28
       if: always()
