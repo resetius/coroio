@@ -43,10 +43,10 @@ public:
 //            throw std::system_error(errno, std::generic_category(), "epoll_ctl");
 //        }
 
-        iovec iov = {.iov_base = Buffer_.data(), .iov_len = Buffer_.size() };
-        if ((err = io_uring_register_buffers(&Ring_, &iov, 1)) < 0) {
-            throw std::system_error(-err, std::generic_category(), "io_uring_register_buffers");
-        }
+//        iovec iov = {.iov_base = Buffer_.data(), .iov_len = Buffer_.size() };
+//        if ((err = io_uring_register_buffers(&Ring_, &iov, 1)) < 0) {
+//            throw std::system_error(-err, std::generic_category(), "io_uring_register_buffers");
+//        }
     }
 
     ~TUring() {
