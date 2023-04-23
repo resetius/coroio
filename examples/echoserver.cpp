@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     bool debug = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i < argc-1) {
-            port = atoi(argv[++i]); 
+            port = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--uring")) {
             uring = true;
         } else if (!strcmp(argv[i], "--debug")) {
@@ -106,15 +106,13 @@ int main(int argc, char** argv) {
 #ifdef __linux__
     if (uring) {
         std::cout << "Using uring \n";
-        NNet::TUring uring(256);
+        NNet::TLoop<NNet::TUring> loop;
         if (debug) {
-            server_ur<true>(&uring, std::move(address));
+            server_ur<true>(&loop.Poller(), std::move(address));
         } else {
-            server_ur<false>(&uring, std::move(address));
+            server_ur<false>(&loop.Poller(), std::move(address));
         }
-        while (1) {
-            uring.Wait();
-        }
+        loop.Loop();
     } else
 #endif
     {

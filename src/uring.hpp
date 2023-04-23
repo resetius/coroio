@@ -1,6 +1,7 @@
 #pragma once
 
 #include "socket.hpp"
+#include "poller.hpp"
 
 #include <liburing.h>
 #include <sys/eventfd.h>
@@ -14,9 +15,9 @@
 
 namespace NNet {
 
-class TUring {
+class TUring: public TPollerBase {
 public:
-    TUring(int queueSize)
+    TUring(int queueSize = 256)
         : RingFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK))
         , EpollFd_(epoll_create1(EPOLL_CLOEXEC))
         , Buffer_(32768)
@@ -44,7 +45,7 @@ public:
 
         iovec iov = {.iov_base = Buffer_.data(), .iov_len = Buffer_.size() };
         if ((err = io_uring_register_buffers(&Ring_, &iov, 1)) < 0) {
-            throw std::system_error(-err, std::generic_category(), "io_uring_register_buffers");       
+            throw std::system_error(-err, std::generic_category(), "io_uring_register_buffers");
         }
     }
 
@@ -95,35 +96,48 @@ public:
 //            eventfd_read(RingFd_, &v);
 //        }
 
-//        if ((err = io_uring_submit(&Ring_) < 0)) {
-//            throw std::system_error(-err, std::generic_category(), "io_uring_submit");
-//        }
- 
         struct __kernel_timespec ts = {10, 0};
-//        if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &ts)) < 0) {
+//        if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &ts, nullptr)) < 0) {
 //            if (-err != ETIME) {
 //                throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
 //            }
 //        }
-        if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &ts, nullptr)) < 0) {
+
+        if ((err = io_uring_submit(&Ring_) < 0)) {
+            throw std::system_error(-err, std::generic_category(), "io_uring_submit");
+        }
+
+        if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &ts)) < 0) {
             if (-err != ETIME) {
                 throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
             }
         }
+
+        ReadyHandles_.clear();
 
         int completed = 0;
         io_uring_for_each_cqe(&Ring_, head, cqe) {
             completed ++;
             void* data = reinterpret_cast<void*>(cqe->user_data);
             if (data != nullptr) {
-                std::coroutine_handle<> handle = std::coroutine_handle<>::from_address(data);
                 Results_.push(cqe->res);
-                handle.resume();
+                ReadyHandles_.emplace_back(std::move(std::coroutine_handle<>::from_address(data)));
             }
         }
 
         io_uring_cq_advance(&Ring_, completed);
         return completed;
+    }
+
+    void Poll() {
+        Wait();
+    }
+
+    void Process() {
+        for (auto& handle: ReadyHandles_) {
+            handle.resume();
+        }
+        ReadyHandles_.clear();
     }
 
     int Result() {
@@ -153,12 +167,12 @@ class TUringSocket: public TSocket
 {
 public:
     TUringSocket(TAddress&& addr, TUring& poller)
-        : TSocket(addr, *(TPollerBase*)nullptr) // TODO: XXX
+        : TSocket(addr, poller)
         , Uring_(&poller)
     { }
 
-    TUringSocket(const TAddress& addr, int fd, TUring& poller) // TODO: XXX
-        : TSocket(addr, fd, *(TPollerBase*)nullptr)
+    TUringSocket(const TAddress& addr, int fd, TUring& poller)
+        : TSocket(addr, fd, poller)
         , Uring_(&poller)
     { }
 
