@@ -33,6 +33,7 @@ jobs:
     - name: test
       run: cmake --build build --target test
     - uses: actions/upload-artifact@v3
+      if: always()
       with:
         name: test-log
         run: build/Testing/Temporary/LastTest.log
