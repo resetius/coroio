@@ -56,24 +56,24 @@ public:
     }
 
     void Read(int fd, char* buf, int size, std::coroutine_handle<> handle) {
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
+        struct io_uring_sqe *sqe = GetSqe();
         io_uring_prep_read(sqe, fd, buf, size, 0);
         //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-        Submit(sqe, handle);
+        io_uring_sqe_set_data(sqe, handle.address());
     }
 
     void Write(int fd, char* buf, int size, std::coroutine_handle<> handle) {
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
+        struct io_uring_sqe *sqe = GetSqe();
         io_uring_prep_write(sqe, fd, buf, size, 0);
         //memcpy(Buffer_.data(), buf, size);
         //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-        Submit(sqe, handle);
+        io_uring_sqe_set_data(sqe, handle.address());
     }
 
     void Accept(int fd, struct sockaddr_in* addr, socklen_t* len, std::coroutine_handle<> handle) {
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&Ring_); // TODO: check result
+        struct io_uring_sqe *sqe = GetSqe();
         io_uring_prep_accept(sqe, fd, reinterpret_cast<struct sockaddr*>(addr), len, 0);
-        Submit(sqe, handle);
+        io_uring_sqe_set_data(sqe, handle.address());
     }
 
     int Wait() {
@@ -96,7 +96,7 @@ public:
 //            eventfd_read(RingFd_, &v);
 //        }
 
-        struct __kernel_timespec ts = {10, 0};
+        struct __kernel_timespec ts = {1, 0};
 //        if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &ts, nullptr)) < 0) {
 //            if (-err != ETIME) {
 //                throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
@@ -126,6 +126,9 @@ public:
         }
 
         io_uring_cq_advance(&Ring_, completed);
+
+        ProcessBacklog();
+
         return completed;
     }
 
@@ -146,13 +149,28 @@ public:
         return r;
     }
 
+    void Submit() {
+        int err;
+        if ((err = io_uring_submit(&Ring_) < 0)) {
+            throw std::system_error(-err, std::generic_category(), "io_uring_submit");
+        }
+    }
+
 private:
-    void Submit(io_uring_sqe *sqe, std::coroutine_handle<> handle) {
-        io_uring_sqe_set_data(sqe, handle.address());
-        //int err;
-        //if ((err = io_uring_submit(&Ring_) < 0)) {
-        //    throw std::system_error(-err, std::generic_category(), "io_uring_submit");
-        //}
+    io_uring_sqe* GetSqe() {
+        io_uring_sqe* r = io_uring_get_sqe(&Ring_);
+        if (!r) {
+            // TODO: incorrect size for SQE128
+            r = &Backlog_.emplace(io_uring_sqe{});
+        }
+        return r;
+    }
+
+    void ProcessBacklog() {
+        io_uring_sqe* r = nullptr;
+        while (!Backlog_.empty() && (r = io_uring_get_sqe(&Ring_))) {
+            *r = Backlog_.front(); Backlog_.pop();
+        }
     }
 
     int RingFd_;
@@ -160,6 +178,7 @@ private:
     struct io_uring Ring_;
     std::queue<int> Results_;
     std::vector<char> Buffer_;
+    std::queue<io_uring_sqe> Backlog_;
 };
 
 // TODO: XXX

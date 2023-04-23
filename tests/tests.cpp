@@ -399,6 +399,18 @@ void test_uring_read_resume(void**) {
     h.destroy();
 }
 
+void test_uring_no_sqe(void** ) {
+    TUring uring(1);
+    char rbuf[1] = {'k'};
+    int p[2]; pipe(p);
+    write(p[1], rbuf, 1);
+    write(p[1], rbuf, 1);
+    uring.Read(p[0], rbuf, 1, nullptr);
+    uring.Read(p[0], rbuf, 1, nullptr);
+    assert_int_equal(1, uring.Wait());
+    assert_int_equal(1, uring.Wait());
+}
+
 #endif
 
 #define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
@@ -440,6 +452,7 @@ int main() {
         cmocka_unit_test(test_uring_read),
         cmocka_unit_test(test_uring_write_resume),
         cmocka_unit_test(test_uring_read_resume),
+        cmocka_unit_test(test_uring_no_sqe),
 #endif
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
