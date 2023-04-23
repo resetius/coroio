@@ -7,9 +7,11 @@
 #include <assert.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
+#include <sys/utsname.h>
 
 #include <system_error>
 #include <iostream>
+#include <tuple>
 #include <vector>
 #include <coroutine>
 #include <queue>
@@ -37,6 +39,24 @@ public:
         if ((err = io_uring_queue_init(queueSize, &Ring_, 0)) < 0) {
             throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
         }
+
+        utsname buffer;
+        if (uname(&buffer) != 0) {
+            throw std::system_error(errno, std::generic_category(), "uname");
+        }
+        int ver[3];
+        const char* sep = ".";
+        char* p = buffer.release;
+        int i = 0;
+        for (p = strtok(p, sep); p && i < 3; p = strtok(nullptr, sep)) {
+            ver[i++] = atoi(p);
+        }
+
+        if (std::make_tuple(ver[0], ver[1], ver[2]) >= std::make_tuple(5, 19, 0)) {
+            CancelFd_ = true;
+        }
+
+
 //        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
 //            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
 //        }
@@ -88,10 +108,19 @@ public:
     }
 
     void Cancel(int fd) {
+        if (CancelFd_) {
+            struct io_uring_sqe *sqe = GetSqe();
+            // io_uring_prep_cancel_fd(sqe, fd, 0);
+            io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
+            sqe->cancel_flags = (1U << 1);
+        } else {
+            std::cerr << "Unsupported Operation: Cancel(" << fd << ")\n";
+        }
+    }
+
+    void Cancel(std::coroutine_handle<> h) {
         struct io_uring_sqe *sqe = GetSqe();
-        // io_uring_prep_cancel_fd(sqe, fd, 0);
-        io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
-        sqe->cancel_flags = (1U << 1);
+        io_uring_prep_cancel(sqe, h.address(), 0);
     }
 
     int Wait(timespec ts = {10,0}) {
@@ -104,6 +133,7 @@ public:
             assert(!ev.Write);
             Cancel(k);
         }
+        Events_.clear();
 
 //        int nfds = 0;
 //        int timeout = 1000; // ms
@@ -206,6 +236,7 @@ private:
     std::queue<int> Results_;
     std::vector<char> Buffer_;
     std::queue<io_uring_sqe> Backlog_;
+    bool CancelFd_ = false;
 };
 
 // TODO: XXX

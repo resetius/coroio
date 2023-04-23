@@ -433,10 +433,12 @@ void test_uring_cancel(void** ) {
     int p[2]; pipe(p);
     write(p[1], rbuf, 1);
     write(p[1], rbuf, 1);
-    uring.Read(p[0], rbuf, 1, nullptr);
-    uring.Cancel(p[0]);
+    TTestSuspendTask h = []() -> TTestSuspendTask { co_return; }();
+    uring.Read(p[0], rbuf, 1, h);
+    uring.Cancel(h);
     assert_int_equal(1, uring.Wait());
     assert_true(rbuf[0] == 'k');
+    h.destroy();
 }
 
 #endif
