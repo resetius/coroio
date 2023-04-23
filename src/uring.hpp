@@ -89,7 +89,9 @@ public:
 
     void Cancel(int fd) {
         struct io_uring_sqe *sqe = GetSqe();
-        io_uring_prep_cancel_fd(sqe, fd, 0);
+        // io_uring_prep_cancel_fd(sqe, fd, 0);
+        io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
+        sqe->cancel_flags = (1U << 1);
     }
 
     int Wait(timespec ts = {10,0}) {
