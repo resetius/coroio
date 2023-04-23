@@ -19,8 +19,8 @@ public:
 
         for (auto& [k, ev] : Events_) {
             if (k >= ReadFds_.size()*bits) {
-                ReadFds_.resize((k+bits-1)/bits);
-                WriteFds_.resize((k+bits-1)/bits);
+                ReadFds_.resize((k+bits)/bits);
+                WriteFds_.resize((k+bits)/bits);
             }
             if (InEvents_.size() <= k) {
                 InEvents_.resize(k+1);
