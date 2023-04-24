@@ -289,14 +289,14 @@ public:
             }
 
             void await_resume() {
-                int ret = poller->Result();
-                if (ret < 0) {
-                    throw std::system_error(-ret, std::generic_category(), "connect");
-                } 
                 if (deadline != TTime::max() && poller->RemoveTimer(fd, deadline)) {
                     poller->Cancel(fd);
                     throw std::system_error(std::make_error_code(std::errc::timed_out));
                 }
+                int ret = poller->Result();
+                if (ret < 0) {
+                    throw std::system_error(-ret, std::generic_category(), "connect");
+                } 
             }
 
             TUring* poller;
