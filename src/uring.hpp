@@ -109,7 +109,8 @@ public:
     void Cancel(int fd) {
         struct io_uring_sqe *sqe = GetSqe();
         // io_uring_prep_cancel_fd(sqe, fd, 0);
-        io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
+        io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, nullptr, 0, 0);
+        io_uring_sqe_set_data(sqe, nullptr);
         sqe->cancel_flags = (1U << 1);
     }
 
@@ -152,9 +153,7 @@ public:
 //            }
 //        }
 
-        if ((err = io_uring_submit(&Ring_) < 0)) {
-            throw std::system_error(-err, std::generic_category(), "io_uring_submit");
-        }
+        Submit();
 
         if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &kts)) < 0) {
             if (-err != ETIME) {
@@ -296,7 +295,7 @@ public:
                 int ret = poller->Result();
                 if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category(), "connect");
-                } 
+                }
             }
 
             TUring* poller;
