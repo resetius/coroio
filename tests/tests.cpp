@@ -459,8 +459,11 @@ void test_uring_no_sqe(void** ) {
     write(p[1], rbuf, 1);
     uring.Read(p[0], rbuf, 1, nullptr);
     uring.Read(p[0], rbuf, 1, nullptr);
-    assert_int_equal(1, uring.Wait());
-    assert_int_equal(1, uring.Wait());
+    int k = uring.Wait();
+    assert_true(k == 1 || k == 2);
+    if (k == 1) {
+        assert_int_equal(1, uring.Wait());
+    }
 }
 
 void test_uring_cancel(void** ) {
