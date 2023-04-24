@@ -163,6 +163,7 @@ public:
         }
 
         ReadyHandles_.clear();
+        assert(Results_.empty());
 
         int completed = 0;
         io_uring_for_each_cqe(&Ring_, head, cqe) {
@@ -292,6 +293,10 @@ public:
                     poller->Cancel(fd);
                     throw std::system_error(std::make_error_code(std::errc::timed_out));
                 }
+                int ret = poller->Result();
+                if (ret < 0) {
+                    throw std::system_error(-ret, std::generic_category(), "connect");
+                } 
             }
 
             TUring* poller;
