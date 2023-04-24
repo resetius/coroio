@@ -150,8 +150,6 @@ void test_write_after_connect(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
-    DISABLE_URING
-
     TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
     socket.Bind();
     socket.Listen();
@@ -186,8 +184,6 @@ void test_write_after_accept(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
-    DISABLE_URING
-
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
     socket.Bind();
     socket.Listen();
