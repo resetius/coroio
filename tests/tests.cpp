@@ -26,6 +26,7 @@ extern "C" {
 
 using namespace NNet;
 
+#ifdef __linux__
 #define DISABLE_URING1 \
     if (uring.Kernel() < std::make_tuple(6, 0, 0)) { \
         std::cerr << "Temporary disable " << __FUNCTION__ << " for " << uring.KernelStr() << "\n"; \
@@ -37,6 +38,9 @@ using namespace NNet;
         TUring& uring = static_cast<TUring&>(loop.Poller()); \
         DISABLE_URING1 \
     }
+#else
+#define DISABLE_URING
+#endif
 
 void test_timeval(void**) {
     auto t1 =  std::chrono::seconds(4);
