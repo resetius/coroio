@@ -176,7 +176,6 @@ public:
 
         io_uring_cq_advance(&Ring_, completed);
 
-        ProcessBacklog();
         ProcessTimers();
 
         return completed;
@@ -220,17 +219,10 @@ private:
     io_uring_sqe* GetSqe() {
         io_uring_sqe* r = io_uring_get_sqe(&Ring_);
         if (!r) {
-            // TODO: incorrect size for SQE128
-            r = &Backlog_.emplace(io_uring_sqe{});
+            Submit();
+            r = io_uring_get_sqe(&Ring_);
         }
         return r;
-    }
-
-    void ProcessBacklog() {
-        io_uring_sqe* r = nullptr;
-        while (!Backlog_.empty() && (r = io_uring_get_sqe(&Ring_))) {
-            *r = Backlog_.front(); Backlog_.pop();
-        }
     }
 
     int RingFd_;
@@ -238,7 +230,6 @@ private:
     struct io_uring Ring_;
     std::queue<int> Results_;
     std::vector<char> Buffer_;
-    std::queue<io_uring_sqe> Backlog_;
     std::tuple<int, int, int> Kernel_;
     std::string KernelStr_;
 };
