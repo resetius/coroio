@@ -214,6 +214,64 @@ void test_write_after_accept(void**) {
 }
 
 template<typename TPoller>
+void test_read_write_same_socket(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+    char buf1[128] = {0};
+    char buf2[128] = {0};
+
+    TSocket client(TAddress{"127.0.0.1", 8888}, loop.Poller());
+
+    TTestTask h1 = [](TSocket& client) -> TTestTask
+    {
+        co_await client.Connect();
+        co_return;
+    }(client);
+
+    TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
+    {
+        TSocket clientSocket = std::move(co_await socket->Accept());
+        char b[128] = "Hello from server";
+        co_await clientSocket.WriteSome(b, sizeof(b));
+        co_await clientSocket.ReadSome(buf, size);
+        co_return;
+    }(&socket, buf1, sizeof(buf1));
+
+    while (!h1.done()) {
+        loop.Step();
+    }
+
+    TTestTask h3 = [](TSocket& client) -> TTestTask
+    {
+        char b[128] = "Hello from client";
+        co_await client.WriteSome(b, sizeof(b));
+        co_return;
+    }(client);
+
+    TTestTask h4 = [](TSocket& client, char* buf, int size) -> TTestTask
+    {
+        co_await client.ReadSome(buf, size);
+        co_return;
+    }(client, buf2, sizeof(buf2));
+
+    while (!(h1.done() && h2.done() && h3.done() && h4.done())) {
+        loop.Step();
+    }
+
+    assert_string_equal(buf1, "Hello from client");
+    assert_string_equal(buf2, "Hello from server");
+
+    h1.destroy();
+    h2.destroy();
+    h3.destroy();
+    h4.destroy();
+}
+
+template<typename TPoller>
 void test_connection_timeout(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -518,6 +576,7 @@ int main() {
         my_unit_poller(test_remove_connection_timeout),
         my_unit_poller(test_connection_refused_on_write),
         my_unit_poller(test_connection_refused_on_read),
+        my_unit_poller(test_read_write_same_socket),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
