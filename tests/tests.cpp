@@ -369,7 +369,7 @@ void test_uring_write(void**) {
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    pipe(p);
+    assert_int_equal(0, pipe(p));
     uring.Write(p[1], buf, 1, nullptr);
     assert_int_equal(uring.Wait(), 1);
     int err = read(p[0], rbuf, 1);
@@ -381,8 +381,8 @@ void test_uring_read(void**) {
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    pipe(p);
-    write(p[1], buf, 1);
+    assert_int_equal(0, pipe(p));
+    assert_int_equal(1, write(p[1], buf, 1));
     uring.Read(p[0], rbuf, 1, nullptr);
     assert_int_equal(uring.Wait(), 1);
     assert_true(rbuf[0] == 'e');
@@ -393,8 +393,8 @@ void test_uring_read_more_than_write(void**) {
     char buf[1] = {'e'};
     char rbuf[10] = "test test";
     int p[2];
-    pipe(p);
-    write(p[1], buf, 1);
+    assert_int_equal(0, pipe(p));
+    assert_int_equal(1, write(p[1], buf, 1));
     TTestSuspendTask h = []() -> TTestSuspendTask { co_return; }();
     uring.Read(p[0], rbuf, sizeof(rbuf), h);
     assert_int_equal(uring.Wait(), 1);
@@ -408,7 +408,7 @@ void test_uring_write_resume(void**) {
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    pipe(p);
+    assert_int_equal(0, pipe(p));
     int r = 31337;
     TTestSuspendTask h = [](TUring* uring, int* r) -> TTestSuspendTask {
         *r = uring->Result();
@@ -430,13 +430,13 @@ void test_uring_read_resume(void**) {
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    pipe(p);
+    assert_int_equal(0, pipe(p));
     int r = 31337;
     TTestSuspendTask h = [](TUring* uring, int* r) -> TTestSuspendTask {
         *r = uring->Result();
         co_return;
     }(&uring, &r);
-    write(p[1], buf, 1);
+    assert_int_equal(1, write(p[1], buf, 1));
     uring.Read(p[0], rbuf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
@@ -450,9 +450,9 @@ void test_uring_read_resume(void**) {
 void test_uring_no_sqe(void** ) {
     TUring uring(1);
     char rbuf[1] = {'k'};
-    int p[2]; pipe(p);
-    write(p[1], rbuf, 1);
-    write(p[1], rbuf, 1);
+    int p[2]; assert_int_equal(0, pipe(p));
+    assert_int_equal(1, write(p[1], rbuf, 1));
+    assert_int_equal(1, write(p[1], rbuf, 1));
     uring.Read(p[0], rbuf, 1, nullptr);
     uring.Read(p[0], rbuf, 1, nullptr);
     int k = uring.Wait();
@@ -467,9 +467,9 @@ void test_uring_cancel(void** ) {
     DISABLE_URING1
 
     char rbuf[1] = {'k'};
-    int p[2]; pipe(p);
-    write(p[1], rbuf, 1);
-    write(p[1], rbuf, 1);
+    int p[2]; assert_int_equal(0, pipe(p));
+    assert_int_equal(1, write(p[1], rbuf, 1));
+    assert_int_equal(1, write(p[1], rbuf, 1));
     TTestSuspendTask h = []() -> TTestSuspendTask { co_return; }();
     uring.Read(p[0], rbuf, 1, h);
     uring.Cancel(h);
