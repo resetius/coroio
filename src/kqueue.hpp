@@ -43,11 +43,11 @@ public:
             auto& old_ev = InEvents_[k];
 
             if (ev.Read && !old_ev.Read) {
-                EV_SET(&kev, k, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+                EV_SET(&kev, k, EVFILT_READ, EV_ADD, 0, 0, nullptr);
                 ChangeList_.emplace_back(kev);
             }
             if (ev.Write && !old_ev.Write) {
-                EV_SET(&kev, k, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+                EV_SET(&kev, k, EVFILT_WRITE, EV_ADD, 0, 0, nullptr);
                 ChangeList_.emplace_back(kev);
             }
             if (!ev.Read && old_ev.Read) {
@@ -75,7 +75,6 @@ public:
         {
             throw std::system_error(errno, std::generic_category(), "kevent");
         }
-
         for (int i = 0; i < nfds; i++) {
             int fd = OutEvents_[i].ident;
             int filter = OutEvents_[i].filter;
