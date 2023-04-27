@@ -236,8 +236,8 @@ void test_read_write_same_socket(void**) {
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         char b[128] = "Hello from server";
-        co_await clientSocket.WriteSome(b, sizeof(b));
-        co_await clientSocket.ReadSome(buf, size);
+        co_await clientSocket.WriteSomeYield(b, sizeof(b));
+        co_await clientSocket.ReadSomeYield(buf, size);
         co_return;
     }(&socket, buf1, sizeof(buf1));
 
@@ -248,13 +248,13 @@ void test_read_write_same_socket(void**) {
     TTestTask h3 = [](TSocket& client) -> TTestTask
     {
         char b[128] = "Hello from client";
-        co_await client.WriteSome(b, sizeof(b));
+        co_await client.WriteSomeYield(b, sizeof(b));
         co_return;
     }(client);
 
     TTestTask h4 = [](TSocket& client, char* buf, int size) -> TTestTask
     {
-        co_await client.ReadSome(buf, size);
+        co_await client.ReadSomeYield(buf, size);
         co_return;
     }(client, buf2, sizeof(buf2));
 

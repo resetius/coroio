@@ -41,30 +41,27 @@ public:
 
             if (ev.Read) {
                 eev.events |= EPOLLIN;
-                changed |= !old_ev.Read;
             }
             if (ev.Write) {
                 eev.events |= EPOLLOUT;
-                changed |= !old_ev.Write;
             }
+            changed = (!!ev.Read != !!old_ev.Read) || (!!ev.Write != !!old_ev.Write);
             if (!ev.Write && !ev.Read) {
-                old_ev = ev;
                 if (epoll_ctl(Fd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
                     if (errno != EBADF) { // closed descriptor after TSocket -> close
                         throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                     }
                 }
             } else if (!old_ev.Write && !old_ev.Read) {
-                old_ev = ev;
                 if (epoll_ctl(Fd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
                     throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             } else if (changed) {
-                old_ev = ev;
                 if (epoll_ctl(Fd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
                     throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             }
+            old_ev = ev;
         }
 
         Events_.clear();

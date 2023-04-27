@@ -45,23 +45,21 @@ public:
             if (ev.Read && !old_ev.Read) {
                 EV_SET(&kev, k, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, nullptr);
                 ChangeList_.emplace_back(kev);
-                old_ev.Read = ev.Read;
             }
             if (ev.Write && !old_ev.Write) {
                 EV_SET(&kev, k, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, nullptr);
                 ChangeList_.emplace_back(kev);
-                old_ev.Write = ev.Write;
             }
             if (!ev.Read && old_ev.Read) {
                 EV_SET(&kev, k, EVFILT_READ, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
                 ChangeList_.emplace_back(kev);
-                old_ev.Read = ev.Read;
             }
             if (!ev.Write && old_ev.Write) {
                 EV_SET(&kev, k, EVFILT_WRITE, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
                 ChangeList_.emplace_back(kev);
-                old_ev.Write = ev.Write;
             }
+
+            old_ev = ev;
         }
 
         Events_.clear();

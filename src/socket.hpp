@@ -161,6 +161,23 @@ public:
         return TAwaitableWrite{Poller_,Fd_,buf,size};
     }
 
+    auto WriteSomeYield(char* buf, size_t size) {
+        struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
+            bool await_ready() {
+                return (ready = false);
+            }
+
+            void run() {
+                ret = write(fd, b, s);
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->AddWrite(fd, h);
+            }
+        };
+        return TAwaitableWrite{Poller_,Fd_,buf,size};
+    }
+
     auto Accept() {
         struct TAwaitable {
             bool await_ready() const { return false; }

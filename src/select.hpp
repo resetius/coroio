@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sys/select.h>
+#include <system_error>
 
 #include "poller.hpp"
 #include "socket.hpp"
@@ -29,20 +30,18 @@ public:
 
             if (ev.Read&&!old_ev.Read) {
                 FD_SET(k, ReadFds());
-                old_ev.Read = ev.Read;
             }
             if (ev.Write&&!old_ev.Write) {
                 FD_SET(k, WriteFds());
-                old_ev.Write = ev.Write;
             }
             if (!ev.Read&&old_ev.Read) {
                 FD_CLR(k, ReadFds());
-                old_ev.Read = ev.Read;
             }
             if (!ev.Write&&old_ev.Write) {
                 FD_CLR(k, WriteFds());
-                old_ev.Write = ev.Write;
             }
+
+            old_ev = ev;
 
             while (!InEvents_.empty() && !InEvents_.back().Write && !InEvents_.back().Read) {
                 InEvents_.pop_back();
