@@ -27,16 +27,26 @@ public:
     }
 
     void AddRead(int fd, THandle h) {
-        Events_[fd].Read = std::move(h);
+        MaxFd_ = std::max(MaxFd_, fd);
+        NewReads_.emplace_back(fd, h);
+        while (!DelReads_.empty() && DelReads_.back() == fd) {
+            DelReads_.pop();
+        }
     }
 
     void AddWrite(int fd, THandle h) {
-        Events_[fd].Write = std::move(h);
+        MaxFd_ = std::max(MaxFd_, fd);
+        NewWrites_.emplace_back(fd, h);
+        while (!DelWrites_.empty() && DelWrites_.back() == fd) {
+            DelWrites_.pop();
+        }
     }
 
     void RemoveEvent(int fd) {
         // TODO: resume waiting coroutines here
-        Events_[fd] = {};
+        MaxFd_ = std::max(MaxFd_, fd);
+        DelReads_.emplace(fd);
+        DelWrites_.emplace(fd);
     }
 
     template<typename Rep, typename Period>
@@ -64,7 +74,20 @@ public:
         return ReadyHandles_;
     }
 
+    void WakeupReadyHandles() {
+        for (auto& ev : ReadyHandles_) {
+            ev.resume();
+        }
+    }
+
 protected:
+    void Reset() {
+        NewReads_.clear();
+        NewWrites_.clear();
+        ReadyHandles_.clear();
+        MaxFd_ = 0;
+    }
+
     void ProcessTimers() {
         auto now = TClock::now();
         int prevFd = -1;
@@ -82,6 +105,11 @@ protected:
     }
 
     std::map<int,TEvent> Events_;  // changes
+    int MaxFd_ = 0;
+    std::vector<std::tuple<int,THandle>> NewReads_;
+    std::vector<std::tuple<int,THandle>> NewWrites_;
+    std::queue<int> DelReads_;
+    std::queue<int> DelWrites_;
     std::priority_queue<TTimer> Timers_;
     std::vector<THandle> ReadyHandles_;
     TTime LastTimersProcessTime_;
