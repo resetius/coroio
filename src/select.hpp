@@ -42,10 +42,10 @@ public:
             }
 
             old_ev = ev;
+        }
 
-            while (!InEvents_.empty() && !InEvents_.back().Write && !InEvents_.back().Read) {
-                InEvents_.pop_back();
-            }
+        while (!InEvents_.empty() && !InEvents_.back().Write && !InEvents_.back().Read) {
+            InEvents_.pop_back();
         }
 
         Events_.clear();
