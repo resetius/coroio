@@ -30,7 +30,7 @@ public:
             FD_CLR(k, ReadFds()); InEvents_[k].Read = {};
         }
         while(!DelWrites_.empty()) {
-            auto k = DelWrites_.front(); DelReads_.pop();
+            auto k = DelWrites_.front(); DelWrites_.pop();
             FD_CLR(k, WriteFds()); InEvents_[k].Write = {};
         }
         for (auto [k, h] : NewReads_) {
