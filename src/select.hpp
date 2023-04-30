@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sys/select.h>
+#include <assert.h>
 #include <system_error>
 
 #include "poller.hpp"
@@ -25,19 +26,25 @@ public:
             ReadFds_.resize((MaxFd_+bits)/bits);
             WriteFds_.resize((MaxFd_+bits)/bits);
         }
-        while (!DelReads_.empty()) {
-            auto k = DelReads_.front(); DelReads_.pop();
-            FD_CLR(k, ReadFds()); InEvents_[k].Read = {};
-        }
-        while(!DelWrites_.empty()) {
-            auto k = DelWrites_.front(); DelWrites_.pop();
-            FD_CLR(k, WriteFds()); InEvents_[k].Write = {};
-        }
-        for (auto [k, h] : NewReads_) {
-            FD_SET(k, ReadFds()); InEvents_[k].Read = h;
-        }
-        for (auto [k, h] : NewWrites_) {
-            FD_SET(k, WriteFds()); InEvents_[k].Write = h;
+
+        for (const auto& ch : Changes_) {
+            int fd = ch.Fd;
+            auto& ev = InEvents_[fd];
+            if (ch.Handle) {
+                if (ch.Type & TEventChange::READ) {
+                    FD_SET(fd, ReadFds()); ev.Read = ch.Handle;
+                }
+                if (ch.Type & TEventChange::WRITE) {
+                    FD_SET(fd, WriteFds()); ev.Write = ch.Handle;
+                }
+            } else {
+                if (ch.Type & TEventChange::READ) {
+                    FD_CLR(fd, ReadFds()); ev.Read = {};
+                }
+                if (ch.Type & TEventChange::WRITE) {
+                    FD_CLR(fd, WriteFds()); ev.Write = {};
+                }
+            }
         }
 
         Reset();
@@ -46,19 +53,19 @@ public:
             throw std::system_error(errno, std::generic_category(), "select");
         }
 
-        for (size_t k=0; k < InEvents_.size(); ++k) {
+        for (int k=0; k < static_cast<int>(InEvents_.size()); ++k) {
             auto ev = InEvents_[k];
 
             if (FD_ISSET(k, WriteFds())) {
-                ReadyHandles_.emplace_back(std::move(ev.Write));
-                DelWrites_.emplace(k);
+                assert(ev.Write);
+                ReadyEvents_.emplace_back(TEventChange{k, TEventChange::WRITE, ev.Write});
             } else if (ev.Write) {
                 // fd was cleared by select, set it
                 FD_SET(k, WriteFds());
             }
             if (FD_ISSET(k, ReadFds())) {
-                ReadyHandles_.emplace_back(std::move(ev.Read));
-                DelReads_.emplace(k);
+                assert(ev.Read);
+                ReadyEvents_.emplace_back(TEventChange{k, TEventChange::READ, ev.Read});
             } else if (ev.Read) {
                 // fd was cleared by select, set it
                 FD_SET(k, ReadFds());

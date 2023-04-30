@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iostream>
 #include <vector>
 #include <map>
 #include <queue>
@@ -28,25 +29,18 @@ public:
 
     void AddRead(int fd, THandle h) {
         MaxFd_ = std::max(MaxFd_, fd);
-        NewReads_.emplace_back(fd, h);
-        while (!DelReads_.empty() && DelReads_.back() == fd) {
-            DelReads_.pop();
-        }
+        Changes_.emplace_back(TEventChange{fd, TEventChange::READ, h});
     }
 
     void AddWrite(int fd, THandle h) {
         MaxFd_ = std::max(MaxFd_, fd);
-        NewWrites_.emplace_back(fd, h);
-        while (!DelWrites_.empty() && DelWrites_.back() == fd) {
-            DelWrites_.pop();
-        }
+        Changes_.emplace_back(TEventChange{fd, TEventChange::WRITE, h});
     }
 
     void RemoveEvent(int fd) {
         // TODO: resume waiting coroutines here
         MaxFd_ = std::max(MaxFd_, fd);
-        DelReads_.emplace(fd);
-        DelWrites_.emplace(fd);
+        Changes_.emplace_back(TEventChange{fd, TEventChange::READ|TEventChange::WRITE, {}});
     }
 
     template<typename Rep, typename Period>
@@ -70,21 +64,25 @@ public:
         return TAwaitable{this,next};
     }
 
-    auto& ReadyHandles() {
-        return ReadyHandles_;
+    void Wakeup(TEventChange&& change) {
+        change.Handle.resume();
+        if (Changes_.empty() || !Changes_.back().Match(change)) {
+            change.Handle = {};
+            Changes_.emplace_back(std::move(change));
+        }
     }
 
     void WakeupReadyHandles() {
-        for (auto& ev : ReadyHandles_) {
-            ev.resume();
+        int i = 0;
+        for (auto&& ev : ReadyEvents_) {
+            Wakeup(std::move(ev));
         }
     }
 
 protected:
     void Reset() {
-        NewReads_.clear();
-        NewWrites_.clear();
-        ReadyHandles_.clear();
+        ReadyEvents_.clear();
+        Changes_.clear();
         MaxFd_ = 0;
     }
 
@@ -95,7 +93,7 @@ protected:
             TTimer timer = std::move(Timers_.top());
 
             if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
-                ReadyHandles_.emplace_back(timer.Handle);
+                ReadyEvents_.emplace_back(TEventChange{-1, 0, timer.Handle});
             }
 
             prevFd = timer.Fd;
@@ -110,8 +108,10 @@ protected:
     std::vector<std::tuple<int,THandle>> NewWrites_;
     std::queue<int> DelReads_;
     std::queue<int> DelWrites_;
-    std::priority_queue<TTimer> Timers_;
+    std::vector<TEventChange> Changes_;
+    std::vector<TEventChange> ReadyEvents_;
     std::vector<THandle> ReadyHandles_;
+    std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
 };
 
