@@ -43,22 +43,22 @@ public:
             bool newEv = false;
             if (ch.Handle) {
                 newEv = !!ev.Read && !!ev.Write;
-                if (ch.Type & TEventChange::READ) {
+                if (ch.Type & TEvent::READ) {
                     eev.events |= EPOLLIN;
                     change |= ev.Read != ch.Handle;
                     ev.Read = ch.Handle;
                 }
-                if (ch.Type & TEventChange::WRITE) {
+                if (ch.Type & TEvent::WRITE) {
                     eev.events |= EPOLLOUT;
                     change |= ev.Write != ch.Handle;
                     ev.Write = ch.Handle;
                 }
             } else {
-                if (ch.Type & TEventChange::READ) {
+                if (ch.Type & TEvent::READ) {
                     change |= !!ev.Read;
                     ev.Read = {};
                 }
-                if (ch.Type & TEventChange::WRITE) {
+                if (ch.Type & TEvent::WRITE) {
                     change |= !!ev.Write;
                     ev.Write = {};
                 }
@@ -106,19 +106,19 @@ public:
             int fd = OutEvents_[i].data.fd;
             auto ev = InEvents_[fd];
             if (OutEvents_[i].events & EPOLLIN) {
-                ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::READ, ev.Read});
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 ev.Read = {};
             }
             if (OutEvents_[i].events & EPOLLOUT) {
-                ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::WRITE, ev.Write});
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 ev.Write = {};
             }
             if (OutEvents_[i].events & EPOLLHUP) {
                 if (ev.Read) {
-                    ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::READ, ev.Read});
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 }
                 if (ev.Write) {
-                    ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::WRITE, ev.Write});
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 }
             }
         }
@@ -128,7 +128,7 @@ public:
 
 private:
     int Fd_;
-    std::vector<TEvent> InEvents_;       // all events in epoll
+    std::vector<THandlePair> InEvents_;       // all events in epoll
     std::vector<epoll_event> OutEvents_; // events out from epoll_wait
 };
 

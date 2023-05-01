@@ -31,17 +31,17 @@ public:
             int fd = ch.Fd;
             auto& ev = InEvents_[fd];
             if (ch.Handle) {
-                if (ch.Type & TEventChange::READ) {
+                if (ch.Type & TEvent::READ) {
                     FD_SET(fd, ReadFds()); ev.Read = ch.Handle;
                 }
-                if (ch.Type & TEventChange::WRITE) {
+                if (ch.Type & TEvent::WRITE) {
                     FD_SET(fd, WriteFds()); ev.Write = ch.Handle;
                 }
             } else {
-                if (ch.Type & TEventChange::READ) {
+                if (ch.Type & TEvent::READ) {
                     FD_CLR(fd, ReadFds()); ev.Read = {};
                 }
-                if (ch.Type & TEventChange::WRITE) {
+                if (ch.Type & TEvent::WRITE) {
                     FD_CLR(fd, WriteFds()); ev.Write = {};
                 }
             }
@@ -58,14 +58,14 @@ public:
 
             if (FD_ISSET(k, WriteFds())) {
                 assert(ev.Write);
-                ReadyEvents_.emplace_back(TEventChange{k, TEventChange::WRITE, ev.Write});
+                ReadyEvents_.emplace_back(TEvent{k, TEvent::WRITE, ev.Write});
             } else if (ev.Write) {
                 // fd was cleared by select, set it
                 FD_SET(k, WriteFds());
             }
             if (FD_ISSET(k, ReadFds())) {
                 assert(ev.Read);
-                ReadyEvents_.emplace_back(TEventChange{k, TEventChange::READ, ev.Read});
+                ReadyEvents_.emplace_back(TEvent{k, TEvent::READ, ev.Read});
             } else if (ev.Read) {
                 // fd was cleared by select, set it
                 FD_SET(k, ReadFds());
@@ -83,7 +83,7 @@ private:
         return reinterpret_cast<fd_set*>(&WriteFds_[0]);
     }
 
-    std::vector<TEvent> InEvents_;
+    std::vector<THandlePair> InEvents_;
     std::vector<fd_mask> ReadFds_;
     std::vector<fd_mask> WriteFds_;
 };

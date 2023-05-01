@@ -87,7 +87,7 @@ public:
                 continue;
             }
             // TODO: check flags & EV_ERROR && errno = OutEvents_[i].data
-            TEvent ev = InEvents_[fd];
+            THandlePair ev = InEvents_[fd];
             bool changed = false;
             if (filter == EVFILT_READ && ev.Read) {
                 ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::READ, ev.Read});
@@ -113,7 +113,7 @@ public:
 
 private:
     int Fd_;
-    std::vector<TEvent> InEvents_; // all events in kqueue
+    std::vector<THandlePair> InEvents_; // all events in kqueue
     std::vector<struct kevent> ChangeList_;
     std::vector<struct kevent> OutEvents_;
 };

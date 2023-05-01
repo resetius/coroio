@@ -171,7 +171,7 @@ public:
             void* data = reinterpret_cast<void*>(cqe->user_data);
             if (data != nullptr) {
                 Results_.push(cqe->res);
-                ReadyEvents_.emplace_back(TEventChange{-1, 0, std::coroutine_handle<>::from_address(data)});
+                ReadyEvents_.emplace_back(TEvent{-1, 0, std::coroutine_handle<>::from_address(data)});
             }
         }
 

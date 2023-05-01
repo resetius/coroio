@@ -30,18 +30,18 @@ public:
 
     void AddRead(int fd, THandle h) {
         MaxFd_ = std::max(MaxFd_, fd);
-        Changes_.emplace_back(TEventChange{fd, TEventChange::READ, h});
+        Changes_.emplace_back(TEvent{fd, TEvent::READ, h});
     }
 
     void AddWrite(int fd, THandle h) {
         MaxFd_ = std::max(MaxFd_, fd);
-        Changes_.emplace_back(TEventChange{fd, TEventChange::WRITE, h});
+        Changes_.emplace_back(TEvent{fd, TEvent::WRITE, h});
     }
 
     void RemoveEvent(int fd) {
         // TODO: resume waiting coroutines here
         MaxFd_ = std::max(MaxFd_, fd);
-        Changes_.emplace_back(TEventChange{fd, TEventChange::READ|TEventChange::WRITE, {}});
+        Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE, {}});
     }
 
     template<typename Rep, typename Period>
@@ -65,7 +65,7 @@ public:
         return TAwaitable{this,next};
     }
 
-    void Wakeup(TEventChange&& change) {
+    void Wakeup(TEvent&& change) {
         change.Handle.resume();
         if (Changes_.empty() || !Changes_.back().Match(change)) {
             if (change.Fd >= 0) {
@@ -96,7 +96,7 @@ protected:
             TTimer timer = std::move(Timers_.top());
 
             if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
-                ReadyEvents_.emplace_back(TEventChange{-1, 0, timer.Handle});
+                ReadyEvents_.emplace_back(TEvent{-1, 0, timer.Handle});
             }
 
             prevFd = timer.Fd;
@@ -106,8 +106,8 @@ protected:
     }
 
     int MaxFd_ = 0;
-    std::vector<TEventChange> Changes_;
-    std::vector<TEventChange> ReadyEvents_;
+    std::vector<TEvent> Changes_;
+    std::vector<TEvent> ReadyEvents_;
     std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
 };
