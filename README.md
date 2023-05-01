@@ -1,7 +1,7 @@
 # netlib
 This is a simple network library which uses C++ coroutines. 
 The library supports the following backends: ```poll```, ```select```, ```epoll```, ```uring```, ```kqueue```.
-For ```uring``` ```liburing``` library is used. 
+For ```uring``` the [liburing library](https://github.com/axboe/liburing) is used. 
 
 ## Benchmark
 
