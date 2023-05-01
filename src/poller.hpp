@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <queue>
+#include <assert.h>
 
 #include "base.hpp"
 
@@ -67,8 +68,10 @@ public:
     void Wakeup(TEventChange&& change) {
         change.Handle.resume();
         if (Changes_.empty() || !Changes_.back().Match(change)) {
-            change.Handle = {};
-            Changes_.emplace_back(std::move(change));
+            if (change.Fd >= 0) {
+                change.Handle = {};
+                Changes_.emplace_back(std::move(change));
+            }
         }
     }
 
@@ -102,7 +105,6 @@ protected:
         LastTimersProcessTime_ = now;
     }
 
-    std::map<int,TEvent> Events_;  // changes
     int MaxFd_ = 0;
     std::vector<std::tuple<int,THandle>> NewReads_;
     std::vector<std::tuple<int,THandle>> NewWrites_;
