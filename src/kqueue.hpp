@@ -32,38 +32,41 @@ public:
         auto ts = GetTimespec(TClock::now(), deadline);
 
         ChangeList_.clear();
-        for (auto& [k, ev] : Events_) {
+        if (InEvents_.size() <= MaxFd_) {
+            InEvents_.resize(MaxFd_+1);
+        }
+        for (auto& ch : Changes_) {
+            int fd = ch.Fd;
             struct kevent kev = {};
             bool changed = false;
+            auto& ev = InEvents_[fd];
 
-            if (InEvents_.size() <= k) {
-                InEvents_.resize(k+1);
+            if (ch.Handle) {
+                if (ch.Type & TEvent::READ && ev.Read != ch.Handle) {
+                    EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, nullptr);
+                    ChangeList_.emplace_back(kev);
+                    ev.Read = ch.Handle;
+                }
+                if (ch.Type & TEvent::WRITE && ev.Write != ch.Handle) {
+                    EV_SET(&kev, fd, EVFILT_WRITE, EV_ADD, 0, 0, nullptr);
+                    ChangeList_.emplace_back(kev);
+                    ev.Write = ch.Handle;
+                }
+            } else {
+                if (ch.Type & TEvent::READ && ev.Read) {
+                    EV_SET(&kev, fd, EVFILT_READ, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
+                    ChangeList_.emplace_back(kev);
+                    ev.Read = {};
+                }
+                if (ch.Type & TEvent::WRITE && ev.Write) {
+                    EV_SET(&kev, fd, EVFILT_WRITE, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
+                    ChangeList_.emplace_back(kev);
+                    ev.Write = {};
+                }
             }
-
-            auto& old_ev = InEvents_[k];
-
-            if (ev.Read && !old_ev.Read) {
-                EV_SET(&kev, k, EVFILT_READ, EV_ADD, 0, 0, nullptr);
-                ChangeList_.emplace_back(kev);
-            }
-            if (ev.Write && !old_ev.Write) {
-                EV_SET(&kev, k, EVFILT_WRITE, EV_ADD, 0, 0, nullptr);
-                ChangeList_.emplace_back(kev);
-            }
-            if (!ev.Read && old_ev.Read) {
-                EV_SET(&kev, k, EVFILT_READ, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
-                ChangeList_.emplace_back(kev);
-            }
-            if (!ev.Write && old_ev.Write) {
-                EV_SET(&kev, k, EVFILT_WRITE, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
-                ChangeList_.emplace_back(kev);
-            }
-
-            old_ev = ev;
         }
 
-        Events_.clear();
-        ReadyHandles_.clear();
+        Reset();
 
         OutEvents_.resize(std::max<size_t>(1, 2*InEvents_.size()));
         int nfds;
@@ -84,39 +87,24 @@ public:
                 continue;
             }
             // TODO: check flags & EV_ERROR && errno = OutEvents_[i].data
-            auto maybeEv = Events_.find(fd);
-            TEvent ev;
-            if (maybeEv == Events_.end()) {
-                ev = InEvents_[fd];
-            } else {
-                ev = maybeEv->second;
-            }
+            THandlePair ev = InEvents_[fd];
             bool changed = false;
             if (filter == EVFILT_READ && ev.Read) {
-                ReadyHandles_.emplace_back(std::move(ev.Read));
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 ev.Read = {};
-                changed |= true;
             }
             if (filter == EVFILT_WRITE && ev.Write) {
-                ReadyHandles_.emplace_back(std::move(ev.Write));
-                assert(ev.Write);
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 ev.Write = {};
-                changed |= true;
             }
             if (flags & EV_EOF) {
                 changed |= true;
                 if (ev.Read) {
-                    ReadyHandles_.emplace_back(std::move(ev.Read));
-                    ev.Read = {};
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 }
                 if (ev.Write) {
-                    ReadyHandles_.emplace_back(std::move(ev.Write));
-                    ev.Write = {};
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 }
-            }
-
-            if (changed) {
-                Events_[fd] = ev;
             }
         }
 
@@ -125,7 +113,7 @@ public:
 
 private:
     int Fd_;
-    std::vector<TEvent> InEvents_; // all events in kqueue
+    std::vector<THandlePair> InEvents_; // all events in kqueue
     std::vector<struct kevent> ChangeList_;
     std::vector<struct kevent> OutEvents_;
 };

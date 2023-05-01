@@ -30,42 +30,70 @@ public:
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         int timeout = GetMillis(TClock::now(), deadline);
 
-        for (auto& [k, ev] : Events_) {
-            epoll_event eev = {};
-            bool changed = false;
-            eev.data.fd = k;
-            if (InEvents_.size() <= k) {
-                InEvents_.resize(k+1);
-            }
-            auto& old_ev = InEvents_[k];
+        if (InEvents_.size() <= MaxFd_) {
+            InEvents_.resize(MaxFd_+1);
+        }
 
-            if (ev.Read) {
-                eev.events |= EPOLLIN;
+        for (const auto& ch : Changes_) {
+            int fd = ch.Fd;
+            auto& ev  = InEvents_[fd];
+            epoll_event eev = {};
+            eev.data.fd = fd;
+            bool change = false;
+            bool newEv = false;
+            if (ch.Handle) {
+                newEv = !!ev.Read && !!ev.Write;
+                if (ch.Type & TEvent::READ) {
+                    eev.events |= EPOLLIN;
+                    change |= ev.Read != ch.Handle;
+                    ev.Read = ch.Handle;
+                }
+                if (ch.Type & TEvent::WRITE) {
+                    eev.events |= EPOLLOUT;
+                    change |= ev.Write != ch.Handle;
+                    ev.Write = ch.Handle;
+                }
+            } else {
+                if (ch.Type & TEvent::READ) {
+                    change |= !!ev.Read;
+                    ev.Read = {};
+                }
+                if (ch.Type & TEvent::WRITE) {
+                    change |= !!ev.Write;
+                    ev.Write = {};
+                }
+                if (ev.Read) {
+                    eev.events |= EPOLLIN;
+                }
+                if (ev.Write) {
+                    eev.events |= EPOLLOUT;
+                }
             }
-            if (ev.Write) {
-                eev.events |= EPOLLOUT;
-            }
-            changed = (!!ev.Read != !!old_ev.Read) || (!!ev.Write != !!old_ev.Write);
-            if (!ev.Write && !ev.Read) {
-                if (epoll_ctl(Fd_, EPOLL_CTL_DEL, eev.data.fd, nullptr) < 0) {
+
+            if (newEv) {
+                if (epoll_ctl(Fd_, EPOLL_CTL_ADD, fd, &eev) < 0) {
+                    throw std::system_error(errno, std::generic_category(), "epoll_ctl");
+                }
+            } else if (!eev.events) {
+                if (epoll_ctl(Fd_, EPOLL_CTL_DEL, fd, nullptr) < 0) {
                     if (errno != EBADF) { // closed descriptor after TSocket -> close
                         throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                     }
                 }
-            } else if (!old_ev.Write && !old_ev.Read) {
-                if (epoll_ctl(Fd_, EPOLL_CTL_ADD, eev.data.fd, &eev) < 0) {
-                    throw std::system_error(errno, std::generic_category(), "epoll_ctl");
-                }
-            } else if (changed) {
-                if (epoll_ctl(Fd_, EPOLL_CTL_MOD, eev.data.fd, &eev) < 0) {
-                    throw std::system_error(errno, std::generic_category(), "epoll_ctl");
+            } else if (change) {
+                if (epoll_ctl(Fd_, EPOLL_CTL_MOD, fd, &eev) < 0) {
+                    if (errno == ENOENT) {
+                        if (epoll_ctl(Fd_, EPOLL_CTL_ADD, fd, &eev) < 0) {
+                            throw std::system_error(errno, std::generic_category(), "epoll_ctl");
+                        }
+                    } else {
+                        throw std::system_error(errno, std::generic_category(), "epoll_ctl");
+                    }
                 }
             }
-            old_ev = ev;
         }
 
-        Events_.clear();
-        ReadyHandles_.clear();
+        Reset();
 
         OutEvents_.resize(std::max<size_t>(1, InEvents_.size()));
 
@@ -78,25 +106,21 @@ public:
             int fd = OutEvents_[i].data.fd;
             auto ev = InEvents_[fd];
             if (OutEvents_[i].events & EPOLLIN) {
-                ReadyHandles_.emplace_back(std::move(ev.Read));
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 ev.Read = {};
             }
             if (OutEvents_[i].events & EPOLLOUT) {
-                ReadyHandles_.emplace_back(std::move(ev.Write));
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 ev.Write = {};
             }
             if (OutEvents_[i].events & EPOLLHUP) {
                 if (ev.Read) {
-                    ReadyHandles_.emplace_back(std::move(ev.Read));
-                    ev.Read = {};
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 }
                 if (ev.Write) {
-                    ReadyHandles_.emplace_back(std::move(ev.Write));
-                    ev.Write = {};
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 }
             }
-
-            Events_.emplace(fd, ev);
         }
 
         ProcessTimers();
@@ -104,7 +128,7 @@ public:
 
 private:
     int Fd_;
-    std::vector<TEvent> InEvents_;       // all events in epoll
+    std::vector<THandlePair> InEvents_;       // all events in epoll
     std::vector<epoll_event> OutEvents_; // events out from epoll_wait
 };
 

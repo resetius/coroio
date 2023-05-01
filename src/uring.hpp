@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base.hpp"
 #include "socket.hpp"
 #include "poller.hpp"
 
@@ -124,12 +125,13 @@ public:
         unsigned head;
         int err;
 
-        for (auto& [k, ev] : Events_) {
-            assert(!ev.Read);
-            assert(!ev.Write);
-            Cancel(k);
+        for (auto& ev : Changes_) {
+            assert(ev.Type == (TEvent::READ|TEvent::WRITE));
+            assert(!ev.Handle);
+            Cancel(ev.Fd);
         }
-        Events_.clear();
+
+        Reset();
 
 //        int nfds = 0;
 //        int timeout = 1000; // ms
@@ -161,7 +163,6 @@ public:
             }
         }
 
-        ReadyHandles_.clear();
         assert(Results_.empty());
 
         int completed = 0;
@@ -170,7 +171,7 @@ public:
             void* data = reinterpret_cast<void*>(cqe->user_data);
             if (data != nullptr) {
                 Results_.push(cqe->res);
-                ReadyHandles_.emplace_back(std::move(std::coroutine_handle<>::from_address(data)));
+                ReadyEvents_.emplace_back(TEvent{-1, 0, std::coroutine_handle<>::from_address(data)});
             }
         }
 
@@ -185,13 +186,6 @@ public:
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         auto ts = GetTimespec(TClock::now(), deadline);
         Wait(ts);
-    }
-
-    void Process() {
-        for (auto& handle: ReadyHandles_) {
-            handle.resume();
-        }
-        ReadyHandles_.clear();
     }
 
     int Result() {

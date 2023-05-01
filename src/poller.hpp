@@ -1,8 +1,10 @@
 #pragma once
 
+#include <iostream>
 #include <vector>
 #include <map>
 #include <queue>
+#include <assert.h>
 
 #include "base.hpp"
 
@@ -27,16 +29,19 @@ public:
     }
 
     void AddRead(int fd, THandle h) {
-        Events_[fd].Read = std::move(h);
+        MaxFd_ = std::max(MaxFd_, fd);
+        Changes_.emplace_back(TEvent{fd, TEvent::READ, h});
     }
 
     void AddWrite(int fd, THandle h) {
-        Events_[fd].Write = std::move(h);
+        MaxFd_ = std::max(MaxFd_, fd);
+        Changes_.emplace_back(TEvent{fd, TEvent::WRITE, h});
     }
 
     void RemoveEvent(int fd) {
         // TODO: resume waiting coroutines here
-        Events_[fd] = {};
+        MaxFd_ = std::max(MaxFd_, fd);
+        Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE, {}});
     }
 
     template<typename Rep, typename Period>
@@ -60,11 +65,30 @@ public:
         return TAwaitable{this,next};
     }
 
-    auto& ReadyHandles() {
-        return ReadyHandles_;
+    void Wakeup(TEvent&& change) {
+        change.Handle.resume();
+        if (Changes_.empty() || !Changes_.back().Match(change)) {
+            if (change.Fd >= 0) {
+                change.Handle = {};
+                Changes_.emplace_back(std::move(change));
+            }
+        }
+    }
+
+    void WakeupReadyHandles() {
+        int i = 0;
+        for (auto&& ev : ReadyEvents_) {
+            Wakeup(std::move(ev));
+        }
     }
 
 protected:
+    void Reset() {
+        ReadyEvents_.clear();
+        Changes_.clear();
+        MaxFd_ = 0;
+    }
+
     void ProcessTimers() {
         auto now = TClock::now();
         int prevFd = -1;
@@ -72,7 +96,7 @@ protected:
             TTimer timer = std::move(Timers_.top());
 
             if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
-                ReadyHandles_.emplace_back(timer.Handle);
+                ReadyEvents_.emplace_back(TEvent{-1, 0, timer.Handle});
             }
 
             prevFd = timer.Fd;
@@ -81,9 +105,10 @@ protected:
         LastTimersProcessTime_ = now;
     }
 
-    std::map<int,TEvent> Events_;  // changes
+    int MaxFd_ = 0;
+    std::vector<TEvent> Changes_;
+    std::vector<TEvent> ReadyEvents_;
     std::priority_queue<TTimer> Timers_;
-    std::vector<THandle> ReadyHandles_;
     TTime LastTimersProcessTime_;
 };
 

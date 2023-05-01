@@ -19,74 +19,71 @@ public:
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
         int timeout = GetMillis(TClock::now(), deadline);
 
-        for (auto& [k, ev] : Events_) {
-            if (InEvents_.size() <= k) {
-                InEvents_.resize(k+1, std::make_tuple(TEvent{}, -1));
-            }
-            auto& [old_ev, idx] = InEvents_[k];
-            pollfd pev = {.fd = k, .events = 0, .revents = 0};
-            if (ev.Read) {
-                pev.events |= POLLIN;
-            }
-            if (ev.Write) {
-                pev.events |= POLLOUT;
-            }
+        if (InEvents_.size() <= MaxFd_) {
+            InEvents_.resize(MaxFd_+1, std::make_tuple(THandlePair{}, -1));
+        }
 
-            if (pev.events) {
+        for (const auto& ch : Changes_) {
+            int fd = ch.Fd;
+            auto& [ev, idx] = InEvents_[fd];
+            if (ch.Handle) {
                 if (idx == -1) {
                     idx = Fds_.size();
-                    Fds_.emplace_back(std::move(pev));
-                } else {
-                    Fds_[idx] = pev;
+                    Fds_.emplace_back(pollfd{});
                 }
-                old_ev = ev;
-            } else {
-                if (idx != -1) {
+                pollfd& pev = Fds_[idx];
+                pev.fd = fd;
+                if (ch.Type & TEvent::READ) {
+                    pev.events |= POLLIN;
+                    ev.Read = ch.Handle;
+                }
+                if (ch.Type & TEvent::WRITE) {
+                    pev.events |= POLLOUT;
+                    ev.Write = ch.Handle;
+                }
+            } else if (idx != -1) {
+                if (ch.Type & TEvent::READ) {
+                    Fds_[idx].events &= ~POLLIN;
+                    ev.Read = {};
+                }
+                if (ch.Type & TEvent::WRITE) {
+                    Fds_[idx].events &= ~POLLOUT;
+                    ev.Write = {};
+                }
+                if (Fds_[idx].events == 0) {
                     std::swap(Fds_[idx], Fds_.back());
                     std::get<1>(InEvents_[Fds_[idx].fd]) = idx;
-                    Fds_.back() = {};
-                }
-
-                while (!Fds_.empty() && !Fds_.back().events) {
-                    Fds_.pop_back();
+                    Fds_.back().events = 0;
+                    idx = -1;
                 }
             }
         }
 
-        Events_.clear();
-        ReadyHandles_.clear();
+        while (!Fds_.empty() && !Fds_.back().events) {
+            Fds_.pop_back();
+        }
+
+        Reset();
 
         if (poll(&Fds_[0], Fds_.size(), timeout) < 0) {
             throw std::system_error(errno, std::generic_category(), "poll");
         }
 
         for (auto& pev : Fds_) {
-            auto& [ev, _] = InEvents_[pev.fd];
-            bool changed = false;
+            auto [ev, _] = InEvents_[pev.fd];
             if (pev.revents & POLLIN) {
-                ReadyHandles_.emplace_back(std::move(ev.Read));
-                ev.Read = {};
-                changed |= true;
+                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read}); ev.Read = {};
             }
             if (pev.revents & POLLOUT) {
-                ReadyHandles_.emplace_back(std::move(ev.Write));
-                ev.Write = {};
-                changed |= true;
+                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write}); ev.Write = {};
             }
             if (pev.revents & POLLHUP) {
-                changed |= true;
                 if (ev.Read) {
-                    ReadyHandles_.emplace_back(std::move(ev.Read));
-                    ev.Read = {};
+                    ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read});
                 }
                 if (ev.Write) {
-                    ReadyHandles_.emplace_back(std::move(ev.Write));
-                    ev.Write = {};
+                    ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
                 }
-            }
-
-            if (changed) {
-                Events_.emplace(pev.fd, ev);
             }
         }
 
@@ -94,7 +91,7 @@ public:
     }
 
 private:
-    std::vector<std::tuple<TEvent,int>> InEvents_; // event + index in Fds
+    std::vector<std::tuple<THandlePair,int>> InEvents_; // event + index in Fds
     std::vector<pollfd> Fds_;
 };
 

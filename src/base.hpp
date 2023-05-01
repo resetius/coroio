@@ -24,9 +24,23 @@ struct TTimer {
     }
 };
 
-struct TEvent {
+struct THandlePair {
     THandle Read;
     THandle Write;
+};
+
+struct TEvent {
+    int Fd;
+    enum {
+        READ = 1,
+        WRITE = 2
+    };
+    int Type;
+    THandle Handle;
+
+    bool Match(const TEvent& other) const {
+        return Fd == other.Fd && (Type & other.Type);
+    }
 };
 
 template<typename T1, typename T2>
