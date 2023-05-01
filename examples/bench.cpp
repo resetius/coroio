@@ -52,14 +52,14 @@ TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
         while ((size = co_await r.ReadSomeYield(buf, 1)) != 0) {
             s.count += size;
             if (s.writes) {
+                s.writes--;
                 if (co_await w.WriteSome(buf, 1) != 1) {
                     s.failures ++;
                 }
-                s.writes--;
                 s.fired++;
             }
         }
-    } catch (const std::exception& ) {
+    } catch (const std::exception& ex) {
         s.failures ++;
     }
     s.out ++;
