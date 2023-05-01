@@ -126,7 +126,7 @@ public:
         int err;
 
         for (auto& ev : Changes_) {
-            assert(ev.Type == (TEventChange::READ|TEventChange::WRITE));
+            assert(ev.Type == (TEvent::READ|TEvent::WRITE));
             assert(!ev.Handle);
             Cancel(ev.Fd);
         }

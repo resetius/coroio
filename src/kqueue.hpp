@@ -42,23 +42,23 @@ public:
             auto& ev = InEvents_[fd];
 
             if (ch.Handle) {
-                if (ch.Type & TEventChange::READ && ev.Read != ch.Handle) {
+                if (ch.Type & TEvent::READ && ev.Read != ch.Handle) {
                     EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, nullptr);
                     ChangeList_.emplace_back(kev);
                     ev.Read = ch.Handle;
                 }
-                if (ch.Type & TEventChange::WRITE && ev.Write != ch.Handle) {
+                if (ch.Type & TEvent::WRITE && ev.Write != ch.Handle) {
                     EV_SET(&kev, fd, EVFILT_WRITE, EV_ADD, 0, 0, nullptr);
                     ChangeList_.emplace_back(kev);
                     ev.Write = ch.Handle;
                 }
             } else {
-                if (ch.Type & TEventChange::READ && ev.Read) {
+                if (ch.Type & TEvent::READ && ev.Read) {
                     EV_SET(&kev, fd, EVFILT_READ, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
                     ChangeList_.emplace_back(kev);
                     ev.Read = {};
                 }
-                if (ch.Type & TEventChange::WRITE && ev.Write) {
+                if (ch.Type & TEvent::WRITE && ev.Write) {
                     EV_SET(&kev, fd, EVFILT_WRITE, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
                     ChangeList_.emplace_back(kev);
                     ev.Write = {};
@@ -90,20 +90,20 @@ public:
             THandlePair ev = InEvents_[fd];
             bool changed = false;
             if (filter == EVFILT_READ && ev.Read) {
-                ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::READ, ev.Read});
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 ev.Read = {};
             }
             if (filter == EVFILT_WRITE && ev.Write) {
-                ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::WRITE, ev.Write});
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 ev.Write = {};
             }
             if (flags & EV_EOF) {
                 changed |= true;
                 if (ev.Read) {
-                    ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::READ, ev.Read});
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 }
                 if (ev.Write) {
-                    ReadyEvents_.emplace_back(TEventChange{fd, TEventChange::WRITE, ev.Write});
+                    ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
                 }
             }
         }
