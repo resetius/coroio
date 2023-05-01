@@ -1,3 +1,7 @@
+#if defined(__APPLE__)
+#define _DARWIN_UNLIMITED_SELECT
+#endif
+
 #include <chrono>
 #include <coroutine>
 #include <exception>
