@@ -20,7 +20,7 @@ Performance comparison using different event notification mechansims in Libevent
 
 
 * CPU i5-11400F
-* Ubuntu 22.04, WSL2
+* Ubuntu 23.04, WSL2, kernel 6.1.21.1-microsoft-standard-WSL2+
 
 <img src="/bench/bench_11400F.png?raw=true" width="400"/><img src="/bench/bench_11400F_100.png?raw=true" width="400"/>
 
