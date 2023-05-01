@@ -29,6 +29,20 @@ struct TEvent {
     THandle Write;
 };
 
+struct TEventChange {
+    int Fd;
+    enum {
+        READ = 1,
+        WRITE = 2
+    };
+    int Type;
+    THandle Handle;
+
+    bool Match(const TEventChange& other) const {
+        return Fd == other.Fd && (Type & other.Type);
+    }
+};
+
 template<typename T1, typename T2>
 inline std::tuple<T1, T2>
 GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds min_duration)

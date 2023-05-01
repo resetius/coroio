@@ -124,12 +124,13 @@ public:
         unsigned head;
         int err;
 
-        for (auto& [k, ev] : Events_) {
-            assert(!ev.Read);
-            assert(!ev.Write);
-            Cancel(k);
+        for (auto& ev : Changes_) {
+            assert(ev.Type == (TEventChange::READ|TEventChange::WRITE));
+            assert(!ev.Handle);
+            Cancel(ev.Fd);
         }
-        Events_.clear();
+
+        Reset();
 
 //        int nfds = 0;
 //        int timeout = 1000; // ms
@@ -161,7 +162,6 @@ public:
             }
         }
 
-        ReadyHandles_.clear();
         assert(Results_.empty());
 
         int completed = 0;

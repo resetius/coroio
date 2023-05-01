@@ -78,7 +78,7 @@ public:
 
     void Step() {
         Poller_.Poll();
-        HandleEvents();
+        Poller_.WakeupReadyHandles();
     }
 
     TPoller& Poller() {
@@ -86,12 +86,6 @@ public:
     }
 
 private:
-    void HandleEvents() {
-        for (auto& ev : Poller_.ReadyHandles()) {
-            ev.resume();
-        }
-    }
-
     TPoller Poller_;
     bool Running_ = true;
 };
