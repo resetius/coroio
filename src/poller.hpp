@@ -106,13 +106,8 @@ protected:
     }
 
     int MaxFd_ = 0;
-    std::vector<std::tuple<int,THandle>> NewReads_;
-    std::vector<std::tuple<int,THandle>> NewWrites_;
-    std::queue<int> DelReads_;
-    std::queue<int> DelWrites_;
     std::vector<TEventChange> Changes_;
     std::vector<TEventChange> ReadyEvents_;
-    std::vector<THandle> ReadyHandles_;
     std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
 };
