@@ -88,7 +88,6 @@ public:
             }
             // TODO: check flags & EV_ERROR && errno = OutEvents_[i].data
             THandlePair ev = InEvents_[fd];
-            bool changed = false;
             if (filter == EVFILT_READ && ev.Read) {
                 ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 ev.Read = {};
@@ -98,7 +97,6 @@ public:
                 ev.Write = {};
             }
             if (flags & EV_EOF) {
-                changed |= true;
                 if (ev.Read) {
                     ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
                 }
