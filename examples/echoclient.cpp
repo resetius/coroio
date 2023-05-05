@@ -66,6 +66,7 @@ void run(bool debug, TAddress address, int buffer_size)
     while (!h.done()) {
         loop.Step();
     }
+    h.destroy();
 }
 
 int main(int argc, char** argv) {
