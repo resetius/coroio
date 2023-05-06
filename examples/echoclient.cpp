@@ -26,6 +26,10 @@ using NNet::TEPoll;
 using NNet::TUring;
 #endif
 
+#if defined(__APPLE__) || defined(__FreeBSD__)
+using NNet::TKqueue;
+#endif
+
 template<bool debug, typename TPoller>
 NNet::TTestTask client(TPoller& poller, TAddress addr, int buffer_size)
 {
