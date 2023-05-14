@@ -11,20 +11,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <net.hpp>
-#include <socket.hpp>
-#include <poll.hpp>
-#include <select.hpp>
-#include <system_error>
-
-#ifdef __linux__
-#include <epoll.hpp>
-#include <uring.hpp>
-#endif
-
-#if defined(__APPLE__) || defined(__FreeBSD__)
-#include <kqueue.hpp>
-#endif
+#include <all.hpp>
 
 using namespace NNet;
 using namespace std;

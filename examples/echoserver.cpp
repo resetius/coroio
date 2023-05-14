@@ -1,18 +1,4 @@
-#include <net.hpp>
-#include <select.hpp>
-#include <poll.hpp>
-#include <socket.hpp>
-
-#include <signal.h>
-
-#ifdef __linux__
-#include <epoll.hpp>
-#include <uring.hpp>
-#endif
-
-#if defined(__APPLE__) || defined(__FreeBSD__)
-#include <kqueue.hpp>
-#endif
+#include <all.hpp>
 
 using NNet::TSimpleTask;
 using NNet::TAddress;

@@ -1,17 +1,4 @@
-#pragma once
-
-#include <system_error>
-#include <unordered_map>
-#include <vector>
-#include <iostream>
-#include <queue>
-
-#include <cstdint>
-#include <cstdio>
-
-#include <assert.h>
-
-#include "poller.hpp"
+#include <coroutine>
 
 namespace NNet {
 
@@ -63,31 +50,4 @@ struct TTestSuspendPromise
     void unhandled_exception() {}
 };
 
-template<typename TPoller>
-class TLoop {
-public:
-    void Loop() {
-        while (Running_) {
-            Step();
-        }
-    }
-
-    void Stop() {
-        Running_ = false;
-    }
-
-    void Step() {
-        Poller_.Poll();
-        Poller_.WakeupReadyHandles();
-    }
-
-    TPoller& Poller() {
-        return Poller_;
-    }
-
-private:
-    TPoller Poller_;
-    bool Running_ = true;
-};
-
-} /* namespace NNet */
+} // namespace NNet
