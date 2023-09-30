@@ -1,4 +1,4 @@
-# netlib
+# coroio
 This is a simple network library which uses C++ coroutines. 
 The library supports the following backends: ```poll```, ```select```, ```epoll```, ```uring```, ```kqueue```.
 For ```uring``` the [liburing library](https://github.com/axboe/liburing) is used. 
@@ -9,7 +9,7 @@ The benchmark methodology was taken from the [libevent library](https://libevent
 
 There are two benchmarks. The first one measures how long it takes to serve one active connection and exposes scalability issues of traditional interfaces like select or poll. The second benchmark measures how long it takes to serve one hundred active connections that chain writes to new connections until thousand writes and reads have happened. It exercises the event loop several times.
 
-Performance comparison using different event notification mechansims in Libevent and netlib as follows.
+Performance comparison using different event notification mechansims in Libevent and coroio as follows.
 
 * CPU i7-12800H
 * Ubuntu 23.04
