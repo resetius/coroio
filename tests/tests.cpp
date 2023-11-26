@@ -1,3 +1,4 @@
+#include <chrono>
 #include <exception>
 #include <stdarg.h>
 #include <stddef.h>
@@ -28,20 +29,22 @@ using namespace NNet;
 #define DISABLE_URING
 #endif
 
+static constexpr std::chrono::milliseconds minDiration(10000);
+
 void test_timeval(void**) {
     auto t1 =  std::chrono::seconds(4);
     auto t2 =  std::chrono::seconds(10);
-    auto tv = GetTimeval(TTime(t1), TTime(t2));
+    auto tv = GetTimeval(TTime(t1), TTime(t2), minDiration);
     assert_int_equal(tv.tv_sec, 6);
     assert_int_equal(tv.tv_usec, 0);
 
     auto t3 =  std::chrono::milliseconds(10001);
-    tv = GetTimeval(TTime(t1), TTime(t3));
+    tv = GetTimeval(TTime(t1), TTime(t3), minDiration);
     assert_int_equal(tv.tv_sec, 6);
     assert_int_equal(tv.tv_usec, 1000);
 
     auto t4 = std::chrono::minutes(10000);
-    tv = GetTimeval(TTime(t1), TTime(t4));
+    tv = GetTimeval(TTime(t1), TTime(t4), minDiration);
     assert_int_equal(tv.tv_sec, 10);
     assert_int_equal(tv.tv_usec, 0);
 }
@@ -49,17 +52,17 @@ void test_timeval(void**) {
 void test_timespec(void**) {
     auto t1 =  std::chrono::seconds(4);
     auto t2 =  std::chrono::seconds(10);
-    auto ts = GetTimespec(TTime(t1), TTime(t2));
+    auto ts = GetTimespec(TTime(t1), TTime(t2), minDiration);
     assert_int_equal(ts.tv_sec, 6);
     assert_int_equal(ts.tv_nsec, 0);
 
     auto t3 =  std::chrono::milliseconds(10001);
-    ts = GetTimespec(TTime(t1), TTime(t3));
+    ts = GetTimespec(TTime(t1), TTime(t3), minDiration);
     assert_int_equal(ts.tv_sec, 6);
     assert_int_equal(ts.tv_nsec, 1000*1000);
 
     auto t4 = std::chrono::minutes(10000);
-    ts = GetTimespec(TTime(t1), TTime(t4));
+    ts = GetTimespec(TTime(t1), TTime(t4), minDiration);
     assert_int_equal(ts.tv_sec, 10);
     assert_int_equal(ts.tv_nsec, 0);
 }
@@ -67,15 +70,15 @@ void test_timespec(void**) {
 void test_millis(void**) {
     auto t1 =  std::chrono::seconds(4);
     auto t2 =  std::chrono::seconds(10);
-    auto m= GetMillis(TTime(t1), TTime(t2));
+    auto m= GetMillis(TTime(t1), TTime(t2), minDiration);
     assert_int_equal(m, 6000);
 
     auto t3 =  std::chrono::milliseconds(10001);
-    m = GetMillis(TTime(t1), TTime(t3));
+    m = GetMillis(TTime(t1), TTime(t3), minDiration);
     assert_int_equal(m, 6001);
 
     auto t4 =  std::chrono::minutes(10000);
-    m = GetMillis(TTime(t1), TTime(t4));
+    m = GetMillis(TTime(t1), TTime(t4), minDiration);
     assert_int_equal(m, 10000);
 }
 

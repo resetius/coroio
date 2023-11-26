@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <iostream>
 #include <vector>
 #include <map>
@@ -82,6 +83,10 @@ public:
         }
     }
 
+    void SetMinDuration(std::chrono::milliseconds minDuration) {
+        MinDuration_ = minDuration;
+    }
+
 protected:
     void Reset() {
         ReadyEvents_.clear();
@@ -110,6 +115,7 @@ protected:
     std::vector<TEvent> ReadyEvents_;
     std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
+    std::chrono::milliseconds MinDuration_ = std::chrono::milliseconds(100);
 };
 
 } // namespace NNet

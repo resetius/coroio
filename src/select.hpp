@@ -15,7 +15,7 @@ public:
 
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        auto tv = GetTimeval(TClock::now(), deadline);
+        auto tv = GetTimeval(TClock::now(), deadline, MinDuration_);
 
         constexpr int bits = sizeof(fd_mask)*8;
 

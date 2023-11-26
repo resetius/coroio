@@ -184,7 +184,7 @@ public:
 
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        auto ts = GetTimespec(TClock::now(), deadline);
+        auto ts = GetTimespec(TClock::now(), deadline, MinDuration_);
         Wait(ts);
     }
 

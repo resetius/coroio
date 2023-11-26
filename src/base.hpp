@@ -62,18 +62,18 @@ GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds min_duratio
     }
 }
 
-inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000))
+inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_duration)
 {
     auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::microseconds>(now, deadline, min_duration);
     return {p1.count(), static_cast<int>(p2.count())};
 }
 
-inline int GetMillis(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000)) {
-    auto tv = GetTimeval(now, deadline);
+inline int GetMillis(TTime now, TTime deadline, std::chrono::milliseconds min_duration) {
+    auto tv = GetTimeval(now, deadline, min_duration);
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds min_duration = std::chrono::milliseconds(10000))
+inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds min_duration)
 {
     auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::nanoseconds>(now, deadline, min_duration);
     return {p1.count(), p2.count()};

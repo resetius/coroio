@@ -17,7 +17,7 @@ public:
 
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        int timeout = GetMillis(TClock::now(), deadline);
+        int timeout = GetMillis(TClock::now(), deadline, MinDuration_);
 
         if (InEvents_.size() <= MaxFd_) {
             InEvents_.resize(MaxFd_+1, std::make_tuple(THandlePair{}, -1));
