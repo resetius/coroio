@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <all.hpp>
+#include <coroio/all.hpp>
 
 using namespace NNet;
 using namespace std;
