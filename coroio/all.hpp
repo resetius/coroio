@@ -30,3 +30,11 @@
 #include "socket.hpp"
 #include "corochain.hpp"
 #include "sockutils.hpp"
+
+#if defined(__APPLE__) || defined(__FreeBSD__)
+using TDefaultPoller = NNet::TKqueue;
+#elif defined(__linux__)
+using TDefaultPoller = NNet::TEPoll;
+#else
+using TDefaultPoller = NNet::TPoll;
+#endif
