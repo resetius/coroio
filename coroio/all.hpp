@@ -31,10 +31,12 @@
 #include "corochain.hpp"
 #include "sockutils.hpp"
 
+namespace NNet {
 #if defined(__APPLE__) || defined(__FreeBSD__)
-using TDefaultPoller = NNet::TKqueue;
+using TDefaultPoller = TKqueue;
 #elif defined(__linux__)
-using TDefaultPoller = NNet::TEPoll;
+using TDefaultPoller = TEPoll;
 #else
-using TDefaultPoller = NNet::TPoll;
+using TDefaultPoller = TPoll;
 #endif
+} // namespace NNet
