@@ -5,8 +5,8 @@
 namespace NNet {
 
 template<typename TSocket>
-struct TReader {
-    TReader(TSocket& socket)
+struct TByteReader {
+    TByteReader(TSocket& socket)
         : Socket(socket)
     { }
 
@@ -31,8 +31,8 @@ private:
 };
 
 template<typename TSocket>
-struct TWriter {
-    TWriter(TSocket& socket)
+struct TByteWriter {
+    TByteWriter(TSocket& socket)
         : Socket(socket)
     { }
 
@@ -50,6 +50,34 @@ struct TWriter {
             size -= read_size;
         }
         co_return;
+    }
+
+private:
+    TSocket& Socket;
+};
+
+template<typename T, typename TSocket>
+struct TStructReader {
+    TStructReader(TSocket& socket)
+        : Socket(socket)
+    { }
+
+    TValueTask<T> Read() {
+        T res;
+        size_t size = sizeof(T);
+        char* p = reinterpret_cast<char*>(&res);
+        while (size != 0) {
+            auto read_size = co_await Socket.ReadSome(p, size);
+            if (read_size == 0) {
+                throw std::runtime_error("Connection closed");
+            }
+            if (read_size < 0) {
+                continue; // retry
+            }
+            p += read_size;
+            size -= read_size;
+        }
+        co_return res;
     }
 
 private:
