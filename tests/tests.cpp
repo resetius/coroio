@@ -406,6 +406,45 @@ void test_timeout(void**) {
     assert_true(next >= now + timeout);
 }
 
+void test_read_write_full(void**) {
+    std::vector<char> data(1024*1024);
+    int cur = 0;
+    for (auto& ch : data) {
+        ch = cur + 'a';
+        cur = (cur + 1) % ('z' - 'a' + 1);
+    }
+
+    NNet::TLoop<NNet::TPoll> loop;
+    NNet::TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    NNet::TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+
+    NNet::TTestTask h1 = [](NNet::TSocket& client, const std::vector<char>& data) -> NNet::TTestTask
+    {
+        co_await client.Connect();
+        co_await TWriter(client).Write(data.data(), data.size());
+        co_return;
+    }(client, data);
+
+    std::vector<char> received(1024*1024);
+    NNet::TTestTask h2 = [](NNet::TSocket& server, std::vector<char>& received) -> NNet::TTestTask
+    {
+        auto client = std::move(co_await server.Accept());
+        co_await TReader(client).Read(received.data(), received.size());
+        co_return;
+    }(socket, received);
+
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
+
+    assert_memory_equal(data.data(), received.data(), data.size());
+
+    h1.destroy(); h2.destroy();
+}
+
 #ifdef __linux__
 void test_uring_create(void**) {
     TUring uring(256);
