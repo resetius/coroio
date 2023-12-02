@@ -12,6 +12,17 @@ extern "C" {
 #include <cmocka.h>
 }
 
+namespace {
+
+static uint32_t rand_(uint32_t* seed) {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 17;
+    *seed ^= *seed << 5;
+    return *seed;
+}
+
+} // namespace
+
 using namespace NNet;
 
 #ifdef __linux__
@@ -497,6 +508,78 @@ void test_read_write_struct(void**) {
     h1.destroy(); h2.destroy();
 }
 
+void test_line_splitter(void**) {
+    TLineSplitter splitter(16);
+    uint32_t seed = 31337;
+    for (int i = 0; i < 10000; i++) {
+        int len = rand_(&seed) % 16 + 1;
+        int letter = 'a' + i % ('z' - 'a' + 1);
+        std::string line(len, letter); line.back() = '\n';
+        splitter.Push(line.data(), len);
+        auto l = splitter.Pop();
+        std::string result = std::string(l.Part1);
+        result += l.Part2;
+        assert_string_equal(line.data(), result.data());
+    }
+
+    for (int i = 0; i < 10000; i++) {
+        std::vector<std::string> lines;
+
+        int total = 0;
+        while (1) {
+            int len = rand_(&seed) % 6 + 1;
+            total += len; if (total > 16) break;
+            int letter = 'a' + i % ('z' - 'a' + 1);
+            std::string line(len, letter); line.back() = '\n';
+            splitter.Push(line.data(), len);
+            lines.push_back(line);
+        }
+
+        for (int i = 0; i < lines.size(); i++) {
+            auto l = splitter.Pop();
+            std::string result = std::string(l.Part1);
+            result += l.Part2;
+            assert_string_equal(lines[i].data(), result.data());
+        }
+    }
+}
+
+void test_zero_copy_line_splitter(void**) {
+    TZeroCopyLineSplitter splitter(16);
+    uint32_t seed = 31337;
+    for (int i = 0; i < 1000; i++) {
+        int len = rand_(&seed) % 16 + 1;
+        int letter = 'a' + i % ('z' - 'a' + 1);
+        std::string line(len, letter); line.back() = '\n';
+        splitter.Push(line.data(), len);
+        auto l = splitter.Pop();
+        std::string result = std::string(l.Part1);
+        result += l.Part2;
+        assert_string_equal(line.data(), result.data());
+    }
+
+    for (int i = 0; i < 10000; i++) {
+        std::vector<std::string> lines;
+
+        int total = 0;
+        while (1) {
+            int len = rand_(&seed) % 6 + 1;
+            total += len; if (total > 16) break;
+            int letter = 'a' + i % ('z' - 'a' + 1);
+            std::string line(len, letter); line.back() = '\n';
+            splitter.Push(line.data(), len);
+            lines.push_back(line);
+        }
+
+        for (int i = 0; i < lines.size(); i++) {
+            auto l = splitter.Pop();
+            std::string result = std::string(l.Part1);
+            result += l.Part2;
+            assert_string_equal(lines[i].data(), result.data());
+        }
+    }
+}
+
 #ifdef __linux__
 void test_uring_create(void**) {
     TUring uring(256);
@@ -647,6 +730,8 @@ int main() {
         cmocka_unit_test(test_timeval),
         cmocka_unit_test(test_timespec),
         cmocka_unit_test(test_millis),
+        cmocka_unit_test(test_line_splitter),
+        cmocka_unit_test(test_zero_copy_line_splitter),
         my_unit_poller(test_listen),
         my_unit_poller(test_timeout),
         my_unit_poller(test_accept),
