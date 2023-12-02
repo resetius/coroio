@@ -14,15 +14,15 @@ struct TByteReader {
     TValueTask<void> Read(void* data, size_t size) {
         char* p = static_cast<char*>(data);
         while (size != 0) {
-            auto read_size = co_await Socket.ReadSome(p, size);
-            if (read_size == 0) {
+            auto readSize = co_await Socket.ReadSome(p, size);
+            if (readSize == 0) {
                 throw std::runtime_error("Connection closed");
             }
-            if (read_size < 0) {
+            if (readSize < 0) {
                 continue; // retry
             }
-            p += read_size;
-            size -= read_size;
+            p += readSize;
+            size -= readSize;
         }
         co_return;
     }
@@ -40,15 +40,15 @@ struct TByteWriter {
     TValueTask<void> Write(const void* data, size_t size) {
         const char* p = static_cast<const char*>(data);
         while (size != 0) {
-            auto read_size = co_await Socket.WriteSome(const_cast<char*>(p) /* TODO: cast */, size);
-            if (read_size == 0) {
+            auto readSize = co_await Socket.WriteSome(const_cast<char*>(p) /* TODO: cast */, size);
+            if (readSize == 0) {
                 throw std::runtime_error("Connection closed");
             }
-            if (read_size < 0) {
+            if (readSize < 0) {
                 continue; // retry
             }
-            p += read_size;
-            size -= read_size;
+            p += readSize;
+            size -= readSize;
         }
         co_return;
     }
@@ -68,15 +68,15 @@ struct TStructReader {
         size_t size = sizeof(T);
         char* p = reinterpret_cast<char*>(&res);
         while (size != 0) {
-            auto read_size = co_await Socket.ReadSome(p, size);
-            if (read_size == 0) {
+            auto readSize = co_await Socket.ReadSome(p, size);
+            if (readSize == 0) {
                 throw std::runtime_error("Connection closed");
             }
-            if (read_size < 0) {
+            if (readSize < 0) {
                 continue; // retry
             }
-            p += read_size;
-            size -= read_size;
+            p += readSize;
+            size -= readSize;
         }
         co_return res;
     }
@@ -218,6 +218,39 @@ private:
     size_t Cap;
     std::string Data;
     std::string_view View;
+};
+
+template<typename TSocket>
+struct TLineReader {
+    TLineReader(TSocket& socket, int maxLineSize, int chunkSize)
+        : Socket(socket)
+        , Splitter(maxLineSize)
+        , ChunkSize(chunkSize)
+    {
+        assert(maxLineSize >= chunkSize);
+    }
+
+    TValueTask<TLine> Read() {
+        auto line = Splitter.Pop();
+        while (!line) {
+            auto buf = Splitter.Acquire(ChunkSize);
+            auto size = co_await Socket.ReadSome(buf.data(), buf.size());
+            if (size < 0) {
+                continue;
+            }
+            if (size == 0) {
+                break;
+            }
+            Splitter.Commit(size);
+            line = Splitter.Pop();
+        }
+        co_return line;
+    }
+
+private:
+    TSocket& Socket;
+    TZeroCopyLineSplitter Splitter;
+    int ChunkSize;
 };
 
 } // namespace NNet {

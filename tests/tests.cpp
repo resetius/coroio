@@ -508,6 +508,63 @@ void test_read_write_struct(void**) {
     h1.destroy(); h2.destroy();
 }
 
+template<typename TPoller>
+void test_read_write_lines(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    uint32_t seed = 31337;
+
+    std::vector<std::string> lines;
+    for (int i = 0; i < 10; i++) {
+        int len = rand_(&seed) % 16 + 1;
+        int letter = 'a' + i % ('z' - 'a' + 1);
+        std::string line(len, letter); line.back() = '\n';
+        lines.emplace_back(std::move(line));
+    }
+
+    TLoop loop;
+    TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    NNet::TTestTask h1 = [](auto& poller, auto& lines) -> NNet::TTestTask
+    {
+        TSocket client(NNet::TAddress{"127.0.0.1", 8988}, poller);
+        co_await client.Connect();
+        for (auto& line : lines) {
+            co_await TByteWriter(client).Write(line.data(), line.size());
+        }
+        co_return;
+    }(loop.Poller(), lines);
+
+    std::vector<std::string> received;
+    NNet::TTestTask h2 = [](TSocket& server, auto& received) -> NNet::TTestTask
+    {
+        auto client = std::move(co_await server.Accept());
+        auto reader = TLineReader<TSocket>(client, 16, 16);
+        TLine line;
+        do {
+            line = co_await reader.Read();
+            if (line) {
+                std::string s; s = line.Part1; s += line.Part2;
+                received.emplace_back(std::move(s));
+            }
+        } while (line);
+        co_return;
+    }(socket, received);
+
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
+
+    assert_int_equal(lines.size(), received.size());
+    for (int i = 0; i < lines.size(); i++) {
+        assert_string_equal(lines[i].data(), received[i].data());
+    }
+
+    h1.destroy(); h2.destroy();
+}
+
 void test_line_splitter(void**) {
     TLineSplitter splitter(16);
     uint32_t seed = 31337;
@@ -744,6 +801,7 @@ int main() {
         my_unit_poller(test_read_write_same_socket),
         my_unit_poller(test_read_write_full),
         my_unit_poller(test_read_write_struct),
+        my_unit_poller(test_read_write_lines),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
