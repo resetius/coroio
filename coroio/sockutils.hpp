@@ -1,5 +1,6 @@
 #pragma once
 
+#include <span>
 #include "corochain.hpp"
 
 namespace NNet {
@@ -182,7 +183,7 @@ public:
         }
     }
 
-    std::string_view Acquire(size_t size) {
+    std::span<char> Acquire(size_t size) {
         size = std::min(size, Cap - Size);
         if (size == 0) {
             throw std::runtime_error("Overflow");
@@ -203,7 +204,7 @@ public:
     void Push(const char* p, size_t len) {
         while (len != 0) {
             auto buf = Acquire(len);
-            memcpy((char*)buf.data(), p, buf.size());
+            memcpy(buf.data(), p, buf.size());
             Commit(buf.size());
             len -= buf.size();
             p += buf.size();
