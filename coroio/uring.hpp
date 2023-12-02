@@ -232,8 +232,8 @@ private:
 class TUringSocket: public TSocket
 {
 public:
-    TUringSocket(TAddress&& addr, TUring& poller)
-        : TSocket(addr, poller)
+    TUringSocket(TAddress addr, TUring& poller)
+        : TSocket(std::move(addr), poller)
         , Uring_(&poller)
     { }
 
