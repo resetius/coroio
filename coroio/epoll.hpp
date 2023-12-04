@@ -99,6 +99,9 @@ public:
 
         int nfds;
         if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) {
+            if (errno == EINTR) {
+                return;
+            }
             throw std::system_error(errno, std::generic_category(), "epoll_wait");
         }
 
