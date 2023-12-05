@@ -45,10 +45,7 @@ public:
         Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE, {}});
     }
 
-    template<typename Rep, typename Period>
-    auto Sleep(std::chrono::duration<Rep,Period> duration) {
-        auto now = TClock::now();
-        auto next= now+duration;
+    auto Sleep(TTime until) {
         struct TAwaitable {
             bool await_ready() {
                 return false;
@@ -63,7 +60,12 @@ public:
             TPollerBase* poller;
             TTime n;
         };
-        return TAwaitable{this,next};
+        return TAwaitable{this,until};
+    }
+
+    template<typename Rep, typename Period>
+    auto Sleep(std::chrono::duration<Rep,Period> duration) {
+        return Sleep(TClock::now() + duration);
     }
 
     void Wakeup(TEvent&& change) {
