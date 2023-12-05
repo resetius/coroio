@@ -6,6 +6,19 @@
 
 namespace NNet {
 
+struct TLine {
+    std::string_view Part1;
+    std::string_view Part2;
+
+    size_t Size() const {
+        return Part1.size() + Part2.size();
+    }
+
+    operator bool() const {
+        return !Part1.empty();
+    }
+};
+
 template<typename TSocket>
 struct TByteReader {
     TByteReader(TSocket& socket)
@@ -41,7 +54,7 @@ struct TByteWriter {
     TValueTask<void> Write(const void* data, size_t size) {
         const char* p = static_cast<const char*>(data);
         while (size != 0) {
-            auto readSize = co_await Socket.WriteSome(const_cast<char*>(p) /* TODO: cast */, size);
+            auto readSize = co_await Socket.WriteSome(p, size);
             if (readSize == 0) {
                 throw std::runtime_error("Connection closed");
             }
@@ -51,6 +64,12 @@ struct TByteWriter {
             p += readSize;
             size -= readSize;
         }
+        co_return;
+    }
+
+    TValueTask<void> Write(const TLine& line) {
+        co_await Write(line.Part1.data(), line.Part1.size());
+        co_await Write(line.Part2.data(), line.Part2.size());
         co_return;
     }
 
@@ -84,19 +103,6 @@ struct TStructReader {
 
 private:
     TSocket& Socket;
-};
-
-struct TLine {
-    std::string_view Part1;
-    std::string_view Part2;
-
-    size_t Size() const {
-        return Part1.size() + Part2.size();
-    }
-
-    operator bool() const {
-        return !Part1.empty();
-    }
 };
 
 struct TLineSplitter {

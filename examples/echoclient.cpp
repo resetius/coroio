@@ -11,20 +11,17 @@ TTestTask client(TPoller& poller, TAddress addr)
     using TSocket = typename TPoller::TSocket;
     using TFileHandle = typename TPoller::TFileHandle;
     std::vector<char> in(4096);
-    ssize_t size = 1;
 
     try {
         TFileHandle input{0, poller}; // stdin
-        TLine line;
         TSocket socket{std::move(addr), poller};
         TLineReader lineReader(input);
         TByteWriter byteWriter(socket);
         TByteReader byteReader(socket);
 
         co_await socket.Connect();
-        while ((line = co_await lineReader.Read())) {
-            co_await byteWriter.Write(line.Part1.data(), line.Part1.size());
-            co_await byteWriter.Write(line.Part2.data(), line.Part2.size());
+        while (auto line = co_await lineReader.Read()) {
+            co_await byteWriter.Write(line);
             in.resize(line.Size());
             co_await byteReader.Read(in.data(), in.size());
             if constexpr(debug) {

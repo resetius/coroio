@@ -81,14 +81,14 @@ public:
         close(EpollFd_);
     }
 
-    void Read(int fd, char* buf, int size, std::coroutine_handle<> handle) {
+    void Read(int fd, void* buf, int size, std::coroutine_handle<> handle) {
         struct io_uring_sqe *sqe = GetSqe();
         io_uring_prep_read(sqe, fd, buf, size, 0);
         //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
         io_uring_sqe_set_data(sqe, handle.address());
     }
 
-    void Write(int fd, char* buf, int size, std::coroutine_handle<> handle) {
+    void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle) {
         struct io_uring_sqe *sqe = GetSqe();
         io_uring_prep_write(sqe, fd, buf, size, 0);
         //memcpy(Buffer_.data(), buf, size);
@@ -306,7 +306,7 @@ public:
         return TAwaitable{Uring_, Fd_, Addr().Addr(), deadline};
     }
 
-    auto ReadSome(char* buf, size_t size) {
+    auto ReadSome(void* buf, size_t size) {
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
@@ -324,14 +324,14 @@ public:
             TUring* poller;
             int fd;
 
-            char* buf;
+            void* buf;
             size_t size;
         };
 
         return TAwaitable{Uring_, Fd_, buf, size};
     }
 
-    auto WriteSome(char* buf, size_t size) {
+    auto WriteSome(const void* buf, size_t size) {
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
@@ -349,18 +349,18 @@ public:
             TUring* poller;
             int fd;
 
-            char* buf;
+            const void* buf;
             size_t size;
         };
 
         return TAwaitable{Uring_, Fd_, buf, size};
     }
 
-    auto WriteSomeYield(char* buf, size_t size) {
+    auto WriteSomeYield(const void* buf, size_t size) {
         return WriteSome(buf, size);
     }
 
-    auto ReadSomeYield(char* buf, size_t size) {
+    auto ReadSomeYield(void* buf, size_t size) {
         return ReadSome(buf, size);
     }
 

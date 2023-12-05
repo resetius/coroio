@@ -50,7 +50,7 @@ public:
 
     TSocketBase() = default;
 
-    auto ReadSome(char* buf, size_t size) {
+    auto ReadSome(void* buf, size_t size) {
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             void run() {
                 this->ret = TSockOps::read(this->fd, this->b, this->s);
@@ -64,7 +64,7 @@ public:
     }
 
     // force read on next loop iteration
-    auto ReadSomeYield(char* buf, size_t size) {
+    auto ReadSomeYield(void* buf, size_t size) {
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             bool await_ready() {
                 return (this->ready = false);
@@ -81,7 +81,7 @@ public:
         return TAwaitableRead{Poller_,Fd_,buf,size};
     }
 
-    auto WriteSome(char* buf, size_t size) {
+    auto WriteSome(const void* buf, size_t size) {
         struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             void run() {
                 this->ret = TSockOps::write(this->fd, this->b, this->s);
@@ -91,10 +91,10 @@ public:
                 this->poller->AddWrite(this->fd, h);
             }
         };
-        return TAwaitableWrite{Poller_,Fd_,buf,size};
+        return TAwaitableWrite{Poller_,Fd_,const_cast<void*>(buf),size};
     }
 
-    auto WriteSomeYield(char* buf, size_t size) {
+    auto WriteSomeYield(const void* buf, size_t size) {
         struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             bool await_ready() {
                 return (this->ready = false);
@@ -108,7 +108,7 @@ public:
                 this->poller->AddWrite(this->fd, h);
             }
         };
-        return TAwaitableWrite{Poller_,Fd_,buf,size};
+        return TAwaitableWrite{Poller_,Fd_,const_cast<void*>(buf),size};
     }
 
 protected:
@@ -135,7 +135,7 @@ protected:
 
         TPollerBase* poller;
         int fd;
-        char* b; size_t s;
+        void* b; size_t s;
         int ret;
         bool ready;
     };
