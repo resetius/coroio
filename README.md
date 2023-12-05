@@ -57,7 +57,69 @@ socket.ReadSome(buffer, bufferSize);
 - Always check the return values of `ReadSome` and `WriteSome` to handle partial reads/writes and errors appropriately.
 - Use the utility wrappers (`TByteReader`, `TByteWriter`, `TLineReader`) to simplify common I/O patterns.
 
+### Echo Client Example Using `TLineReader`, `TByteReader`, and `TByteWriter`
 
+```cpp
+#include <coroio/all.hpp>
+#include <iostream>
+#include <string>
+#include <vector>
+
+using NNet::TFileHandle;
+using NNet::TSocket;
+using NNet::TAddress;
+using NNet::TLineReader;
+using NNet::TByteWriter;
+using NNet::TByteReader;
+using NNet::TLine;
+
+template<typename TPoller>
+NNet::TTestTask EchoClient(TPoller& poller) {
+    TFileHandle input{0, poller}; // Standard input
+    TSocket socket{TAddress("127.0.0.1", 8000), poller};
+    TLineReader lineReader(input); // Line reader with default max line size of 4096
+    TByteWriter byteWriter(socket);
+    TByteReader byteReader(socket);
+    std::vector<char> in;
+
+    co_await socket.Connect();
+    TLine line;
+    while ((line = co_await lineReader.Read())) {
+        co_await byteWriter.Write(line.Part1.data(), line.Part1.size());
+        co_await byteWriter.Write(line.Part2.data(), line.Part2.size());
+        in.resize(line.Size());
+        ssize_t size = co_await byteReader.Read(in.data(), in.size());
+        std::cout << "Received: " << std::string_view(in.data(), size) << "\n";
+    }
+
+    co_return;
+}
+
+int main() {
+    // Initialize your poller (e.g., TSelect, TEpoll)
+    // ...
+
+    // Run the Echo Client
+    // ...
+}
+```
+
+#### Key Points of the Example
+
+1. **Line Reading**:
+   - `TLineReader` is used to read lines from standard input. It handles lines split into two parts (`Part1` and `Part2`) due to the internal use of a fixed-size circular buffer.
+
+2. **Data Writing**:
+   - `TByteWriter` is utilized to write the line parts to the socket, ensuring that the entire line is sent to the server.
+
+3. **Data Reading**:
+   - `TByteReader` reads the server's response into a buffer, which is then printed to the console.
+
+4. **Socket Connection**:
+   - The `TSocket` is connected to the server at "127.0.0.1" on port 8000.
+
+5. **Processing Loop**:
+   - The loop continues reading lines from standard input and echoes back the server's response until the input stream ends.
 
 ## Benchmark
 
