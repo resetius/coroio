@@ -89,7 +89,7 @@ NNet::TTestTask EchoClient(TPoller& poller) {
         co_await byteWriter.Write(line.Part2.data(), line.Part2.size());
         in.resize(line.Size());
         ssize_t size = co_await byteReader.Read(in.data(), in.size());
-        std::cout << "Received: " << std::string_view(in.data(), size) << "\n";
+        std::cout << "Received: " << std::string_view(in.data(), in.size()) << "\n";
     }
 
     co_return;
