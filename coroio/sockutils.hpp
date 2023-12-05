@@ -1,5 +1,6 @@
 #pragma once
 
+#include <assert.h>
 #include <span>
 #include "corochain.hpp"
 
@@ -134,7 +135,7 @@ private:
 
 template<typename TSocket>
 struct TLineReader {
-    TLineReader(TSocket& socket, int maxLineSize, int chunkSize)
+    TLineReader(TSocket& socket, int maxLineSize = 4096, int chunkSize = 2048)
         : Socket(socket)
         , Splitter(maxLineSize)
         , ChunkSize(chunkSize)

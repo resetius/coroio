@@ -1,41 +1,34 @@
+#include "coroio/sockutils.hpp"
 #include <coroio/all.hpp>
 
 #include <signal.h>
 
-using NNet::TSocket;
-using NNet::TAddress;
-
-using NNet::TSelect;
-using NNet::TPoll;
-
-#ifdef __linux__
-using NNet::TEPoll;
-using NNet::TUring;
-#endif
-
-#if defined(__APPLE__) || defined(__FreeBSD__)
-using NNet::TKqueue;
-#endif
+using namespace NNet;
 
 template<bool debug, typename TPoller>
-NNet::TTestTask client(TPoller& poller, TAddress addr, int buffer_size)
+TTestTask client(TPoller& poller, TAddress addr)
 {
     using TSocket = typename TPoller::TSocket;
     using TFileHandle = typename TPoller::TFileHandle;
-    std::vector<char> out(buffer_size);
-    std::vector<char> in(buffer_size);
+    std::vector<char> in(4096);
     ssize_t size = 1;
 
     try {
         TFileHandle input{0, poller}; // stdin
+        TLine line;
         TSocket socket{std::move(addr), poller};
+        TLineReader lineReader(input);
+        TByteWriter byteWriter(socket);
+        TByteReader byteReader(socket);
 
         co_await socket.Connect();
-        while (size && (size = co_await input.ReadSome(out.data(), out.size()))) {
-            co_await socket.WriteSome(out.data(), size);
-            size = co_await socket.ReadSome(in.data(), in.size());
+        while ((line = co_await lineReader.Read())) {
+            co_await byteWriter.Write(line.Part1.data(), line.Part1.size());
+            co_await byteWriter.Write(line.Part2.data(), line.Part2.size());
+            in.resize(line.Size());
+            co_await byteReader.Read(in.data(), in.size());
             if constexpr(debug) {
-                std::cout << "Received: " << std::string_view(in.data(), size) << "\n";
+                std::cout << "Received: " << std::string_view(in.data(), in.size()) << "\n";
             }
         }
     } catch (const std::exception& ex) {
@@ -46,14 +39,14 @@ NNet::TTestTask client(TPoller& poller, TAddress addr, int buffer_size)
 }
 
 template<typename TPoller>
-void run(bool debug, TAddress address, int buffer_size)
+void run(bool debug, TAddress address)
 {
     NNet::TLoop<TPoller> loop;
     NNet::THandle h;
     if (debug) {
-        h = client<true>(loop.Poller(), std::move(address), buffer_size);
+        h = client<true>(loop.Poller(), std::move(address));
     } else {
-        h = client<false>(loop.Poller(), std::move(address), buffer_size);
+        h = client<false>(loop.Poller(), std::move(address));
     }
     while (!h.done()) {
         loop.Step();
@@ -75,8 +68,6 @@ int main(int argc, char** argv) {
             method = argv[++i];
         } else if (!strcmp(argv[i], "--debug")) {
             debug = true;
-        } else if (!strcmp(argv[i], "--buffer-size") && i < argc-1) {
-            buffer_size = atoi(argv[++i]);
         }
     }
     if (port == 0) { port = 8888; }
@@ -86,21 +77,21 @@ int main(int argc, char** argv) {
     std::cerr << "Method: " << method << "\n";
 
     if (method == "select") {
-        run<TSelect>(debug, address, buffer_size);
+        run<TSelect>(debug, address);
     } else if (method == "poll") {
-        run<TPoll>(debug, address, buffer_size);
+        run<TPoll>(debug, address);
     }
 #ifdef __linux__
     else if (method == "epoll") {
-        run<TEPoll>(debug, address, buffer_size);
+        run<TEPoll>(debug, address);
     }
     else if (method == "uring") {
-        run<TUring>(debug, address, buffer_size);
+        run<TUring>(debug, address);
     }
 #endif
 #if defined(__APPLE__) || defined(__FreeBSD__)
     else if (method == "kqueue") {
-        run<TKqueue>(debug, address, buffer_size);
+        run<TKqueue>(debug, address);
     }
 #endif
     else {
