@@ -14,18 +14,22 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_library(coroio
+  coroio/socket.cpp
+  coroio/sockutils.cpp)
+
 macro(target name source)
   add_executable(${name} ${source})
   target_include_directories(${name} PRIVATE ${CMOCKA_INCLUDE_DIRS} ${URING_INCLUDE_DIRS})
   target_link_directories(${name} PRIVATE ${CMOCKA_LIBRARY_DIRS} ${URING_LIBRARY_DIRS})
-  target_link_libraries(${name} ${CMOCKA_LIBRARIES} ${URING_LIBRARIES})
+  target_link_libraries(${name} coroio ${CMOCKA_LIBRARIES} ${URING_LIBRARIES})
 endmacro()
 
 macro(ut name source)
   add_executable(ut_${name} ${source})
   target_include_directories(ut_${name} PRIVATE ${CMOCKA_INCLUDE_DIRS} ${URING_INCLUDE_DIRS})
   target_link_directories(ut_${name} PRIVATE ${CMOCKA_LIBRARY_DIRS} ${URING_LIBRARY_DIRS})
-  target_link_libraries(ut_${name} ${CMOCKA_LIBRARIES} ${URING_LIBRARIES})
+  target_link_libraries(ut_${name} coroio ${CMOCKA_LIBRARIES} ${URING_LIBRARIES})
 
   add_test(NAME ${name} COMMAND ${CMAKE_CURRENT_BINARY_DIR}/ut_${name})
   set_tests_properties(${name} PROPERTIES ENVIRONMENT "CMOCKA_MESSAGE_OUTPUT=xml;CMOCKA_XML_FILE=${name}.xml")
