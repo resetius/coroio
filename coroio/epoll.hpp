@@ -12,6 +12,7 @@ namespace NNet {
 class TEPoll: public TPollerBase {
 public:
     using TSocket = NNet::TSocket;
+    using TFileHandle = NNet::TFileHandle;
 
     TEPoll()
         : Fd_(epoll_create1(EPOLL_CLOEXEC))

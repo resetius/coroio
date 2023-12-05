@@ -69,9 +69,9 @@ TTestTask yield(TPollerBase& poller) {
 template<typename TPoller>
 std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active) {
     Stat s;
-    using TSocket = typename TPoller::TSocket;
+    using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
-    vector<TSocket> pipes;
+    vector<TFileHandle> pipes;
     vector<coroutine_handle<>> handles;
     pipes.reserve(num_pipes*2);
     handles.reserve(num_pipes+num_writes);
@@ -81,8 +81,8 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
         if (pipe(&p[0]) < 0) {
             throw std::system_error(errno, std::generic_category(), "pipe");
         }
-        pipes.emplace_back(std::move(TSocket{{}, p[0], loop.Poller()}));
-        pipes.emplace_back(std::move(TSocket{{}, p[1], loop.Poller()}));
+        pipes.emplace_back(std::move(TFileHandle{p[0], loop.Poller()}));
+        pipes.emplace_back(std::move(TFileHandle{p[1], loop.Poller()}));
     }
 
     s.writes = num_writes;

@@ -37,26 +37,221 @@ private:
     struct sockaddr_in Addr_;
 };
 
-class TSocket {
+template<typename T>
+struct TSockOpAwaitable {
+    bool await_ready() {
+        SafeRun();
+        return (ready = (ret >= 0));
+    }
+
+    int await_resume() {
+        if (!ready) {
+            SafeRun();
+        }
+        return ret;
+    }
+
+    void SafeRun() {
+        ((T*)this)->run();
+        if (ret < 0 && !(errno==EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
+            throw std::system_error(errno, std::generic_category());
+        }
+    }
+
+    TPollerBase* poller;
+    int fd;
+    char* b; size_t s;
+    int ret;
+    bool ready;
+};
+
+template<typename TSockOps>
+class TSocketBase {
 public:
-    TSocket(TAddress&& addr, TPollerBase& poller)
+    TSocketBase(TPollerBase& poller)
         : Poller_(&poller)
-        , Addr_(std::move(addr))
         , Fd_(Create())
     { }
 
-    TSocket(const TAddress& addr, int fd, TPollerBase& poller)
+    TSocketBase(int fd, TPollerBase& poller)
         : Poller_(&poller)
-        , Addr_(addr)
-        , Fd_(fd)
-    {
-        Setup(Fd_);
+        , Fd_(Setup(fd))
+    { }
+
+    TSocketBase() = default;
+
+    auto ReadSome(char* buf, size_t size) {
+        struct TAwaitableRead: public TSockOpAwaitable<TAwaitableRead> {
+            void run() {
+                this->ret = TSockOps::read(this->fd, this->b, this->s);
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                this->poller->AddRead(this->fd, h);
+            }
+        };
+        return TAwaitableRead{Poller_,Fd_,buf,size};
     }
 
-    TSocket(const TAddress& addr, TPollerBase& poller)
-        : Poller_(&poller)
+    // force read on next loop iteration
+    auto ReadSomeYield(char* buf, size_t size) {
+        struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
+            bool await_ready() {
+                return (this->ready = false);
+            }
+
+            void run() {
+                this->ret = TSockOps::read(this->fd, this->b, this->s);
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                this->poller->AddRead(this->fd, h);
+            }
+        };
+        return TAwaitableRead{Poller_,Fd_,buf,size};
+    }
+
+    auto WriteSome(char* buf, size_t size) {
+        struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
+            void run() {
+                this->ret = TSockOps::write(this->fd, this->b, this->s);
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                this->poller->AddWrite(this->fd, h);
+            }
+        };
+        return TAwaitableWrite{Poller_,Fd_,buf,size};
+    }
+
+    auto WriteSomeYield(char* buf, size_t size) {
+        struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
+            bool await_ready() {
+                return (this->ready = false);
+            }
+
+            void run() {
+                this->ret = TSockOps::write(this->fd, this->b, this->s);
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                this->poller->AddWrite(this->fd, h);
+            }
+        };
+        return TAwaitableWrite{Poller_,Fd_,buf,size};
+    }
+
+protected:
+    int Create() {
+        auto s = socket(PF_INET, SOCK_STREAM, 0);
+        if (s < 0) {
+            throw std::system_error(errno, std::generic_category(), "socket");
+        }
+        return Setup(s);
+    }
+
+    int Setup(int s) {
+        struct stat statbuf;
+        fstat(s, &statbuf);
+        if (S_ISSOCK(statbuf.st_mode)) {
+            int value;
+            value = 1;
+            if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) {
+                throw std::system_error(errno, std::generic_category(), "setsockopt");
+            }
+            value = 1;
+            if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) {
+                throw std::system_error(errno, std::generic_category(), "setsockopt");
+            }
+        }
+        auto flags = fcntl(s, F_GETFL, 0);
+        if (flags < 0) {
+            throw std::system_error(errno, std::generic_category(), "fcntl");
+        }
+        if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
+            throw std::system_error(errno, std::generic_category(), "fcntl");
+        }
+        return s;
+    }
+
+    template<typename T>
+    struct TAwaitable {
+        bool await_ready() {
+            SafeRun();
+            return (ready = (ret >= 0));
+        }
+
+        int await_resume() {
+            if (!ready) {
+                SafeRun();
+            }
+            return ret;
+        }
+
+        void SafeRun() {
+            ((T*)this)->run();
+            if (ret < 0 && !(errno==EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
+                throw std::system_error(errno, std::generic_category());
+            }
+        }
+
+        TPollerBase* poller;
+        int fd;
+        char* b; size_t s;
+        int ret;
+        bool ready;
+    };
+
+    TPollerBase* Poller_ = nullptr;
+    int Fd_ = -1;
+};
+
+class TFileOps {
+public:
+    static auto read(int fd, void* buf, size_t count) {
+        return ::read(fd, buf, count);
+    }
+
+    static auto write(int fd, const void* buf, size_t count) {
+        return ::write(fd, buf, count);
+    }
+};
+
+class TFileHandle: public TSocketBase<TFileOps> {
+public:
+    TFileHandle(int fd, TPollerBase& poller)
+        : TSocketBase(fd, poller)
+    { }
+
+    TFileHandle() = default;
+};
+
+class TSockOps {
+public:
+    static auto read(int fd, void* buf, size_t count) {
+        return ::recv(fd, buf, count, 0);
+    }
+
+    static auto write(int fd, const void* buf, size_t count) {
+        return ::send(fd, buf, count, 0);
+    }
+};
+
+class TSocket: public TSocketBase<TSockOps> {
+public:
+    TSocket(TAddress&& addr, TPollerBase& poller)
+        : TSocketBase(poller)
+        , Addr_(std::move(addr))
+    { }
+
+    TSocket(const TAddress& addr, int fd, TPollerBase& poller)
+        : TSocketBase(fd, poller)
         , Addr_(addr)
-        , Fd_(Create())
+    { }
+
+    TSocket(const TAddress& addr, TPollerBase& poller)
+        : TSocketBase(poller)
+        , Addr_(addr)
     { }
 
     TSocket(TSocket&& other)
@@ -117,67 +312,6 @@ public:
         return TAwaitable{Poller_, Fd_, Addr_.Addr(), deadline};
     }
 
-    auto ReadSome(char* buf, size_t size) {
-        struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
-            void run() {
-                ret = read(fd, b, s);
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                poller->AddRead(fd, h);
-            }
-        };
-        return TAwaitableRead{Poller_,Fd_,buf,size};
-    }
-
-    // force read on next loop iteration
-    auto ReadSomeYield(char* buf, size_t size) {
-        struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
-            bool await_ready() {
-                return (ready = false);
-            }
-
-            void run() {
-                ret = read(fd, b, s);
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                poller->AddRead(fd, h);
-            }
-        };
-        return TAwaitableRead{Poller_,Fd_,buf,size};
-    }
-
-    auto WriteSome(char* buf, size_t size) {
-        struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
-            void run() {
-                ret = write(fd, b, s);
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                poller->AddWrite(fd, h);
-            }
-        };
-        return TAwaitableWrite{Poller_,Fd_,buf,size};
-    }
-
-    auto WriteSomeYield(char* buf, size_t size) {
-        struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
-            bool await_ready() {
-                return (ready = false);
-            }
-
-            void run() {
-                ret = write(fd, b, s);
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                poller->AddWrite(fd, h);
-            }
-        };
-        return TAwaitableWrite{Poller_,Fd_,buf,size};
-    }
-
     auto Accept() {
         struct TAwaitable {
             bool await_ready() const { return false; }
@@ -224,69 +358,7 @@ public:
         return Fd_;
     }
 
-protected: // TODO: XXX
-    int Create() {
-        auto s = socket(PF_INET, SOCK_STREAM, 0);
-        if (s < 0) {
-            throw std::system_error(errno, std::generic_category(), "socket");
-        }
-        Setup(s);
-        return s;
-    }
-
-    void Setup(int s) {
-        struct stat statbuf;
-        fstat(s, &statbuf);
-        if (S_ISSOCK(statbuf.st_mode)) {
-            int value;
-            value = 1;
-            if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) {
-                throw std::system_error(errno, std::generic_category(), "setsockopt");
-            }
-            value = 1;
-            if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) {
-                throw std::system_error(errno, std::generic_category(), "setsockopt");
-            }
-        }
-        auto flags = fcntl(s, F_GETFL, 0);
-        if (flags < 0) {
-            throw std::system_error(errno, std::generic_category(), "fcntl");
-        }
-        if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
-            throw std::system_error(errno, std::generic_category(), "fcntl");
-        }
-    }
-
-    template<typename T>
-    struct TAwaitable {
-        bool await_ready() {
-            SafeRun();
-            return (ready = (ret >= 0));
-        }
-
-        int await_resume() {
-            if (!ready) {
-                SafeRun();
-            }
-            return ret;
-        }
-
-        void SafeRun() {
-            ((T*)this)->run();
-            if (ret < 0 && !(errno==EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
-                throw std::system_error(errno, std::generic_category());
-            }
-        }
-
-        TPollerBase* poller;
-        int fd;
-        char* b; size_t s;
-        int ret;
-        bool ready;
-    };
-
-    int Fd_ = -1;
-    TPollerBase* Poller_ = nullptr;
+protected:
     TAddress Addr_;
 };
 

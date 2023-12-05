@@ -24,6 +24,7 @@ class TUringSocket;
 class TUring: public TPollerBase {
 public:
     using TSocket = NNet::TUringSocket;
+    using TFileHandle = NNet::TFileHandle;
 
     TUring(int queueSize = 256)
         : RingFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK))
@@ -239,6 +240,11 @@ public:
 
     TUringSocket(const TAddress& addr, int fd, TUring& poller)
         : TSocket(addr, fd, poller)
+        , Uring_(&poller)
+    { }
+
+    TUringSocket(int fd, TUring& poller)
+        : TSocket({}, fd, poller)
         , Uring_(&poller)
     { }
 

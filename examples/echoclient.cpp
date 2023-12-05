@@ -21,12 +21,13 @@ template<bool debug, typename TPoller>
 NNet::TTestTask client(TPoller& poller, TAddress addr, int buffer_size)
 {
     using TSocket = typename TPoller::TSocket;
+    using TFileHandle = typename TPoller::TFileHandle;
     std::vector<char> out(buffer_size);
     std::vector<char> in(buffer_size);
     ssize_t size = 1;
 
     try {
-        TSocket input{TAddress{}, 0, poller}; // stdin
+        TFileHandle input{0, poller}; // stdin
         TSocket socket{std::move(addr), poller};
 
         co_await socket.Connect();

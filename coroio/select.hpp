@@ -12,6 +12,7 @@ namespace NNet {
 class TSelect: public TPollerBase {
 public:
     using TSocket = NNet::TSocket;
+    using TFileHandle = NNet::TFileHandle;
 
     void Poll() {
         auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
