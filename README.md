@@ -1,7 +1,63 @@
-# coroio
-This is a simple network library which uses C++ coroutines. 
-The library supports the following backends: ```poll```, ```select```, ```epoll```, ```uring```, ```kqueue```.
-For ```uring``` the [liburing library](https://github.com/axboe/liburing) is used. 
+### Guide to Using the Library
+
+#### Overview
+This library leverages C++20 coroutines for asynchronous programming, providing efficient and non-blocking I/O operations. It offers a range of polling mechanisms and utilities for handling sockets and files, making it suitable for various networking and file I/O tasks.
+
+#### Key Features
+
+1. **Coroutines for Asynchronous Code**:
+   - The library uses C++20 coroutines, allowing you to write asynchronous code in a more straightforward and readable manner.
+
+2. **Polling Mechanisms**:
+   - **`TSelect`**: Utilizes the `select` system call, suitable for a wide range of platforms.
+   - **`TPoll`**: Uses the `poll` system call, offering another general-purpose polling solution.
+   - **`TEPoll`**: Employs `epoll`, available exclusively on Linux systems for high-performance I/O.
+   - **`TUring`**: Integrates with `liburing` for advanced I/O operations, specific to Linux.
+   - **`TKqueue`**: Uses `kqueue`, available on FreeBSD and macOS.
+   - **`TDefaultPoll`**: Automatically selects the best polling mechanism based on the platform (TEPoll on Linux, TKqueue on macOS/FreeBSD).
+
+3. **Socket and File Handling**:
+   - **`TSocket`** and **`TFileHandle`**: Core entities for handling network sockets and file operations.
+   - Provide `ReadSome` and `WriteSome` methods for reading and writing data. These methods read or write up to a specified number of bytes, returning the number of bytes processed or -1 on error. A return value of 0 indicates a closed socket.
+
+4. **Utility Wrappers**:
+   - **`TByteReader`** and **`TByteWriter`**: Ensure the specified number of bytes is read or written, useful for guaranteed data transmission.
+   - **`TLineReader`**: Facilitates line-by-line reading, simplifying the handling of text-based protocols or file inputs.
+
+#### Using the Library
+
+1. **Setup**: Include the library in your project and ensure C++20 support is enabled in your compiler settings.
+
+2. **Selecting a Poller**:
+   - Choose a polling mechanism based on your platform and performance needs. For most cases, `TDefaultPoll` can automatically select the appropriate poller.
+
+3. **Implementing Network Operations**:
+   - Use `TSocket` for network communication. Initialize a socket with the desired address and use `ReadSome`/`WriteSome` for data transmission.
+   - Employ `TFileHandle` for file I/O operations with similar read/write methods.
+
+4. **Reading and Writing Data**:
+   - For basic operations, use `ReadSome` and `WriteSome`.
+   - When you need to ensure a specific amount of data is transmitted, use `TByteReader` or `TByteWriter`.
+   - For reading text files or protocols, `TLineReader` offers a convenient way to process data line by line.
+
+#### Example
+
+```cpp
+// Example of creating a socket and reading/writing data
+TSocket socket{/* initialize with address and poller */};
+// Writing data
+socket.WriteSome(data, dataSize);
+// Reading data
+socket.ReadSome(buffer, bufferSize);
+```
+
+#### Best Practices
+
+- Choose the right poller for your platform and performance requirements.
+- Always check the return values of `ReadSome` and `WriteSome` to handle partial reads/writes and errors appropriately.
+- Use the utility wrappers (`TByteReader`, `TByteWriter`, `TLineReader`) to simplify common I/O patterns.
+
+
 
 ## Benchmark
 
