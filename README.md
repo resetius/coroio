@@ -7,6 +7,10 @@
 #### Overview
 This library leverages C++20 coroutines for asynchronous programming, providing efficient and non-blocking I/O operations. It offers a range of polling mechanisms and utilities for handling sockets and files, making it suitable for various networking and file I/O tasks.
 
+[![Number of GitHub stars](https://img.shields.io/github/stars/resetius/coroio)](https://github.com/resetius/coroio/stargazers)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/m/resetius/coroio)
+[![GitHub license which is BSD-2-Clause license](https://img.shields.io/github/license/resetius/coroio)](https://github.com/resetius/coroio)
+
 #### Key Features
 
 1. **Coroutines for Asynchronous Code**:
