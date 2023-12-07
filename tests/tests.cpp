@@ -79,21 +79,6 @@ void test_timespec(void**) {
     assert_int_equal(ts.tv_nsec, 0);
 }
 
-void test_millis(void**) {
-    auto t1 =  std::chrono::seconds(4);
-    auto t2 =  std::chrono::seconds(10);
-    auto m= GetMillis(TTime(t1), TTime(t2), minDiration);
-    assert_int_equal(m, 6000);
-
-    auto t3 =  std::chrono::milliseconds(10001);
-    m = GetMillis(TTime(t1), TTime(t3), minDiration);
-    assert_int_equal(m, 6001);
-
-    auto t4 =  std::chrono::minutes(10000);
-    m = GetMillis(TTime(t1), TTime(t4), minDiration);
-    assert_int_equal(m, 10000);
-}
-
 void test_addr(void**) {
     TAddress address("127.0.0.1", 8888);
     auto low = address.Addr();
@@ -807,7 +792,6 @@ int main() {
         cmocka_unit_test(test_addr),
         cmocka_unit_test(test_timeval),
         cmocka_unit_test(test_timespec),
-        cmocka_unit_test(test_millis),
         cmocka_unit_test(test_line_splitter),
         cmocka_unit_test(test_zero_copy_line_splitter),
         my_unit_poller(test_listen),

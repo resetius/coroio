@@ -68,11 +68,6 @@ inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds m
     return {p1.count(), static_cast<int>(p2.count())};
 }
 
-inline int GetMillis(TTime now, TTime deadline, std::chrono::milliseconds min_duration) {
-    auto tv = GetTimeval(now, deadline, min_duration);
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
 inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
 {
     auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::nanoseconds>(now, deadline, maxDuration);
