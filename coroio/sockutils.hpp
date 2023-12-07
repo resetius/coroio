@@ -145,9 +145,7 @@ struct TLineReader {
         : Socket(socket)
         , Splitter(maxLineSize)
         , ChunkSize(maxLineSize / 2)
-    {
-        assert(maxLineSize >= chunkSize);
-    }
+    { }
 
     TValueTask<TLine> Read() {
         auto line = Splitter.Pop();
