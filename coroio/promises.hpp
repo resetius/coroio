@@ -4,47 +4,31 @@ namespace NNet {
 
 struct TVoidPromise;
 
-struct TSimpleTask : std::coroutine_handle<TVoidPromise>
+struct TVoidTask : std::coroutine_handle<TVoidPromise>
 {
     using promise_type = TVoidPromise;
 };
 
 struct TVoidPromise
 {
-    TSimpleTask get_return_object() { return { TSimpleTask::from_promise(*this) }; }
+    TVoidTask get_return_object() { return { TVoidTask::from_promise(*this) }; }
     std::suspend_never initial_suspend() { return {}; }
     std::suspend_never final_suspend() noexcept { return {}; }
     void return_void() {}
     void unhandled_exception() {}
 };
 
-struct TTestPromise;
+struct TVoidSuspendedPromise;
 
-struct TTestTask : std::coroutine_handle<TTestPromise>
+struct TVoidSuspendedTask : std::coroutine_handle<TVoidSuspendedPromise>
 {
-    using promise_type = TTestPromise;
+    using promise_type = TVoidSuspendedPromise;
 };
 
-struct TTestPromise
+struct TVoidSuspendedPromise
 {
-    TTestTask get_return_object() { return { TTestTask::from_promise(*this) }; }
+    TVoidSuspendedTask get_return_object() { return { TVoidSuspendedTask::from_promise(*this) }; }
     std::suspend_never initial_suspend() { return {}; }
-    std::suspend_always final_suspend() noexcept { return {}; }
-    void return_void() {}
-    void unhandled_exception() {}
-};
-
-struct TTestSuspendPromise;
-
-struct TTestSuspendTask : std::coroutine_handle<TTestSuspendPromise>
-{
-    using promise_type = TTestSuspendPromise;
-};
-
-struct TTestSuspendPromise
-{
-    TTestSuspendTask get_return_object() { return { TTestSuspendTask::from_promise(*this) }; }
-    std::suspend_always initial_suspend() { return {}; }
     std::suspend_always final_suspend() noexcept { return {}; }
     void return_void() {}
     void unhandled_exception() {}

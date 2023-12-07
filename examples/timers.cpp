@@ -1,10 +1,10 @@
 #include <coroio/all.hpp>
 
-using NNet::TSimpleTask;
+using NNet::TVoidTask;
 using NNet::TSelect;
 using TLoop = NNet::TLoop<TSelect>;
 
-TSimpleTask infinite_task(TLoop* loop) {
+TVoidTask infinite_task(TLoop* loop) {
     int i = 0;
     while (true) {
         co_await loop->Poller().Sleep(std::chrono::milliseconds(10));

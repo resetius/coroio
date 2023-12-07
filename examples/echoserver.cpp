@@ -1,6 +1,6 @@
 #include <coroio/all.hpp>
 
-using NNet::TSimpleTask;
+using NNet::TVoidTask;
 using NNet::TAddress;
 using NNet::TSelect;
 using NNet::TPoll;
@@ -15,7 +15,7 @@ using NNet::TKqueue;
 #endif
 
 template<bool debug, typename TSocket>
-TSimpleTask client_handler(TSocket socket, int buffer_size) {
+TVoidTask client_handler(TSocket socket, int buffer_size) {
     std::vector<char> buffer(buffer_size); ssize_t size = 0;
 
     try {
@@ -35,7 +35,7 @@ TSimpleTask client_handler(TSocket socket, int buffer_size) {
 }
 
 template<bool debug, typename TPoller>
-TSimpleTask server(TPoller& poller, TAddress address, int buffer_size)
+TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
 {
     typename TPoller::TSocket socket(std::move(address), poller);
     socket.Bind();

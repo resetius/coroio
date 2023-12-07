@@ -2,13 +2,13 @@
 
 #include <signal.h>
 
-using NNet::TSimpleTask;
+using NNet::TVoidTask;
 using NNet::TSocket;
 using NNet::TSelect;
 using NNet::TAddress;
 using TLoop = NNet::TLoop<TSelect>;
 
-TSimpleTask client_handler(TSocket socket, TLoop* loop) {
+TVoidTask client_handler(TSocket socket, TLoop* loop) {
     char buffer[128] = {0}; ssize_t size = 0;
 
     try {
@@ -25,7 +25,7 @@ TSimpleTask client_handler(TSocket socket, TLoop* loop) {
     co_return;
 }
 
-TSimpleTask server(TLoop* loop)
+TVoidTask server(TLoop* loop)
 {
     TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Poller());
     socket.Bind();
@@ -42,7 +42,7 @@ TSimpleTask server(TLoop* loop)
     co_return;
 }
 
-TSimpleTask client(TLoop* loop, int clientId)
+TVoidTask client(TLoop* loop, int clientId)
 {
     char buffer[128] = "Hello XXX/YYY";
     char rcv[128] = {0};

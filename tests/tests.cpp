@@ -123,14 +123,14 @@ void test_accept(void**) {
     socket.Bind();
     socket.Listen();
 
-    TTestTask h1 = [](TPoller& poller) -> TTestTask
+    TVoidSuspendedTask h1 = [](TPoller& poller) -> TVoidSuspendedTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
         co_return;
     }(loop.Poller());
 
-    TTestTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TTestTask
+    TVoidSuspendedTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TVoidSuspendedTask
     {
         *clientSocket = std::move(co_await socket->Accept());
         co_return;
@@ -157,7 +157,7 @@ void test_write_after_connect(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[256] = {0};
 
-    TTestTask h1 = [](TPoller& poller, char* buf, int size) -> TTestTask
+    TVoidSuspendedTask h1 = [](TPoller& poller, char* buf, int size) -> TVoidSuspendedTask
     {
         TSocket client(TAddress{"127.0.0.1", 8898}, poller);
         co_await client.Connect();
@@ -165,7 +165,7 @@ void test_write_after_connect(void**) {
         co_return;
     }(loop.Poller(), send_buf, sizeof(send_buf));
 
-    TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
+    TVoidSuspendedTask h2 = [](TSocket* socket, char* buf, int size) -> TVoidSuspendedTask
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         co_await clientSocket.ReadSome(buf, size);
@@ -191,7 +191,7 @@ void test_write_after_accept(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[256] = {0};
 
-    TTestTask h1 = [](TPoller& poller, char* buf, int size) -> TTestTask
+    TVoidSuspendedTask h1 = [](TPoller& poller, char* buf, int size) -> TVoidSuspendedTask
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
@@ -199,7 +199,7 @@ void test_write_after_accept(void**) {
         co_return;
     }(loop.Poller(), rcv_buf, sizeof(rcv_buf));
 
-    TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
+    TVoidSuspendedTask h2 = [](TSocket* socket, char* buf, int size) -> TVoidSuspendedTask
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         auto s = co_await clientSocket.WriteSome(buf, size);
@@ -227,13 +227,13 @@ void test_read_write_same_socket(void**) {
 
     TSocket client(TAddress{"127.0.0.1", 8888}, loop.Poller());
 
-    TTestTask h1 = [](TSocket& client) -> TTestTask
+    TVoidSuspendedTask h1 = [](TSocket& client) -> TVoidSuspendedTask
     {
         co_await client.Connect();
         co_return;
     }(client);
 
-    TTestTask h2 = [](TSocket* socket, char* buf, int size) -> TTestTask
+    TVoidSuspendedTask h2 = [](TSocket* socket, char* buf, int size) -> TVoidSuspendedTask
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         char b[128] = "Hello from server";
@@ -246,14 +246,14 @@ void test_read_write_same_socket(void**) {
         loop.Step();
     }
 
-    TTestTask h3 = [](TSocket& client) -> TTestTask
+    TVoidSuspendedTask h3 = [](TSocket& client) -> TVoidSuspendedTask
     {
         char b[128] = "Hello from client";
         co_await client.WriteSomeYield(b, sizeof(b));
         co_return;
     }(client);
 
-    TTestTask h4 = [](TSocket& client, char* buf, int size) -> TTestTask
+    TVoidSuspendedTask h4 = [](TSocket& client, char* buf, int size) -> TVoidSuspendedTask
     {
         co_await client.ReadSomeYield(buf, size);
         co_return;
@@ -279,7 +279,7 @@ void test_connection_timeout(void**) {
     TLoop loop;
     bool timeout = false;
 
-    TTestTask h = [](TPoller& poller, bool& timeout) -> TTestTask
+    TVoidSuspendedTask h = [](TPoller& poller, bool& timeout) -> TVoidSuspendedTask
     {
         // TODO: use other addr
         TSocket client(TAddress{"10.0.0.1", 18889}, poller);
@@ -314,7 +314,7 @@ void test_remove_connection_timeout(void**) {
 
     bool timeout = false;
 
-    TTestTask h = [](TPoller& poller, bool& timeout) -> TTestTask
+    TVoidSuspendedTask h = [](TPoller& poller, bool& timeout) -> TVoidSuspendedTask
     {
         TSocket client(TAddress{"127.0.0.1", 18889}, poller);
         try {
@@ -345,7 +345,7 @@ void test_connection_refused_on_write(void**) {
     TLoop loop;
     std::error_code err;
 
-    TTestTask h = [](TPoller& poller, std::error_code* err) -> TTestTask
+    TVoidSuspendedTask h = [](TPoller& poller, std::error_code* err) -> TVoidSuspendedTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
@@ -374,7 +374,7 @@ void test_connection_refused_on_read(void**) {
     TLoop loop;
     std::error_code err;
 
-    TTestTask h = [](TPoller& poller, std::error_code* err) -> TTestTask
+    TVoidSuspendedTask h = [](TPoller& poller, std::error_code* err) -> TVoidSuspendedTask
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
@@ -403,7 +403,7 @@ void test_timeout(void**) {
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
-    TTestTask h = [](TPollerBase& poller, TTime* next, std::chrono::milliseconds timeout) -> TTestTask
+    TVoidSuspendedTask h = [](TPollerBase& poller, TTime* next, std::chrono::milliseconds timeout) -> TVoidSuspendedTask
     {
         co_await poller.Sleep(timeout);
         *next = std::chrono::steady_clock::now();
@@ -437,7 +437,7 @@ void test_read_write_full(void**) {
 
     TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
 
-    NNet::TTestTask h1 = [](TSocket& client, const std::vector<char>& data) -> NNet::TTestTask
+    NNet::TVoidSuspendedTask h1 = [](TSocket& client, const std::vector<char>& data) -> NNet::TVoidSuspendedTask
     {
         co_await client.Connect();
         co_await TByteWriter(client).Write(data.data(), data.size());
@@ -445,7 +445,7 @@ void test_read_write_full(void**) {
     }(client, data);
 
     std::vector<char> received(1024*1024);
-    NNet::TTestTask h2 = [](TSocket& server, std::vector<char>& received) -> NNet::TTestTask
+    NNet::TVoidSuspendedTask h2 = [](TSocket& server, std::vector<char>& received) -> NNet::TVoidSuspendedTask
     {
         auto client = std::move(co_await server.Accept());
         co_await TByteReader(client).Read(received.data(), received.size());
@@ -484,7 +484,7 @@ void test_read_write_struct(void**) {
 
     TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
 
-    NNet::TTestTask h1 = [](TSocket& client, auto& data) -> NNet::TTestTask
+    NNet::TVoidSuspendedTask h1 = [](TSocket& client, auto& data) -> NNet::TVoidSuspendedTask
     {
         co_await client.Connect();
         co_await TByteWriter(client).Write(&data, data.data.size());
@@ -492,7 +492,7 @@ void test_read_write_struct(void**) {
     }(client, data);
 
     Test received;
-    NNet::TTestTask h2 = [](TSocket& server, auto& received) -> NNet::TTestTask
+    NNet::TVoidSuspendedTask h2 = [](TSocket& server, auto& received) -> NNet::TVoidSuspendedTask
     {
         auto client = std::move(co_await server.Accept());
         received = co_await TStructReader<Test, TSocket>(client).Read();
@@ -527,7 +527,7 @@ void test_read_write_lines(void**) {
     socket.Bind();
     socket.Listen();
 
-    NNet::TTestTask h1 = [](auto& poller, auto& lines) -> NNet::TTestTask
+    NNet::TVoidSuspendedTask h1 = [](auto& poller, auto& lines) -> NNet::TVoidSuspendedTask
     {
         TSocket client(NNet::TAddress{"127.0.0.1", 8988}, poller);
         co_await client.Connect();
@@ -538,10 +538,10 @@ void test_read_write_lines(void**) {
     }(loop.Poller(), lines);
 
     std::vector<std::string> received;
-    NNet::TTestTask h2 = [](TSocket& server, auto& received) -> NNet::TTestTask
+    NNet::TVoidSuspendedTask h2 = [](TSocket& server, auto& received) -> NNet::TVoidSuspendedTask
     {
         auto client = std::move(co_await server.Accept());
-        auto reader = TLineReader<TSocket>(client, 16, 16);
+        auto reader = TLineReader<TSocket>(client, 16);
         TLine line;
         do {
             line = co_await reader.Read();
@@ -638,6 +638,27 @@ void test_zero_copy_line_splitter(void**) {
 }
 
 #ifdef __linux__
+
+namespace {
+
+struct TTestSuspendPromise;
+
+struct TTestSuspendTask : std::coroutine_handle<TTestSuspendPromise>
+{
+    using promise_type = TTestSuspendPromise;
+};
+
+struct TTestSuspendPromise
+{
+    TTestSuspendTask get_return_object() { return { TTestSuspendTask::from_promise(*this) }; }
+    std::suspend_always initial_suspend() { return {}; }
+    std::suspend_always final_suspend() noexcept { return {}; }
+    void return_void() {}
+    void unhandled_exception() {}
+};
+
+} // namespace
+
 void test_uring_create(void**) {
     TUring uring(256);
 }

@@ -31,7 +31,7 @@ struct Stat {
 };
 
 template<typename TSocket>
-TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
+TVoidSuspendedTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     ssize_t size;
     char buf[1] = {0};
 
@@ -54,14 +54,14 @@ TTestTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
 }
 
 template<typename TSocket>
-TTestTask write_one(TSocket& w, Stat& s) {
+TVoidSuspendedTask write_one(TSocket& w, Stat& s) {
     char buf[1] = {'e'};
     co_await w.WriteSome(buf, 1);
     s.fired ++;
     co_return;
 }
 
-TTestTask yield(TPollerBase& poller) {
+TVoidSuspendedTask yield(TPollerBase& poller) {
     co_await poller.Sleep(std::chrono::milliseconds(0));
     co_return;
 }

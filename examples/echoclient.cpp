@@ -6,26 +6,26 @@
 using namespace NNet;
 
 template<bool debug, typename TPoller>
-TTestTask client(TPoller& poller, TAddress addr)
+TVoidSuspendedTask client(TPoller& poller, TAddress addr)
 {
+    static constexpr int maxLineSize = 4096;
     using TSocket = typename TPoller::TSocket;
     using TFileHandle = typename TPoller::TFileHandle;
-    std::vector<char> in(4096);
+    std::vector<char> in(maxLineSize);
 
     try {
         TFileHandle input{0, poller}; // stdin
         TSocket socket{std::move(addr), poller};
-        TLineReader lineReader(input);
+        TLineReader lineReader(input, maxLineSize);
         TByteWriter byteWriter(socket);
         TByteReader byteReader(socket);
 
         co_await socket.Connect();
         while (auto line = co_await lineReader.Read()) {
             co_await byteWriter.Write(line);
-            in.resize(line.Size());
-            co_await byteReader.Read(in.data(), in.size());
+            co_await byteReader.Read(in.data(), line.Size());
             if constexpr(debug) {
-                std::cout << "Received: " << std::string_view(in.data(), in.size()) << "\n";
+                std::cout << "Received: " << std::string_view(in.data(), line.Size()) << "\n";
             }
         }
     } catch (const std::exception& ex) {

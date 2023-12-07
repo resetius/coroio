@@ -141,10 +141,10 @@ private:
 
 template<typename TSocket>
 struct TLineReader {
-    TLineReader(TSocket& socket, int maxLineSize = 4096, int chunkSize = 2048)
+    TLineReader(TSocket& socket, int maxLineSize = 4096)
         : Socket(socket)
         , Splitter(maxLineSize)
-        , ChunkSize(chunkSize)
+        , ChunkSize(maxLineSize / 2)
     {
         assert(maxLineSize >= chunkSize);
     }
