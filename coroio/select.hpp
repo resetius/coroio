@@ -15,8 +15,7 @@ public:
     using TFileHandle = NNet::TFileHandle;
 
     void Poll() {
-        auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        auto tv = GetTimeval(TClock::now(), deadline, MinDuration_);
+        auto ts = GetTimeout();
 
         constexpr int bits = sizeof(fd_mask)*8;
 
@@ -50,7 +49,7 @@ public:
 
         Reset();
 
-        if (select(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &tv) < 0) {
+        if (pselect(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &ts, nullptr) < 0) {
             throw std::system_error(errno, std::generic_category(), "select");
         }
 

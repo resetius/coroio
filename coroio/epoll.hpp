@@ -28,8 +28,7 @@ public:
     }
 
     void Poll() {
-        auto deadline = Timers_.empty() ? TTime::max() : Timers_.top().Deadline;
-        int timeout = GetMillis(TClock::now(), deadline, MinDuration_);
+        auto ts = GetTimeout();
 
         if (InEvents_.size() <= MaxFd_) {
             InEvents_.resize(MaxFd_+1);
@@ -99,7 +98,7 @@ public:
         OutEvents_.resize(std::max<size_t>(1, InEvents_.size()));
 
         int nfds;
-        if ((nfds =  epoll_wait(Fd_, &OutEvents_[0], OutEvents_.size(), timeout)) < 0) {
+        if ((nfds =  epoll_pwait2(Fd_, &OutEvents_[0], OutEvents_.size(), &ts, nullptr)) < 0) {
             if (errno == EINTR) {
                 return;
             }

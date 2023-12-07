@@ -87,9 +87,22 @@ public:
 
     void SetMinDuration(std::chrono::milliseconds minDuration) {
         MinDuration_ = minDuration;
+        MinDurationTs_ = GetMinDuration(MinDuration_);
     }
 
 protected:
+    timespec GetTimeout() const {
+        return Timers_.empty()
+            ? MinDurationTs_
+            : GetTimespec(TClock::now(), Timers_.top().Deadline, MinDuration_);
+    }
+
+    static constexpr timespec GetMinDuration(std::chrono::milliseconds duration) {
+        auto p1 = std::chrono::duration_cast<std::chrono::seconds>(duration);
+        auto p2 = std::chrono::duration_cast<std::chrono::nanoseconds>(duration - p1);
+        return {p1.count(), p2.count()};
+    }
+
     void Reset() {
         ReadyEvents_.clear();
         Changes_.clear();
@@ -118,6 +131,7 @@ protected:
     std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
     std::chrono::milliseconds MinDuration_ = std::chrono::milliseconds(100);
+    timespec MinDurationTs_ = GetMinDuration(MinDuration_);
 };
 
 } // namespace NNet
