@@ -16,7 +16,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(coroio
   coroio/socket.cpp
-  coroio/sockutils.cpp)
+  coroio/sockutils.cpp
+  coroio/poll.cpp
+  coroio/select.cpp
+  coroio/epoll.cpp
+  coroio/uring.cpp
+  coroio/kqueue.cpp)
 
 macro(target name source)
   add_executable(${name} ${source})
