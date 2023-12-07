@@ -75,31 +75,31 @@ socket.ReadSome(buffer, bufferSize);
 #include <string>
 #include <vector>
 
-using NNet::TFileHandle;
-using NNet::TSocket;
-using NNet::TAddress;
-using NNet::TLineReader;
-using NNet::TByteWriter;
-using NNet::TByteReader;
-using NNet::TLine;
+using namespace NNet;
 
 template<typename TPoller>
-NNet::TTestTask EchoClient(TPoller& poller) {
-    TFileHandle input{0, poller}; // Standard input
-    TSocket socket{TAddress("127.0.0.1", 8000), poller};
-    TLineReader lineReader(input); // Line reader with default max line size of 4096
-    TByteWriter byteWriter(socket);
-    TByteReader byteReader(socket);
-    std::vector<char> in;
+TTestTask client(TPoller& poller, TAddress addr)
+{
+    static constexpr int maxLineSize = 4096;
+    using TSocket = typename TPoller::TSocket;
+    using TFileHandle = typename TPoller::TFileHandle;
+    std::vector<char> in(maxLineSize);
 
-    co_await socket.Connect();
-    TLine line;
-    while ((line = co_await lineReader.Read())) {
-        co_await byteWriter.Write(line.Part1.data(), line.Part1.size());
-        co_await byteWriter.Write(line.Part2.data(), line.Part2.size());
-        in.resize(line.Size());
-        ssize_t size = co_await byteReader.Read(in.data(), in.size());
-        std::cout << "Received: " << std::string_view(in.data(), in.size()) << "\n";
+    try {
+        TFileHandle input{0, poller}; // stdin
+        TSocket socket{std::move(addr), poller};
+        TLineReader lineReader(input, maxLineSize);
+        TByteWriter byteWriter(socket);
+        TByteReader byteReader(socket);
+
+        co_await socket.Connect();
+        while (auto line = co_await lineReader.Read()) {
+            co_await byteWriter.Write(line);
+            co_await byteReader.Read(in.data(), line.Size());
+            std::cout << "Received: " << std::string_view(in.data(), line.Size()) << "\n";
+        }
+    } catch (const std::exception& ex) {
+        std::cout << "Exception: " << ex.what() << "\n";
     }
 
     co_return;
