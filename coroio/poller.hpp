@@ -89,21 +89,21 @@ public:
         }
     }
 
-    void SetMinDuration(std::chrono::milliseconds minDuration) {
-        MinDuration_ = minDuration;
-        MinDurationTs_ = GetMinDuration(MinDuration_);
+    void SetMaxDuration(std::chrono::milliseconds maxDuration) {
+        MaxDuration_ = maxDuration;
+        MaxDurationTs_ = GetMaxDuration(MaxDuration_);
     }
 
 protected:
     timespec GetTimeout() const {
         return Timers_.empty()
-            ? MinDurationTs_
+            ? MaxDurationTs_
             : Timers_.top().Deadline == TTime{}
                 ? timespec {0, 0}
-                : GetTimespec(TClock::now(), Timers_.top().Deadline, MinDuration_);
+                : GetTimespec(TClock::now(), Timers_.top().Deadline, MaxDuration_);
     }
 
-    static constexpr timespec GetMinDuration(std::chrono::milliseconds duration) {
+    static constexpr timespec GetMaxDuration(std::chrono::milliseconds duration) {
         auto p1 = std::chrono::duration_cast<std::chrono::seconds>(duration);
         auto p2 = std::chrono::duration_cast<std::chrono::nanoseconds>(duration - p1);
         return {p1.count(), p2.count()};
@@ -136,8 +136,8 @@ protected:
     std::vector<TEvent> ReadyEvents_;
     std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
-    std::chrono::milliseconds MinDuration_ = std::chrono::milliseconds(100);
-    timespec MinDurationTs_ = GetMinDuration(MinDuration_);
+    std::chrono::milliseconds MaxDuration_ = std::chrono::milliseconds(100);
+    timespec MaxDurationTs_ = GetMaxDuration(MaxDuration_);
 };
 
 } // namespace NNet

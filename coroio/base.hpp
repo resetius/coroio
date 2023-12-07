@@ -45,14 +45,14 @@ struct TEvent {
 
 template<typename T1, typename T2>
 inline std::tuple<T1, T2>
-GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds min_duration)
+GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
 {
     if (now > deadline) {
         return std::make_tuple(T1(0), T2(0));
     } else {
         auto duration = (deadline - now);
-        if (duration > min_duration) {
-            duration = min_duration;
+        if (duration > maxDuration) {
+            duration = maxDuration;
         }
         auto part1 = std::chrono::duration_cast<T1>(duration);
         duration -= part1;
@@ -62,9 +62,9 @@ GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds min_duratio
     }
 }
 
-inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds min_duration)
+inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
 {
-    auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::microseconds>(now, deadline, min_duration);
+    auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::microseconds>(now, deadline, maxDuration);
     return {p1.count(), static_cast<int>(p2.count())};
 }
 
@@ -73,9 +73,9 @@ inline int GetMillis(TTime now, TTime deadline, std::chrono::milliseconds min_du
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds min_duration)
+inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
 {
-    auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::nanoseconds>(now, deadline, min_duration);
+    auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::nanoseconds>(now, deadline, maxDuration);
     return {p1.count(), p2.count()};
 }
 
