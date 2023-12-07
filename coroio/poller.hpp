@@ -68,6 +68,10 @@ public:
         return Sleep(TClock::now() + duration);
     }
 
+    auto Yield() {
+        return Sleep(TTime{});
+    }
+
     void Wakeup(TEvent&& change) {
         change.Handle.resume();
         if (Changes_.empty() || !Changes_.back().Match(change)) {
@@ -94,7 +98,9 @@ protected:
     timespec GetTimeout() const {
         return Timers_.empty()
             ? MinDurationTs_
-            : GetTimespec(TClock::now(), Timers_.top().Deadline, MinDuration_);
+            : Timers_.top().Deadline == TTime{}
+                ? timespec {0, 0}
+                : GetTimespec(TClock::now(), Timers_.top().Deadline, MinDuration_);
     }
 
     static constexpr timespec GetMinDuration(std::chrono::milliseconds duration) {
