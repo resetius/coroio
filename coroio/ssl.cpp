@@ -1,4 +1,5 @@
 #include "ssl.hpp"
+#include <stdexcept>
 
 namespace NNet {
 
@@ -11,12 +12,35 @@ TSslContext::TSslContext() {
         ERR_load_crypto_strings();
         init = 1;
     }
-
-    Ctx = SSL_CTX_new(TLS_client_method());
 }
 
 TSslContext::~TSslContext() {
     SSL_CTX_free(Ctx);
+}
+
+TSslContext TSslContext::Client() {
+    TSslContext ctx;
+    ctx.Ctx = SSL_CTX_new(TLS_client_method());
+    return ctx;
+}
+
+TSslContext TSslContext::Server(const char* certfile, const char* keyfile) {
+    TSslContext ctx;
+    ctx.Ctx = SSL_CTX_new(TLS_server_method());
+
+    if (SSL_CTX_use_certificate_file(ctx.Ctx, certfile,  SSL_FILETYPE_PEM) != 1) {
+        throw std::runtime_error("SSL_CTX_use_certificate_file failed");
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx.Ctx, keyfile, SSL_FILETYPE_PEM) != 1) {
+        throw std::runtime_error("SSL_CTX_use_PrivateKey_file failed");
+    }
+
+    if (SSL_CTX_check_private_key(ctx.Ctx) != 1) {
+        throw std::runtime_error("SSL_CTX_check_private_key failed");
+    }
+
+    return ctx;
 }
 
 } // namespace NNet

@@ -16,8 +16,19 @@ namespace NNet {
 struct TSslContext {
     SSL_CTX* Ctx;
 
-    TSslContext();
+    TSslContext(TSslContext&& other)
+        : Ctx(other.Ctx)
+    {
+        other.Ctx = nullptr;
+    }
+
     ~TSslContext();
+
+    static TSslContext Client();
+    static TSslContext Server(const char* certfile, const char* keyfile);
+
+private:
+    TSslContext();
 };
 
 template<typename THandle>
@@ -54,31 +65,14 @@ public:
     }
 
     TValueTask<void> Accept() {
-        co_return;
+        SSL_set_accept_state(Ssl);
+        co_return co_await DoHandshake();
     }
 
     TValueTask<void> Connect() {
-        int r;
         co_await Socket.Connect();
-
         SSL_set_connect_state(Ssl);
-
-        LogState();
-
-        while ((r = SSL_do_handshake(Ssl)) != 1) {
-            LogState();
-            int status = SSL_get_error(Ssl, r);
-            if (status == SSL_ERROR_WANT_READ || status == SSL_ERROR_WANT_WRITE) {
-                co_await DoIO();
-            } else {
-                throw std::runtime_error("SSL error: " + std::to_string(r));
-            }
-        }
-
-        if (LogFunc) {
-            LogFunc("SSL Handshake established\n");
-        }
-        co_return;
+        co_return co_await DoHandshake();
     }
 
     TValueTask<ssize_t> ReadSome(void* data, size_t size) {
@@ -130,6 +124,9 @@ private:
             throw std::runtime_error("Cannot read Wbio");
         }
         auto size = co_await Socket.ReadSome(buf, sizeof(buf));
+        if (size == 0) {
+            throw std::runtime_error("Connection closed");
+        }
         const char* p = buf;
         while (size != 0) {
             auto n = BIO_write(Rbio, p, size);
@@ -141,6 +138,24 @@ private:
         }
 
         co_return;
+    }
+
+    TValueTask<void> DoHandshake() {
+        int r;
+        LogState();
+        while ((r = SSL_do_handshake(Ssl)) != 1) {
+            LogState();
+            int status = SSL_get_error(Ssl, r);
+            if (status == SSL_ERROR_WANT_READ || status == SSL_ERROR_WANT_WRITE) {
+                co_await DoIO();
+            } else {
+                throw std::runtime_error("SSL error: " + std::to_string(r));
+            }
+        }
+
+        if (LogFunc) {
+            LogFunc("SSL Handshake established\n");
+        }
     }
 
     void LogState() {
