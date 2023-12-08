@@ -1,4 +1,5 @@
 #if defined(__APPLE__) || defined(__FreeBSD__)
+#include <system_error>
 #include "kqueue.hpp"
 
 namespace NNet {

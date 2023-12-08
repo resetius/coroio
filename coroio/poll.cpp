@@ -1,5 +1,21 @@
 #include "poll.hpp"
 
+namespace {
+
+#if defined(__APPLE__) || defined(__FreeBSD__)
+int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigset_t* sigmask) {
+    int timeout = 0;
+    if (ts) {
+        timeout  = ts->tv_sec;
+        timeout += ts->tv_nsec / 1000000;
+    }
+    // TODO: support sigmask
+    return poll(fds, nfds, timeout);
+}
+#endif
+
+} // namespace
+
 namespace NNet {
 
 void TPoll::Poll() {
