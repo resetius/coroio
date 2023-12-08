@@ -7,6 +7,7 @@ project(netlib)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CMOCKA REQUIRED cmocka)
 pkg_check_modules(URING liburing)
+pkg_check_modules(OPENSSL openssl)
 enable_testing()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -21,13 +22,15 @@ add_library(coroio
   coroio/select.cpp
   coroio/epoll.cpp
   coroio/uring.cpp
-  coroio/kqueue.cpp)
+  coroio/kqueue.cpp
+  coroio/ssl.cpp
+  )
 
 macro(target name source)
   add_executable(${name} ${source})
   target_include_directories(${name} PRIVATE ${CMOCKA_INCLUDE_DIRS} ${URING_INCLUDE_DIRS})
   target_link_directories(${name} PRIVATE ${CMOCKA_LIBRARY_DIRS} ${URING_LIBRARY_DIRS})
-  target_link_libraries(${name} coroio ${CMOCKA_LIBRARIES} ${URING_LIBRARIES})
+  target_link_libraries(${name} coroio ${CMOCKA_LIBRARIES} ${URING_LIBRARIES} ${OPENSSL_LIBRARIES})
 endmacro()
 
 macro(ut name source)
@@ -44,6 +47,7 @@ target(timers examples/timers.cpp)
 target(echotest examples/echotest.cpp)
 target(echoserver examples/echoserver.cpp)
 target(echoclient examples/echoclient.cpp)
+target(sslechoclient examples/sslechoclient.cpp)
 target(bench examples/bench.cpp)
 
 ut(tests tests/tests.cpp)

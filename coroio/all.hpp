@@ -30,6 +30,7 @@
 #include "socket.hpp"
 #include "corochain.hpp"
 #include "sockutils.hpp"
+#include "ssl.hpp"
 
 namespace NNet {
 #if defined(__APPLE__) || defined(__FreeBSD__)

@@ -1,4 +1,5 @@
 #include "coroio/sockutils.hpp"
+#include "coroio/ssl.hpp"
 #include <coroio/all.hpp>
 
 #include <signal.h>
@@ -16,11 +17,13 @@ TVoidSuspendedTask client(TPoller& poller, TAddress addr)
     try {
         TFileHandle input{0, poller}; // stdin
         TSocket socket{std::move(addr), poller};
+        TSslContext ctx;
+        TSslSocket sslSocket(socket, ctx, [&](const char* s) { std::cerr << s << "\n"; });
         TLineReader lineReader(input, maxLineSize);
-        TByteWriter byteWriter(socket);
-        TByteReader byteReader(socket);
+        TByteWriter byteWriter(sslSocket);
+        TByteReader byteReader(sslSocket);
 
-        co_await socket.Connect();
+        co_await sslSocket.Connect();
         while (auto line = co_await lineReader.Read()) {
             co_await byteWriter.Write(line);
             co_await byteReader.Read(in.data(), line.Size());
