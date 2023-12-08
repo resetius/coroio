@@ -5,7 +5,7 @@
 using namespace NNet;
 
 template<bool debug, typename TPoller>
-TVoidSuspendedTask client(TPoller& poller, TAddress addr)
+TVoidSuspendedTask client(TPoller& poller, TSslContext& ctx, TAddress addr)
 {
     static constexpr int maxLineSize = 4096;
     using TSocket = typename TPoller::TSocket;
@@ -15,8 +15,7 @@ TVoidSuspendedTask client(TPoller& poller, TAddress addr)
     try {
         TFileHandle input{0, poller}; // stdin
         TSocket socket{std::move(addr), poller};
-        TSslContext ctx = TSslContext::Client();
-        TSslSocket sslSocket(socket, ctx, [&](const char* s) { std::cerr << s << "\n"; });
+        TSslSocket sslSocket(socket, ctx);
         TLineReader lineReader(input, maxLineSize);
         TByteWriter byteWriter(sslSocket);
         TByteReader byteReader(sslSocket);
@@ -42,9 +41,11 @@ void run(bool debug, TAddress address)
     NNet::TLoop<TPoller> loop;
     NNet::THandle h;
     if (debug) {
-        h = client<true>(loop.Poller(), std::move(address));
+        TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
+        h = client<true>(loop.Poller(), ctx, std::move(address));
     } else {
-        h = client<false>(loop.Poller(), std::move(address));
+        TSslContext ctx = TSslContext::Client();
+        h = client<false>(loop.Poller(), ctx, std::move(address));
     }
     while (!h.done()) {
         loop.Step();

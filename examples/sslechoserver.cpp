@@ -15,11 +15,11 @@ using NNet::TKqueue;
 #endif
 
 template<bool debug, typename TSocket>
-TVoidTask client_handler(TSocket socket, NNet::TSslContext& ctx, int buffer_size) {
+TVoidTask clientHandler(TSocket socket, NNet::TSslContext& ctx, int buffer_size) {
     std::vector<char> buffer(buffer_size); ssize_t size = 0;
 
     try {
-        NNet::TSslSocket<TSocket> sslSocket(socket, ctx, [&](const char* s) { std::cerr << s << "\n"; });
+        NNet::TSslSocket<TSocket> sslSocket(socket, ctx);
 
         co_await sslSocket.Accept();
         while ((size = co_await sslSocket.ReadSome(buffer.data(), buffer_size)) > 0) {
@@ -40,7 +40,12 @@ TVoidTask client_handler(TSocket socket, NNet::TSslContext& ctx, int buffer_size
 template<bool debug, typename TPoller>
 TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
 {
-    NNet::TSslContext ctx = NNet::TSslContext::Server("server.crt", "server.key");
+    std::function<void(const char*)> sslDebugLogFunc;
+    if constexpr(debug) {
+        sslDebugLogFunc = [](const char* s) { std::cerr << s << "\n"; };
+    }
+
+    NNet::TSslContext ctx = NNet::TSslContext::Server("server.crt", "server.key", sslDebugLogFunc);
     typename TPoller::TSocket socket(std::move(address), poller);
     socket.Bind();
     socket.Listen();
@@ -50,7 +55,7 @@ TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
         if constexpr (debug) {
             std::cerr << "Accepted\n";
         }
-        client_handler<debug>(std::move(client), ctx, buffer_size);
+        clientHandler<debug>(std::move(client), ctx, buffer_size);
     }
     co_return;
 }

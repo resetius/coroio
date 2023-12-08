@@ -15,17 +15,19 @@ namespace NNet {
 
 struct TSslContext {
     SSL_CTX* Ctx;
+    std::function<void(const char*)> LogFunc = {};
 
     TSslContext(TSslContext&& other)
         : Ctx(other.Ctx)
+        , LogFunc(other.LogFunc)
     {
         other.Ctx = nullptr;
     }
 
     ~TSslContext();
 
-    static TSslContext Client();
-    static TSslContext Server(const char* certfile, const char* keyfile);
+    static TSslContext Client(const std::function<void(const char*)>& logFunc = {});
+    static TSslContext Server(const char* certfile, const char* keyfile, const std::function<void(const char*)>& logFunc = {});
 
 private:
     TSslContext();
@@ -34,13 +36,12 @@ private:
 template<typename THandle>
 class TSslSocket {
 public:
-    TSslSocket(THandle& socket, TSslContext& ctx, const std::function<void(const char*)>& logFunc = {})
+    TSslSocket(THandle& socket, TSslContext& ctx)
         : Socket(socket)
         , Ctx(ctx)
         , Ssl(SSL_new(Ctx.Ctx))
         , Rbio(BIO_new(BIO_s_mem()))
         , Wbio(BIO_new(BIO_s_mem()))
-        , LogFunc(logFunc)
     {
         SSL_set_bio(Ssl, Rbio, Wbio);
     }
@@ -153,13 +154,13 @@ private:
             }
         }
 
-        if (LogFunc) {
-            LogFunc("SSL Handshake established\n");
+        if (Ctx.LogFunc) {
+            Ctx.LogFunc("SSL Handshake established\n");
         }
     }
 
     void LogState() {
-        if (!LogFunc) return;
+        if (!Ctx.LogFunc) return;
 
         char buf[1024];
 
@@ -167,7 +168,7 @@ private:
         if (state != LastState) {
             if (state) {
                 snprintf(buf, sizeof(buf), "SSL-STATE: %s", state);
-                LogFunc(buf);
+                Ctx.LogFunc(buf);
             }
             LastState = state;
         }
@@ -180,7 +181,6 @@ private:
     BIO* Rbio = nullptr;
     BIO* Wbio = nullptr;
 
-    std::function<void(const char*)> LogFunc = {};
     const char* LastState = nullptr;
 };
 
