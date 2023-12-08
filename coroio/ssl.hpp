@@ -10,7 +10,6 @@
 
 #include "base.hpp"
 #include "corochain.hpp"
-#include "coroio/sockutils.hpp"
 
 namespace NNet {
 
