@@ -15,11 +15,10 @@ using NNet::TKqueue;
 #endif
 
 template<bool debug, typename TSocket>
-TVoidTask client_handler(TSocket socket, int buffer_size) {
+TVoidTask client_handler(TSocket socket, NNet::TSslContext& ctx, int buffer_size) {
     std::vector<char> buffer(buffer_size); ssize_t size = 0;
 
     try {
-        NNet::TSslContext ctx = NNet::TSslContext::Server("server.crt", "server.key");
         NNet::TSslSocket<TSocket> sslSocket(socket, ctx, [&](const char* s) { std::cerr << s << "\n"; });
 
         co_await sslSocket.Accept();
@@ -41,6 +40,7 @@ TVoidTask client_handler(TSocket socket, int buffer_size) {
 template<bool debug, typename TPoller>
 TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
 {
+    NNet::TSslContext ctx = NNet::TSslContext::Server("server.crt", "server.key");
     typename TPoller::TSocket socket(std::move(address), poller);
     socket.Bind();
     socket.Listen();
@@ -50,7 +50,7 @@ TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
         if constexpr (debug) {
             std::cerr << "Accepted\n";
         }
-        client_handler<debug>(std::move(client), buffer_size);
+        client_handler<debug>(std::move(client), ctx, buffer_size);
     }
     co_return;
 }
