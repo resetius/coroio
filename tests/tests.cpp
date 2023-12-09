@@ -1,4 +1,3 @@
-#include "coroio/ssl.hpp"
 #include <chrono>
 #include <array>
 #include <exception>
