@@ -10,6 +10,7 @@
 
 #include "base.hpp"
 #include "corochain.hpp"
+#include "sockutils.hpp"
 
 namespace NNet {
 
@@ -28,6 +29,7 @@ struct TSslContext {
 
     static TSslContext Client(const std::function<void(const char*)>& logFunc = {});
     static TSslContext Server(const char* certfile, const char* keyfile, const std::function<void(const char*)>& logFunc = {});
+    static TSslContext ServerFromMem(const void* certfile, const void* keyfile, const std::function<void(const char*)>& logFunc = {});
 
 private:
     TSslContext();

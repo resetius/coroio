@@ -1,3 +1,4 @@
+#include "coroio/ssl.hpp"
 #include <chrono>
 #include <array>
 #include <exception>
@@ -11,6 +12,9 @@
 extern "C" {
 #include <cmocka.h>
 }
+
+#include "server.crt"
+#include "server.key"
 
 namespace {
 
@@ -622,6 +626,54 @@ void test_zero_copy_line_splitter(void**) {
     }
 }
 
+template<typename TPoller>
+void test_read_write_full_ssl(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+
+    std::vector<char> data(1024*1024);
+    int cur = 0;
+    for (auto& ch : data) {
+        ch = cur + 'a';
+        cur = (cur + 1) % ('z' - 'a' + 1);
+    }
+
+    TLoop loop;
+    TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+
+    NNet::TVoidSuspendedTask h1 = [](TSocket& client, const std::vector<char>& data) -> NNet::TVoidSuspendedTask
+    {
+        TSslContext ctx = TSslContext::Client();
+        auto sslClient = TSslSocket(client, ctx);
+        co_await sslClient.Connect();
+        co_await TByteWriter(sslClient).Write(data.data(), data.size());
+        co_return;
+    }(client, data);
+
+    std::vector<char> received(1024*1024);
+    NNet::TVoidSuspendedTask h2 = [](TSocket& server, std::vector<char>& received) -> NNet::TVoidSuspendedTask
+    {
+        TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
+        auto client = std::move(co_await server.Accept());
+        auto sslClient = TSslSocket(client, ctx);
+        co_await sslClient.Accept();
+        co_await TByteReader(sslClient).Read(received.data(), received.size());
+        co_return;
+    }(socket, received);
+
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
+
+    assert_memory_equal(data.data(), received.data(), data.size());
+
+    h1.destroy(); h2.destroy();
+}
+
 #ifdef __linux__
 
 namespace {
@@ -807,6 +859,7 @@ int main() {
         my_unit_poller(test_read_write_full),
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
+        my_unit_poller(test_read_write_full_ssl),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
