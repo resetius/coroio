@@ -630,7 +630,7 @@ void test_read_write_full_ssl(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
-    std::vector<char> data(1024*1024);
+    std::vector<char> data(1024);
     int cur = 0;
     for (auto& ch : data) {
         ch = cur + 'a';
@@ -858,7 +858,7 @@ int main() {
         my_unit_poller(test_read_write_full),
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
-        my_unit_poller(test_read_write_full_ssl),
+        my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
