@@ -11,6 +11,7 @@
 #include "base.hpp"
 #include "corochain.hpp"
 #include "sockutils.hpp"
+#include "promises.hpp"
 
 namespace NNet {
 
@@ -64,8 +65,10 @@ public:
             Ssl = other.Ssl;
             Rbio = other.Rbio;
             Wbio = other.Wbio;
+            Handshake = other.Handshake;
             other.Ssl = nullptr;
             other.Rbio = other.Wbio = nullptr;
+            other.Handshake = nullptr;
         }
         return *this;
     }
@@ -78,29 +81,33 @@ public:
     ~TSslSocket()
     {
         if (Ssl) { SSL_free(Ssl); }
+        if (Handshake) { Handshake.destroy(); }
     }
 
     TValueTask<TSslSocket<THandle>> Accept() {
         auto underlying = std::move(co_await Socket.Accept());
         auto socket = TSslSocket(std::move(underlying), *Ctx);
-        co_await socket.AcceptHandshake();
-        Socket.Poller()->RemoveEvent(Socket.Fd()); // Transfer event to other coroutine does not supported yet! So use this crutch.
-        co_await Socket.Poller()->Yield();
+        SSL_set_accept_state(socket.Ssl);
+        socket.StartHandshake();
         co_return std::move(socket);
     }
 
     TValueTask<void> AcceptHandshake() {
+        assert(!Handshake);
         SSL_set_accept_state(Ssl);
         co_return co_await DoHandshake();
     }
 
     TValueTask<void> Connect(TTime deadline = TTime::max()) {
+        assert(!Handshake);
         co_await Socket.Connect(deadline);
         SSL_set_connect_state(Ssl);
         co_return co_await DoHandshake();
     }
 
     TValueTask<ssize_t> ReadSome(void* data, size_t size) {
+        co_await WaitHandshake();
+
         int n = SSL_read(Ssl, data, size);
         int status;
         if (n > 0) {
@@ -117,6 +124,8 @@ public:
     }
 
     TValueTask<ssize_t> WriteSome(const void* data, size_t size) {
+        co_await WaitHandshake();
+
         char buf[1024];
         auto r = size;
         const char* p = (const char*)data;
@@ -196,6 +205,40 @@ private:
         co_return;
     }
 
+    void StartHandshake() {
+        assert(!Handshake);
+        Handshake = RunHandshake();
+    }
+
+    TVoidSuspendedTask RunHandshake() {
+        co_await DoHandshake();
+        co_return;
+    }
+
+    auto WaitHandshake() {
+        struct TAwaitable {
+            bool await_ready() {
+                return !handshake || handshake.done();
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                waiters->push_back(h);
+            }
+
+            void await_resume() {
+                for (auto w : *waiters) {
+                    w.resume();
+                }
+                waiters->clear();
+            }
+
+            std::coroutine_handle<> handshake;
+            std::vector<std::coroutine_handle<>>* waiters;
+        };
+
+        return TAwaitable { Handshake, &Waiters };
+    };
+
     void LogState() {
         if (!Ctx->LogFunc) return;
 
@@ -219,6 +262,9 @@ private:
     BIO* Wbio = nullptr;
 
     const char* LastState = nullptr;
+
+    std::coroutine_handle<> Handshake;
+    std::vector<std::coroutine_handle<>> Waiters;
 };
 
 } // namespace NNet
