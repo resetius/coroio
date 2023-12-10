@@ -26,6 +26,10 @@ struct TValuePromise: public TValuePromiseBase<T> {
         ErrorOr = t;
     }
 
+    void return_value(T&& t) {
+        ErrorOr = std::move(t);
+    }
+
     void unhandled_exception() {
         ErrorOr = std::current_exception();
     }

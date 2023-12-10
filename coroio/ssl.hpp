@@ -40,8 +40,8 @@ class TSslSocket {
 public:
     TSslSocket(THandle& socket, TSslContext& ctx)
         : Socket(socket)
-        , Ctx(ctx)
-        , Ssl(SSL_new(Ctx.Ctx))
+        , Ctx(&ctx)
+        , Ssl(SSL_new(Ctx->Ctx))
         , Rbio(BIO_new(BIO_s_mem()))
         , Wbio(BIO_new(BIO_s_mem()))
     {
@@ -49,14 +49,20 @@ public:
     }
 
     TSslSocket(TSslSocket&& other)
-        : Socket(other.Socket)
-        , Ctx(other.Ctx)
-        , Ssl(other.Ssl)
-        , Rbio(other.Rbio)
-        , Wbio(other.Wbio)
     {
-        other.Ssl = nullptr;
-        other.Rbio = other.Wbio = nullptr;
+        *this = std::move(other);
+    }
+
+    TSslSocket& operator=(TSslSocket&& other) {
+        if (this != &other) {
+            Socket = std::move(other.Socket);
+            Ctx = other.Ctx;
+            Ssl = other.Ssl;
+            Rbio = other.Rbio;
+            Wbio = other.Wbio;
+            other.Ssl = nullptr;
+            other.Rbio = other.Wbio = nullptr;
+        }
     }
 
     TSslSocket(const TSslSocket& ) = delete;
@@ -156,13 +162,13 @@ private:
             }
         }
 
-        if (Ctx.LogFunc) {
-            Ctx.LogFunc("SSL Handshake established\n");
+        if (Ctx->LogFunc) {
+            Ctx->LogFunc("SSL Handshake established\n");
         }
     }
 
     void LogState() {
-        if (!Ctx.LogFunc) return;
+        if (!Ctx->LogFunc) return;
 
         char buf[1024];
 
@@ -170,14 +176,14 @@ private:
         if (state != LastState) {
             if (state) {
                 snprintf(buf, sizeof(buf), "SSL-STATE: %s", state);
-                Ctx.LogFunc(buf);
+                Ctx->LogFunc(buf);
             }
             LastState = state;
         }
     }
 
     THandle& Socket;
-    TSslContext& Ctx;
+    TSslContext* Ctx = nullptr;
 
     SSL* Ssl = nullptr;
     BIO* Rbio = nullptr;
