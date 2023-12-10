@@ -38,6 +38,8 @@ private:
 template<typename THandle>
 class TSslSocket {
 public:
+    using TPoller = typename THandle::TPoller;
+
     TSslSocket(THandle&& socket, TSslContext& ctx)
         : Socket(std::move(socket))
         , Ctx(&ctx)
@@ -71,6 +73,8 @@ public:
     TSslSocket(const TSslSocket& ) = delete;
     TSslSocket& operator=(const TSslSocket&) = delete;
 
+    TSslSocket() = default;
+
     ~TSslSocket()
     {
         if (Ssl) { SSL_free(Ssl); }
@@ -90,8 +94,8 @@ public:
         co_return co_await DoHandshake();
     }
 
-    TValueTask<void> Connect() {
-        co_await Socket.Connect();
+    TValueTask<void> Connect(TTime deadline = TTime::max()) {
+        co_await Socket.Connect(deadline);
         SSL_set_connect_state(Ssl);
         co_return co_await DoHandshake();
     }
@@ -132,6 +136,10 @@ public:
             p += n;
         }
         co_return r;
+    }
+
+    auto Poller() {
+        return Socket.Poller();
     }
 
 private:
