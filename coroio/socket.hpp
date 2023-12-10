@@ -22,7 +22,7 @@ public:
     bool operator == (const TAddress& other) const;
 
 private:
-    sockaddr_in Addr_;
+    sockaddr_in Addr_ = {};
 };
 
 class TSocketOps {
