@@ -644,21 +644,21 @@ void test_read_write_full_ssl(void**) {
 
     TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
 
-    NNet::TVoidSuspendedTask h1 = [](TSocket& client, const std::vector<char>& data) -> NNet::TVoidSuspendedTask
+    NNet::TVoidSuspendedTask h1 = [](TSocket&& client, const std::vector<char>& data) -> NNet::TVoidSuspendedTask
     {
         TSslContext ctx = TSslContext::Client();
-        auto sslClient = TSslSocket(client, ctx);
+        auto sslClient = TSslSocket(std::move(client), ctx);
         co_await sslClient.Connect();
         co_await TByteWriter(sslClient).Write(data.data(), data.size());
         co_return;
-    }(client, data);
+    }(std::move(client), data);
 
     std::vector<char> received(1024*1024);
     NNet::TVoidSuspendedTask h2 = [](TSocket& server, std::vector<char>& received) -> NNet::TVoidSuspendedTask
     {
         TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
         auto client = std::move(co_await server.Accept());
-        auto sslClient = TSslSocket(client, ctx);
+        auto sslClient = TSslSocket(std::move(client), ctx);
         co_await sslClient.AcceptHandshake();
         co_await TByteReader(sslClient).Read(received.data(), received.size());
         co_return;

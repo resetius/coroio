@@ -15,7 +15,7 @@ TVoidSuspendedTask client(TPoller& poller, TSslContext& ctx, TAddress addr)
     try {
         TFileHandle input{0, poller}; // stdin
         TSocket socket{std::move(addr), poller};
-        TSslSocket sslSocket(socket, ctx);
+        TSslSocket sslSocket(std::move(socket), ctx);
         TLineReader lineReader(input, maxLineSize);
         TByteWriter byteWriter(sslSocket);
         TByteReader byteReader(sslSocket);

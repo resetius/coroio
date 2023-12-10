@@ -15,11 +15,11 @@ using NNet::TKqueue;
 #endif
 
 template<bool debug, typename TSocket>
-TVoidTask clientHandler(TSocket socket, NNet::TSslContext& ctx, int buffer_size) {
+TVoidTask clientHandler(TSocket&& socket, NNet::TSslContext& ctx, int buffer_size) {
     std::vector<char> buffer(buffer_size); ssize_t size = 0;
 
     try {
-        NNet::TSslSocket<TSocket> sslSocket(socket, ctx);
+        NNet::TSslSocket<TSocket> sslSocket(std::move(socket), ctx);
 
         co_await sslSocket.AcceptHandshake();
         while ((size = co_await sslSocket.ReadSome(buffer.data(), buffer_size)) > 0) {

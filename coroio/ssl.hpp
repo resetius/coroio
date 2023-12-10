@@ -38,8 +38,8 @@ private:
 template<typename THandle>
 class TSslSocket {
 public:
-    TSslSocket(THandle& socket, TSslContext& ctx)
-        : Socket(socket)
+    TSslSocket(THandle&& socket, TSslContext& ctx)
+        : Socket(std::move(socket))
         , Ctx(&ctx)
         , Ssl(SSL_new(Ctx->Ctx))
         , Rbio(BIO_new(BIO_s_mem()))
@@ -182,7 +182,7 @@ private:
         }
     }
 
-    THandle& Socket;
+    THandle Socket;
     TSslContext* Ctx = nullptr;
 
     SSL* Ssl = nullptr;
