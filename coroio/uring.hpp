@@ -74,6 +74,8 @@ private:
 class TUringSocket: public TSocket
 {
 public:
+    using TPoller = TUring;
+
     TUringSocket(TAddress addr, TUring& poller)
         : TSocket(std::move(addr), poller)
         , Uring_(&poller)

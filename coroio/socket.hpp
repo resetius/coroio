@@ -174,6 +174,8 @@ public:
 
 class TSocket: public TSocketBase<TSockOps> {
 public:
+    using TPoller = TPollerBase;
+
     TSocket(TAddress&& addr, TPollerBase& poller);
     TSocket(const TAddress& addr, int fd, TPollerBase& poller);
     TSocket(const TAddress& addr, TPollerBase& poller);
