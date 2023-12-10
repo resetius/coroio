@@ -73,6 +73,13 @@ public:
         if (Ssl) { SSL_free(Ssl); }
     }
 
+    TValueTask<TSslSocket<THandle>> Accept() {
+        auto underlying = std::move(co_await Socket.Accept());
+        auto socket = TSslSocket(std::move(underlying), *Ctx);
+        co_await socket.AcceptHandshake();
+        co_return std::move(socket);
+    }
+
     TValueTask<void> AcceptHandshake() {
         SSL_set_accept_state(Ssl);
         co_return co_await DoHandshake();
