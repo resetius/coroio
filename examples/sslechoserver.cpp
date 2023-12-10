@@ -21,7 +21,7 @@ TVoidTask clientHandler(TSocket socket, NNet::TSslContext& ctx, int buffer_size)
     try {
         NNet::TSslSocket<TSocket> sslSocket(socket, ctx);
 
-        co_await sslSocket.Accept();
+        co_await sslSocket.AcceptHandshake();
         while ((size = co_await sslSocket.ReadSome(buffer.data(), buffer_size)) > 0) {
             if constexpr(debug) {
                 std::cerr << "Received: " << std::string_view(buffer.data(), size) << "\n";

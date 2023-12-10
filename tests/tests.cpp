@@ -659,7 +659,7 @@ void test_read_write_full_ssl(void**) {
         TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
         auto client = std::move(co_await server.Accept());
         auto sslClient = TSslSocket(client, ctx);
-        co_await sslClient.Accept();
+        co_await sslClient.AcceptHandshake();
         co_await TByteReader(sslClient).Read(received.data(), received.size());
         co_return;
     }(socket, received);

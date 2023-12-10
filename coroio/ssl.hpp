@@ -73,7 +73,7 @@ public:
         if (Ssl) { SSL_free(Ssl); }
     }
 
-    TValueTask<void> Accept() {
+    TValueTask<void> AcceptHandshake() {
         SSL_set_accept_state(Ssl);
         co_return co_await DoHandshake();
     }
