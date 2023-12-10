@@ -57,7 +57,7 @@ struct TValueTask : public TValueTaskBase<T> {
     T await_resume() {
         auto& errorOr = *this->promise().ErrorOr;
         if (auto* res = std::get_if<T>(&errorOr)) {
-            return *res;
+            return std::move(*res);
         } else {
             std::rethrow_exception(std::get<std::exception_ptr>(errorOr));
         }

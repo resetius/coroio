@@ -65,7 +65,7 @@ void TEPoll::Poll() {
             }
         } else if (!eev.events) {
             if (epoll_ctl(Fd_, EPOLL_CTL_DEL, fd, nullptr) < 0) {
-                if (errno != EBADF) { // closed descriptor after TSocket -> close
+                if (!(errno == EBADF || errno == ENOENT)) { // closed descriptor after TSocket -> close
                     throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             }

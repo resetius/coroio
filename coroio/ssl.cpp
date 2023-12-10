@@ -22,6 +22,7 @@ TSslContext::~TSslContext() {
 TSslContext TSslContext::Client(const std::function<void(const char*)>& logFunc) {
     TSslContext ctx;
     ctx.Ctx = SSL_CTX_new(TLS_client_method());
+    SSL_CTX_set_options(ctx.Ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
     ctx.LogFunc = logFunc;
     return ctx;
 }
@@ -29,6 +30,7 @@ TSslContext TSslContext::Client(const std::function<void(const char*)>& logFunc)
 TSslContext TSslContext::Server(const char* certfile, const char* keyfile, const std::function<void(const char*)>& logFunc) {
     TSslContext ctx;
     ctx.Ctx = SSL_CTX_new(TLS_server_method());
+    SSL_CTX_set_options(ctx.Ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
     ctx.LogFunc = logFunc;
 
     if (SSL_CTX_use_certificate_file(ctx.Ctx, certfile,  SSL_FILETYPE_PEM) != 1) {
@@ -49,6 +51,7 @@ TSslContext TSslContext::Server(const char* certfile, const char* keyfile, const
 TSslContext TSslContext::ServerFromMem(const void* certMem, const void* keyMem, const std::function<void(const char*)>& logFunc) {
     TSslContext ctx;
     ctx.Ctx = SSL_CTX_new(TLS_server_method());
+    SSL_CTX_set_options(ctx.Ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
     ctx.LogFunc = logFunc;
 
     auto cbio = std::shared_ptr<BIO>(BIO_new_mem_buf(certMem, -1), BIO_free);

@@ -46,6 +46,8 @@ public:
         , Wbio(BIO_new(BIO_s_mem()))
     {
         SSL_set_bio(Ssl, Rbio, Wbio);
+        SSL_set_mode(Ssl, SSL_MODE_ENABLE_PARTIAL_WRITE);
+        SSL_set_mode(Ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
     }
 
     TSslSocket(TSslSocket&& other)
@@ -63,6 +65,7 @@ public:
             other.Ssl = nullptr;
             other.Rbio = other.Wbio = nullptr;
         }
+        return *this;
     }
 
     TSslSocket(const TSslSocket& ) = delete;
@@ -77,6 +80,8 @@ public:
         auto underlying = std::move(co_await Socket.Accept());
         auto socket = TSslSocket(std::move(underlying), *Ctx);
         co_await socket.AcceptHandshake();
+        Socket.Poller()->RemoveEvent(Socket.Fd()); // Transfer event to other coroutine does not supported yet! So use this crutch.
+        co_await Socket.Poller()->Yield();
         co_return std::move(socket);
     }
 
@@ -139,18 +144,21 @@ private:
         if (n < 0 && !BIO_should_retry(Wbio)) {
             throw std::runtime_error("Cannot read Wbio");
         }
-        auto size = co_await Socket.ReadSome(buf, sizeof(buf));
-        if (size == 0) {
-            throw std::runtime_error("Connection closed");
-        }
-        const char* p = buf;
-        while (size != 0) {
-            auto n = BIO_write(Rbio, p, size);
-            if (n <= 0) {
-                throw std::runtime_error("Cannot write Rbio");
+
+        if (SSL_get_error(Ssl, n) == SSL_ERROR_WANT_READ) {
+            auto size = co_await Socket.ReadSome(buf, sizeof(buf));
+            if (size == 0) {
+                throw std::runtime_error("Connection closed");
             }
-            size -= n;
-            p += n;
+            const char* p = buf;
+            while (size != 0) {
+                auto n = BIO_write(Rbio, p, size);
+                if (n <= 0) {
+                    throw std::runtime_error("Cannot write Rbio");
+                }
+                size -= n;
+                p += n;
+            }
         }
 
         co_return;
@@ -169,9 +177,15 @@ private:
             }
         }
 
+        LogState();
+
+        co_await DoIO();
+
         if (Ctx->LogFunc) {
             Ctx->LogFunc("SSL Handshake established\n");
         }
+
+        co_return;
     }
 
     void LogState() {

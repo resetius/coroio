@@ -31,6 +31,8 @@ public:
     TSocketOps(int fd, TPollerBase& poller);
     TSocketOps() = default;
 
+    TPollerBase* Poller() { return Poller_; }
+
 protected:
     int Create();
     int Setup(int s);
