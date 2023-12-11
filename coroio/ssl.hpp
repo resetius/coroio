@@ -88,7 +88,6 @@ public:
         auto underlying = std::move(co_await Socket.Accept());
         auto socket = TSslSocket(std::move(underlying), *Ctx);
         SSL_set_accept_state(socket.Ssl);
-        socket.StartHandshake();
         co_return std::move(socket);
     }
 
@@ -202,6 +201,11 @@ private:
             Ctx->LogFunc("SSL Handshake established\n");
         }
 
+        for (auto w : Waiters) {
+            w.resume();
+        }
+        Waiters.clear();
+
         co_return;
     }
 
@@ -211,11 +215,15 @@ private:
     }
 
     TVoidSuspendedTask RunHandshake() {
+        // TODO: catch exception
         co_await DoHandshake();
         co_return;
     }
 
     auto WaitHandshake() {
+        if (!SSL_is_init_finished(Ssl) && !Handshake) {
+            StartHandshake();
+        }
         struct TAwaitable {
             bool await_ready() {
                 return !handshake || handshake.done();
@@ -225,12 +233,7 @@ private:
                 waiters->push_back(h);
             }
 
-            void await_resume() {
-                for (auto w : *waiters) {
-                    w.resume();
-                }
-                waiters->clear();
-            }
+            void await_resume() { }
 
             std::coroutine_handle<> handshake;
             std::vector<std::coroutine_handle<>>* waiters;
