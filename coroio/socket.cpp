@@ -83,6 +83,11 @@ TSocket::TSocket(TSocket&& other)
 
 TSocket::~TSocket()
 {
+    Close();
+}
+
+void TSocket::Close()
+{
     if (Fd_ >= 0) {
         close(Fd_);
         Poller_->RemoveEvent(Fd_);
@@ -91,6 +96,7 @@ TSocket::~TSocket()
 
 TSocket& TSocket::operator=(TSocket&& other) {
     if (this != &other) {
+        Close();
         Poller_ = other.Poller_;
         Addr_ = other.Addr_;
         Fd_ = other.Fd_;

@@ -190,6 +190,8 @@ public:
 
     TSocket& operator=(TSocket&& other);
 
+    void Close();
+
     auto Connect(TTime deadline = TTime::max()) {
         struct TAwaitable {
             bool await_ready() {
