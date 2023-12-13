@@ -625,6 +625,17 @@ void test_zero_copy_line_splitter(void**) {
     }
 }
 
+void test_self_id(void**) {
+    void* id;
+    NNet::TVoidSuspendedTask h = [](void** id) -> NNet::TVoidSuspendedTask {
+        *id = co_await SelfId();
+        co_return;
+    }(&id);
+
+    assert_ptr_equal(id, h.address());
+    h.destroy();
+}
+
 template<typename TPoller>
 void test_read_write_full_ssl(void**) {
     using TLoop = TLoop<TPoller>;
@@ -845,6 +856,7 @@ int main() {
         cmocka_unit_test(test_timespec),
         cmocka_unit_test(test_line_splitter),
         cmocka_unit_test(test_zero_copy_line_splitter),
+        cmocka_unit_test(test_self_id),
         my_unit_poller(test_listen),
         my_unit_poller(test_timeout),
         my_unit_poller(test_accept),
