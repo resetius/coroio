@@ -62,12 +62,6 @@ GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds maxDuration
     }
 }
 
-inline timeval GetTimeval(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
-{
-    auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::microseconds>(now, deadline, maxDuration);
-    return {p1.count(), static_cast<int>(p2.count())};
-}
-
 inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
 {
     auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::nanoseconds>(now, deadline, maxDuration);
