@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include <variant>
+
 #include "poller.hpp"
 
 namespace NNet {

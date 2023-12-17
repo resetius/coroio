@@ -141,8 +141,8 @@ TSocket& TSocket::operator=(TSocket&& other) {
 }
 
 void TSocket::Bind() {
-    auto addr = Addr_.Addr();
-    if (bind(Fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    auto [addr, len] = Addr_.RawAddr();
+    if (bind(Fd_, addr, len) < 0) {
         throw std::system_error(errno, std::generic_category(), "bind");
     }
 }
