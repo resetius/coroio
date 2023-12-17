@@ -66,12 +66,29 @@ void test_timespec(void**) {
 
 void test_addr(void**) {
     TAddress address("127.0.0.1", 8888);
-    auto low = address.Addr();
+    auto low = std::get<sockaddr_in>(address.Addr());
     assert_true(low.sin_port == ntohs(8888));
     assert_true(low.sin_family == AF_INET);
 
     unsigned int value = ntohl((127<<24)|(0<<16)|(0<<8)|1);
     assert_true(memcmp(&low.sin_addr, &value, 4) == 0);
+}
+
+void test_addr6(void**) {
+    TAddress address("::1", 8888);
+    auto low = std::get<sockaddr_in6>(address.Addr());
+    assert_true(low.sin6_port == ntohs(8888));
+    assert_true(low.sin6_family == AF_INET6);
+}
+
+void test_bad_addr(void**) {
+    int flag = 0;
+    try {
+        TAddress address("wtf", 8888);
+    } catch (const std::exception& ex) {
+        flag = 1;
+    }
+    assert_int_equal(flag, 1);
 }
 
 template<typename TPoller>
@@ -111,9 +128,9 @@ void test_accept(void**) {
     }
     h1.destroy(); h2.destroy();
 
-    in_addr addr1 = clientSocket.Addr().Addr().sin_addr;
-    in_addr addr2 = socket.Addr().Addr().sin_addr;
-    assert_true(memcmp(&addr1, &addr2, 4)==0);
+    in_addr addr1 = std::get<sockaddr_in>(clientSocket.Addr().Addr()).sin_addr;
+    in_addr addr2 = std::get<sockaddr_in>(socket.Addr().Addr()).sin_addr;
+    assert_memory_equal(&addr1, &addr2, 4);
 }
 
 template<typename TPoller>
@@ -834,6 +851,8 @@ int main() {
     signal(SIGPIPE, SIG_IGN);
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
+        cmocka_unit_test(test_addr6),
+        cmocka_unit_test(test_bad_addr),
         cmocka_unit_test(test_timespec),
         cmocka_unit_test(test_line_splitter),
         cmocka_unit_test(test_zero_copy_line_splitter),

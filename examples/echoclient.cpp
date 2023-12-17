@@ -53,13 +53,15 @@ void run(bool debug, TAddress address)
 
 int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
-    std::string addr;
+    std::string addr = "127.0.0.1";
     int port = 0;
     std::string method = "select";
     bool debug = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i < argc-1) {
             port = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--addr") && i < argc-1) {
+            addr = argv[++i];
         } else if (!strcmp(argv[i], "--method") && i < argc-1) {
             method = argv[++i];
         } else if (!strcmp(argv[i], "--debug")) {

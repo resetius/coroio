@@ -73,15 +73,15 @@ void TUring::Write(int fd, const void* buf, int size, std::coroutine_handle<> ha
     io_uring_sqe_set_data(sqe, handle.address());
 }
 
-void TUring::Accept(int fd, struct sockaddr_in* addr, socklen_t* len, std::coroutine_handle<> handle) {
+void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle) {
     struct io_uring_sqe *sqe = GetSqe();
-    io_uring_prep_accept(sqe, fd, reinterpret_cast<struct sockaddr*>(addr), len, 0);
+    io_uring_prep_accept(sqe, fd, addr, len, 0);
     io_uring_sqe_set_data(sqe, handle.address());
 }
 
-void TUring::Connect(int fd, struct sockaddr_in* addr, socklen_t len, std::coroutine_handle<> handle) {
+void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle) {
     struct io_uring_sqe *sqe = GetSqe();
-    io_uring_prep_connect(sqe, fd, reinterpret_cast<struct sockaddr*>(addr), len);
+    io_uring_prep_connect(sqe, fd, addr, len);
     io_uring_sqe_set_data(sqe, handle.address());
 }
 

@@ -4,16 +4,51 @@ namespace NNet {
 
 TAddress::TAddress(const std::string& addr, int port)
 {
-    inet_pton(AF_INET, addr.c_str(), &(Addr_.sin_addr));
-    Addr_.sin_port = htons(port);
-    Addr_.sin_family = AF_INET;
+    sockaddr_in addr4 = {};
+    sockaddr_in6 addr6 = {};
+    if (inet_pton(AF_INET, addr.c_str(), &(addr4.sin_addr)) == 1) {
+        addr4.sin_port = htons(port);
+        addr4.sin_family = AF_INET;
+        Addr_ = std::move(addr4);
+    } else if (inet_pton(AF_INET6, addr.c_str(), &(addr6.sin6_addr)) == 1) {
+        addr6.sin6_port = htons(port);
+        addr6.sin6_family = AF_INET6;
+        Addr_ = std::move(addr6);
+    } else {
+        throw std::runtime_error("Cannot parse address: '" + addr + "'");
+    }
 }
 
 TAddress::TAddress(sockaddr_in addr)
     : Addr_(addr)
 { }
 
-sockaddr_in TAddress::Addr() const { return Addr_; }
+TAddress::TAddress(sockaddr_in6 addr)
+    : Addr_(addr)
+{ }
+
+TAddress::TAddress(sockaddr* addr, socklen_t len) {
+    if (len == sizeof(sockaddr_in)) {
+        sockaddr_in addr4; memcpy(&addr4, addr, sizeof(addr4));
+        Addr_ = addr4;
+    } else if (len == sizeof(sockaddr_in6)) {
+        sockaddr_in6 addr6; memcpy(&addr6, addr, sizeof(addr6));
+        Addr_ = addr6;
+    } else {
+        throw std::runtime_error("Bad address size: " + std::to_string(len));
+    }
+}
+
+const std::variant<sockaddr_in, sockaddr_in6>& TAddress::Addr() const { return Addr_; }
+std::pair<const sockaddr*, int> TAddress::RawAddr() const {
+    if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
+        return {reinterpret_cast<const sockaddr*>(val), sizeof(sockaddr_in)};
+    } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
+        return {reinterpret_cast<const sockaddr*>(val), sizeof(sockaddr_in6)};
+    } else {
+        throw std::runtime_error("Empty variant");
+    }
+}
 
 bool TAddress::operator == (const TAddress& other) const {
     return memcmp(&Addr_, &other.Addr_, sizeof(Addr_)) == 0;

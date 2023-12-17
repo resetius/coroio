@@ -16,13 +16,16 @@ class TAddress {
 public:
     TAddress(const std::string& addr, int port);
     TAddress(sockaddr_in addr);
+    TAddress(sockaddr_in6 addr);
+    TAddress(sockaddr* addr, socklen_t len);
     TAddress() = default;
 
-    sockaddr_in Addr() const;
+    const std::variant<sockaddr_in, sockaddr_in6>& Addr() const;
+    std::pair<const sockaddr*, int> RawAddr() const;
     bool operator == (const TAddress& other) const;
 
 private:
-    sockaddr_in Addr_ = {};
+    std::variant<sockaddr_in, sockaddr_in6> Addr_ = {};
 };
 
 class TSocketOps {
@@ -195,7 +198,7 @@ public:
     auto Connect(TTime deadline = TTime::max()) {
         struct TAwaitable {
             bool await_ready() {
-                int ret = connect(fd, (struct sockaddr*) &addr, sizeof(addr));
+                int ret = connect(fd, addr.first, addr.second);
                 if (ret < 0 && !(errno == EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
                     throw std::system_error(errno, std::generic_category(), "connect");
                 }
@@ -217,10 +220,10 @@ public:
 
             TPollerBase* poller;
             int fd;
-            sockaddr_in addr;
+            std::pair<const sockaddr*, int> addr;
             TTime deadline;
         };
-        return TAwaitable{Poller_, Fd_, Addr_.Addr(), deadline};
+        return TAwaitable{Poller_, Fd_, Addr_.RawAddr(), deadline};
     }
 
     auto Accept() {
@@ -230,15 +233,15 @@ public:
                 poller->AddRead(fd, h);
             }
             TSocket await_resume() {
-                sockaddr_in clientaddr;
-                socklen_t len = sizeof(clientaddr);
+                char clientaddr[sizeof(sockaddr_in6)];
+                socklen_t len = sizeof(sockaddr_in6);
 
-                int clientfd = accept(fd, (sockaddr*)&clientaddr, &len);
+                int clientfd = accept(fd, reinterpret_cast<sockaddr*>(&clientaddr[0]), &len);
                 if (clientfd < 0) {
                     throw std::system_error(errno, std::generic_category(), "accept");
                 }
 
-                return TSocket{clientaddr, clientfd, *poller};
+                return TSocket{TAddress{reinterpret_cast<sockaddr*>(&clientaddr[0]), len}, clientfd, *poller};
             }
 
             TPollerBase* poller;

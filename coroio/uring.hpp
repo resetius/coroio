@@ -32,8 +32,8 @@ public:
 
     void Read(int fd, void* buf, int size, std::coroutine_handle<> handle);
     void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle);
-    void Accept(int fd, struct sockaddr_in* addr, socklen_t* len, std::coroutine_handle<> handle);
-    void Connect(int fd, struct sockaddr_in* addr, socklen_t len, std::coroutine_handle<> handle);
+    void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle);
+    void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
     void Cancel(int fd);
     void Cancel(std::coroutine_handle<> h);
 
@@ -97,7 +97,7 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Accept(fd, &addr, &len, h);
+                poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, h);
             }
 
             TUringSocket await_resume() {
@@ -106,14 +106,14 @@ public:
                     throw std::system_error(-clientfd, std::generic_category(), "accept");
                 }
 
-                return TUringSocket{addr, clientfd, *poller};
+                return TUringSocket{TAddress{reinterpret_cast<sockaddr*>(&addr[0]), len}, clientfd, *poller};
             }
 
             TUring* poller;
             int fd;
 
-            sockaddr_in addr;
-            socklen_t len = sizeof(addr);
+            char addr[sizeof(sockaddr_in6)];
+            socklen_t len = sizeof(sockaddr_in6);
         };
 
         return TAwaitable{Uring_, Fd_};
@@ -124,7 +124,7 @@ public:
             bool await_ready() const { return false; }
 
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Connect(fd, &addr, sizeof(addr), h);
+                poller->Connect(fd, addr.first, addr.second, h);
                 if (deadline != TTime::max()) {
                     poller->AddTimer(fd, deadline, h);
                 }
@@ -143,10 +143,10 @@ public:
 
             TUring* poller;
             int fd;
-            sockaddr_in addr;
+            std::pair<const sockaddr*, int> addr;
             TTime deadline;
         };
-        return TAwaitable{Uring_, Fd_, Addr().Addr(), deadline};
+        return TAwaitable{Uring_, Fd_, Addr().RawAddr(), deadline};
     }
 
     auto ReadSome(void* buf, size_t size) {
