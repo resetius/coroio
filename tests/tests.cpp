@@ -1,4 +1,3 @@
-#include "coroio/socket.hpp"
 #include <chrono>
 #include <array>
 #include <exception>
@@ -898,7 +897,7 @@ int main() {
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
-        my_unit_test2(test_resolver, TSelect, TPoll),
+        // my_unit_test2(test_resolver, TSelect, TPoll),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),

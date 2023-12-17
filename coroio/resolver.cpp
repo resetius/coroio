@@ -135,7 +135,7 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
     char buf[4096];
     while (true) {
         auto size = co_await Socket.ReadSome(buf, sizeof(buf));
-        assert(size > sizeof(TDnsHeader));
+        assert(size >= sizeof(TDnsHeader));
 
         TDnsHeader* header = (TDnsHeader*)(&buf[0]);
         assert ((ntohs (header->flags) & 0xf) == 0);

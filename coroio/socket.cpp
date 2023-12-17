@@ -1,5 +1,4 @@
 #include "socket.hpp"
-#include <sys/socket.h>
 
 namespace NNet {
 
