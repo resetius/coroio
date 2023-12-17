@@ -23,6 +23,7 @@ add_library(coroio
   coroio/epoll.cpp
   coroio/uring.cpp
   coroio/kqueue.cpp
+  coroio/resolver.cpp
   coroio/ssl.cpp
   )
 
