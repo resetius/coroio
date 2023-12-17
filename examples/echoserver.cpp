@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     if (port == 0) { port = 8888; }
     if (buffer_size == 0) { buffer_size = 128; }
 
-    TAddress address{"0.0.0.0", port};
+    TAddress address{"::", port};
     std::cerr << "Method: " << method << "\n";
 
     if (method == "select") {

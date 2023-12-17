@@ -25,6 +25,7 @@ public:
     const std::variant<sockaddr_in, sockaddr_in6>& Addr() const;
     std::pair<const sockaddr*, int> RawAddr() const;
     bool operator == (const TAddress& other) const;
+    int Domain() const;
 
 private:
     std::variant<sockaddr_in, sockaddr_in6> Addr_ = {};
@@ -32,14 +33,14 @@ private:
 
 class TSocketOps {
 public:
-    TSocketOps(TPollerBase& poller);
+    TSocketOps(TPollerBase& poller, int domain = 0);
     TSocketOps(int fd, TPollerBase& poller);
     TSocketOps() = default;
 
     TPollerBase* Poller() { return Poller_; }
 
 protected:
-    int Create();
+    int Create(int domain);
     int Setup(int s);
 
     TPollerBase* Poller_ = nullptr;
@@ -49,7 +50,7 @@ protected:
 template<typename TSockOps>
 class TSocketBase: public TSocketOps {
 public:
-    TSocketBase(TPollerBase& poller): TSocketOps(poller)
+    TSocketBase(TPollerBase& poller, int domain = 0): TSocketOps(poller, domain)
     { }
 
     TSocketBase(int fd, TPollerBase& poller): TSocketOps(fd, poller)

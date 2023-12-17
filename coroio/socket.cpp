@@ -39,6 +39,16 @@ TAddress::TAddress(sockaddr* addr, socklen_t len) {
     }
 }
 
+int TAddress::Domain() const {
+    if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
+        return PF_INET;
+    } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
+        return PF_INET6;
+    } else {
+        return 0;
+    }
+}
+
 const std::variant<sockaddr_in, sockaddr_in6>& TAddress::Addr() const { return Addr_; }
 std::pair<const sockaddr*, int> TAddress::RawAddr() const {
     if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
@@ -54,9 +64,9 @@ bool TAddress::operator == (const TAddress& other) const {
     return memcmp(&Addr_, &other.Addr_, sizeof(Addr_)) == 0;
 }
 
-TSocketOps::TSocketOps(TPollerBase& poller)
+TSocketOps::TSocketOps(TPollerBase& poller, int domain)
     : Poller_(&poller)
-    , Fd_(Create())
+    , Fd_(Create(domain))
 { }
 
 TSocketOps::TSocketOps(int fd, TPollerBase& poller)
@@ -64,8 +74,8 @@ TSocketOps::TSocketOps(int fd, TPollerBase& poller)
     , Fd_(Setup(fd))
 { }
 
-int TSocketOps::Create() {
-    auto s = socket(PF_INET, SOCK_STREAM, 0);
+int TSocketOps::Create(int domain) {
+    auto s = socket(domain, SOCK_STREAM, 0);
     if (s < 0) {
         throw std::system_error(errno, std::generic_category(), "socket");
     }
@@ -97,7 +107,7 @@ int TSocketOps::Setup(int s) {
 }
 
 TSocket::TSocket(TAddress&& addr, TPollerBase& poller)
-    : TSocketBase(poller)
+    : TSocketBase(poller, addr.Domain())
     , Addr_(std::move(addr))
 { }
 
@@ -107,7 +117,7 @@ TSocket::TSocket(const TAddress& addr, int fd, TPollerBase& poller)
 { }
 
 TSocket::TSocket(const TAddress& addr, TPollerBase& poller)
-    : TSocketBase(poller)
+    : TSocketBase(poller, addr.Domain())
     , Addr_(addr)
 { }
 
