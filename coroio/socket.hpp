@@ -27,6 +27,8 @@ public:
     bool operator == (const TAddress& other) const;
     int Domain() const;
 
+    std::string ToString() const;
+
 private:
     std::variant<sockaddr_in, sockaddr_in6> Addr_ = {};
 };

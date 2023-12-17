@@ -47,7 +47,7 @@ inline auto SelfId() {
         }
 
         auto await_resume() noexcept {
-            return H.address();
+            return H;
         }
 
         std::coroutine_handle<> H;

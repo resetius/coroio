@@ -1,4 +1,5 @@
 #include "socket.hpp"
+#include <sys/socket.h>
 
 namespace NNet {
 
@@ -62,6 +63,23 @@ std::pair<const sockaddr*, int> TAddress::RawAddr() const {
 
 bool TAddress::operator == (const TAddress& other) const {
     return memcmp(&Addr_, &other.Addr_, sizeof(Addr_)) == 0;
+}
+
+std::string TAddress::ToString() const {
+    char buf[1024];
+    if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
+        auto* r = inet_ntop(AF_INET, &val->sin_addr, buf, sizeof(buf));
+        if (r) {
+            return std::string(r) + ":" + std::to_string(val->sin_port);
+        }
+    } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
+        auto* r = inet_ntop(AF_INET6, &val->sin6_addr, buf, sizeof(buf));
+        if (r) {
+            return std::string(r) + ":" + std::to_string(val->sin6_port);
+        }
+    }
+
+    return "";
 }
 
 TSocketOps::TSocketOps(TPollerBase& poller, int domain, int type)
