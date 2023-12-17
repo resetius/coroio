@@ -1,8 +1,9 @@
 #include "resolver.hpp"
 #include "socket.hpp"
 #include "promises.hpp"
+#ifdef __linux__
 #include "uring.hpp"
-
+#endif
 #include <string_view>
 #include <utility>
 
@@ -184,6 +185,8 @@ TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string&
 }
 
 template class TResolver<TPollerBase>;
+#ifdef __linux__
 template class TResolver<TUring>;
+#endif
 
 } // namespace NNet
