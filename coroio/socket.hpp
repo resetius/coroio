@@ -33,14 +33,14 @@ private:
 
 class TSocketOps {
 public:
-    TSocketOps(TPollerBase& poller, int domain = 0);
+    TSocketOps(TPollerBase& poller, int domain, int type);
     TSocketOps(int fd, TPollerBase& poller);
     TSocketOps() = default;
 
     TPollerBase* Poller() { return Poller_; }
 
 protected:
-    int Create(int domain);
+    int Create(int domain, int type);
     int Setup(int s);
 
     TPollerBase* Poller_ = nullptr;
@@ -50,7 +50,7 @@ protected:
 template<typename TSockOps>
 class TSocketBase: public TSocketOps {
 public:
-    TSocketBase(TPollerBase& poller, int domain = 0): TSocketOps(poller, domain)
+    TSocketBase(TPollerBase& poller, int domain, int type): TSocketOps(poller, domain, type)
     { }
 
     TSocketBase(int fd, TPollerBase& poller): TSocketOps(fd, poller)
@@ -184,9 +184,9 @@ class TSocket: public TSocketBase<TSockOps> {
 public:
     using TPoller = TPollerBase;
 
-    TSocket(TAddress&& addr, TPollerBase& poller);
+    TSocket(TAddress&& addr, TPollerBase& poller, int type = SOCK_STREAM);
     TSocket(const TAddress& addr, int fd, TPollerBase& poller);
-    TSocket(const TAddress& addr, TPollerBase& poller);
+    TSocket(const TAddress& addr, TPollerBase& poller, int type = SOCK_STREAM);
     TSocket(TSocket&& other);
     ~TSocket();
 

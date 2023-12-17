@@ -64,9 +64,9 @@ bool TAddress::operator == (const TAddress& other) const {
     return memcmp(&Addr_, &other.Addr_, sizeof(Addr_)) == 0;
 }
 
-TSocketOps::TSocketOps(TPollerBase& poller, int domain)
+TSocketOps::TSocketOps(TPollerBase& poller, int domain, int type)
     : Poller_(&poller)
-    , Fd_(Create(domain))
+    , Fd_(Create(domain, type))
 { }
 
 TSocketOps::TSocketOps(int fd, TPollerBase& poller)
@@ -74,8 +74,8 @@ TSocketOps::TSocketOps(int fd, TPollerBase& poller)
     , Fd_(Setup(fd))
 { }
 
-int TSocketOps::Create(int domain) {
-    auto s = socket(domain, SOCK_STREAM, 0);
+int TSocketOps::Create(int domain, int type) {
+    auto s = socket(domain, type, 0);
     if (s < 0) {
         throw std::system_error(errno, std::generic_category(), "socket");
     }
@@ -106,8 +106,8 @@ int TSocketOps::Setup(int s) {
     return s;
 }
 
-TSocket::TSocket(TAddress&& addr, TPollerBase& poller)
-    : TSocketBase(poller, addr.Domain())
+TSocket::TSocket(TAddress&& addr, TPollerBase& poller, int type)
+    : TSocketBase(poller, addr.Domain(), type)
     , Addr_(std::move(addr))
 { }
 
@@ -116,8 +116,8 @@ TSocket::TSocket(const TAddress& addr, int fd, TPollerBase& poller)
     , Addr_(addr)
 { }
 
-TSocket::TSocket(const TAddress& addr, TPollerBase& poller)
-    : TSocketBase(poller, addr.Domain())
+TSocket::TSocket(const TAddress& addr, TPollerBase& poller, int type)
+    : TSocketBase(poller, addr.Domain(), type)
     , Addr_(addr)
 { }
 
