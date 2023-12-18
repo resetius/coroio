@@ -115,7 +115,7 @@ void TResolver<TPoller>::CreatePacket(const std::string& name, char* packet, int
 template<typename TPoller>
 TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
     co_await Socket.Connect();
-    char buf[4096];
+    char buf[512];
     while (true) {
         while (AddResolveQueue.empty()) {
             SenderSuspended = co_await SelfId();
@@ -124,6 +124,7 @@ TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
         SenderSuspended = {};
         auto hostname = AddResolveQueue.front(); AddResolveQueue.pop();
         int len;
+        memset(buf, 0, sizeof(buf));
         CreatePacket(hostname, buf, &len);
         auto size = co_await Socket.WriteSome(buf, len);
         assert(size == len);
@@ -133,7 +134,7 @@ TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
 
 template<typename TPoller>
 TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
-    char buf[4096];
+    char buf[512];
     while (true) {
         auto size = co_await Socket.ReadSome(buf, sizeof(buf));
         assert(size >= sizeof(TDnsHeader));
@@ -144,7 +145,7 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
         uint8_t total = 0;
         uint8_t* fieldLength = startOfName;
 
-        // TODO: Check size
+        // TODO: Check size and truncate flag
         while (*fieldLength != 0)
         {
             /* Restore the dot in the name and advance to next length */
@@ -164,7 +165,9 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
         Addresses[name] = std::move(addresses);
         auto maybeWaiting = WaitingAddrs.find(name);
         if (maybeWaiting != WaitingAddrs.end()) {
-            for (auto h : maybeWaiting->second) {
+            auto handles = std::move(maybeWaiting->second);
+            WaitingAddrs.erase(maybeWaiting);
+            for (auto h : handles) {
                 h.resume();
             }
         }
