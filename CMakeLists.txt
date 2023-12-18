@@ -52,6 +52,7 @@ target(echoserver examples/echoserver.cpp)
 target(echoclient examples/echoclient.cpp)
 target(sslechoclient examples/sslechoclient.cpp)
 target(sslechoserver examples/sslechoserver.cpp)
+target(resolver examples/resolver.cpp)
 target(bench examples/bench.cpp)
 
 ut(tests tests/tests.cpp)
