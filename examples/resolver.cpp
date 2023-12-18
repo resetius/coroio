@@ -15,7 +15,7 @@ TVoidTask resolve(TResolver& resolver, std::string name, int* inflight) {
 }
 
 template<typename TPoller>
-TVoidSuspendedTask run(TPoller& poller) {
+TVoidSuspendedTask resolve(TPoller& poller) {
     TFileHandle input{0, poller}; // stdin
     TLineReader lineReader(input, 4096);
     TResolver<TPollerBase> resolver(TAddress{"8.8.8.8", 53}, poller);
@@ -33,11 +33,46 @@ TVoidSuspendedTask run(TPoller& poller) {
     co_return;
 }
 
-int main(int argc, char** argv) {
-    TLoop<TDefaultPoller> loop;
-    auto h = run(loop.Poller());
+template<typename TPoller>
+void run() {
+    TLoop<TPoller> loop;
+    auto h = resolve(loop.Poller());
     while (!h.done()) {
         loop.Step();
     }
+    h.destroy();
+}
+
+int main(int argc, char** argv) {
+    std::string method = "poll";
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--method") && i < argc-1) {
+            method = argv[++i];
+        }
+    }
+
+    if (method == "select") {
+        run<TSelect>();
+    } else if (method == "poll") {
+        run<TPoll>();
+    }
+#ifdef __linux__
+    else if (method == "epoll") {
+        run<TEPoll>();
+    }
+    else if (method == "uring") {
+        run<TUring>();
+    }
+#endif
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    else if (method == "kqueue") {
+        run<TKqueue>();
+    }
+#endif
+    else {
+        std::cerr << "Unknown method\n";
+    }
+
     return 0;
 }
+
