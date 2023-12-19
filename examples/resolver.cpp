@@ -18,7 +18,7 @@ template<typename TPoller>
 TVoidSuspendedTask resolve(TPoller& poller) {
     TFileHandle input{0, poller}; // stdin
     TLineReader lineReader(input, 4096);
-    TResolver<TPollerBase> resolver(TAddress{"8.8.8.8", 53}, poller);
+    TResolver<TPollerBase> resolver(poller);
     int inflight = 0;
     while (auto line = co_await lineReader.Read()) {
         inflight++;
