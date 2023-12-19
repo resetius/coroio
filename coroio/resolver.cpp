@@ -207,6 +207,7 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
 
             TDnsRecordA* record = (TDnsRecordA*)p;
             addresses.emplace_back(TAddress{inet_ntoa (record->addr), 0});
+            p += sizeof(TDnsRecordA);
         }
 
         std::string name((char*)startOfName+1);
