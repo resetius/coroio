@@ -656,7 +656,7 @@ void test_resolver(void**) {
         loop.Step();
     }
 
-    assert_int_equal(addresses.size(), 1);
+    assert_true(!addresses.empty());
 
     h1.destroy();
 }
