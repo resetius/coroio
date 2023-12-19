@@ -30,7 +30,6 @@ struct TDnsQuestion {
 } __attribute__((__packed__));
 
 struct TDnsRecordA {
-    uint16_t compression;
     uint16_t type;
     uint16_t clazz;
     uint32_t ttl;
@@ -193,11 +192,21 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
             fieldLength = startOfName + total;
         }
 
-        TDnsRecordA* records = (TDnsRecordA*) (fieldLength + 5);
         std::vector<TAddress> addresses;
+        uint8_t* p = fieldLength + 5;
         for (int i = 0; i < ntohs (header->ancount); i++)
         {
-            addresses.emplace_back(TAddress{inet_ntoa (records[i].addr), 0});
+            uint16_t* compression = (uint16_t*)p; p += 2;
+            if (! ((ntohs(*compression) & 0xC000) == 0xC000)) {
+                // skip full name
+                while (*p) {
+                    p++;
+                }
+                p++;
+            }
+
+            TDnsRecordA* record = (TDnsRecordA*)p;
+            addresses.emplace_back(TAddress{inet_ntoa (record->addr), 0});
         }
 
         std::string name((char*)startOfName+1);
