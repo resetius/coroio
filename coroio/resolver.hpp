@@ -8,9 +8,22 @@
 
 namespace NNet {
 
+class TResolvConf {
+public:
+    TResolvConf(const std::string& fn = "/etc/resolv.conf");
+    TResolvConf(std::istream& input);
+
+    std::vector<TAddress> Nameservers;
+
+private:
+    void Load(std::istream& input);
+};
+
 template<typename TPoller>
 class TResolver {
 public:
+    TResolver(TPoller& poller);
+    TResolver(const TResolvConf& conf, TPoller& poller);
     TResolver(TAddress dnsAddr, TPoller& poller);
     ~TResolver();
 

@@ -6,6 +6,7 @@
 #endif
 #include <string_view>
 #include <utility>
+#include <fstream>
 
 namespace NNet {
 
@@ -38,6 +39,44 @@ struct TDnsRecordA {
 } __attribute__((packed));
 
 } // namespace
+
+TResolvConf::TResolvConf(const std::string& fn)
+{
+    std::ifstream input(fn);
+    Load(input);
+}
+
+TResolvConf::TResolvConf(std::istream& input) {
+    Load(input);
+}
+
+void TResolvConf::Load(std::istream& input) {
+    for (std::string line; getline(input, line);) {
+        std::vector<std::string> tokens;
+        const char* sep = " ";
+        for (char* tok = strtok(line.data(), sep); tok; tok = strtok(nullptr, sep)) {
+            tokens.push_back(tok);
+        }
+        if (tokens.size() == 2 && tokens[0] == "nameserver") {
+            auto addr = TAddress{tokens[1], 53};
+            Nameservers.emplace_back(std::move(addr));
+        }
+    }
+
+    if (Nameservers.empty()) {
+        Nameservers.emplace_back(TAddress{"127.0.0.1", 53});
+    }
+}
+
+template<typename TPoller>
+TResolver<TPoller>::TResolver(TPoller& poller)
+    : TResolver(TResolvConf(), poller)
+{ }
+
+template<typename TPoller>
+TResolver<TPoller>::TResolver(const TResolvConf& conf, TPoller& poller)
+    : TResolver(conf.Nameservers[0], poller)
+{ }
 
 template<typename TPoller>
 TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller)

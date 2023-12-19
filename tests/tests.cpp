@@ -1,6 +1,8 @@
+#include "coroio/resolver.hpp"
 #include <chrono>
 #include <array>
 #include <exception>
+#include <sstream>
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
@@ -635,13 +637,29 @@ void test_self_id(void**) {
     h.destroy();
 }
 
+void test_resolv_nameservers(void**) {
+    std::string data = R"__(nameserver 127.0.0.1
+nameserver 192.168.0.2
+nameserver 127.0.0.2
+    )__";
+    std::istringstream iss(data);
+    TResolvConf conf(iss);
+
+    assert_int_equal(conf.Nameservers.size(), 3);
+
+    data = "";
+    iss = std::istringstream(data);
+    conf = TResolvConf(iss);
+    assert_int_equal(conf.Nameservers.size(), 1);
+}
+
 template<typename TPoller>
 void test_resolver(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
     TLoop loop;
-    TResolver<TPollerBase> resolver({"8.8.8.8", 53}, loop.Poller());
+    TResolver<TPollerBase> resolver(loop.Poller());
 
     std::vector<TAddress> addresses;
     NNet::TVoidSuspendedTask h1 = [](auto& resolver, std::vector<TAddress>& addresses) -> NNet::TVoidSuspendedTask {
@@ -883,6 +901,7 @@ int main() {
         cmocka_unit_test(test_line_splitter),
         cmocka_unit_test(test_zero_copy_line_splitter),
         cmocka_unit_test(test_self_id),
+        cmocka_unit_test(test_resolv_nameservers),
         my_unit_poller(test_listen),
         my_unit_poller(test_timeout),
         my_unit_poller(test_accept),
