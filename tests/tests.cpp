@@ -1,4 +1,3 @@
-#include "coroio/resolver.hpp"
 #include <chrono>
 #include <array>
 #include <exception>
