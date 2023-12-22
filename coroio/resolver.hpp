@@ -47,9 +47,10 @@ private:
     struct TResolveResult {
         std::vector<TAddress> Addresses;
         std::exception_ptr Exception;
+        int Retries = 0;
     };
 
-    std::unordered_map<std::string, TResolveResult> Addresses;
+    std::unordered_map<std::string, TResolveResult> Results;
     std::unordered_map<std::string, std::vector<std::coroutine_handle<>>> WaitingAddrs;
 
     uint16_t Xid = 0;

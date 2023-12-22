@@ -225,7 +225,7 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
             exception = std::current_exception();
         }
 
-        Addresses[name] = TResolveResult {
+        Results[name] = TResolveResult {
             .Addresses = std::move(addresses),
             .Exception = exception
         };
@@ -251,11 +251,14 @@ void TResolver<TPoller>::ResumeSender() {
 template<typename TPoller>
 TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname) {
     auto handle = co_await SelfId();
+    if (!WaitingAddrs.contains(hostname)) {
+        Results[hostname].Retries = 5;
+        AddResolveQueue.emplace(hostname);
+    }
     WaitingAddrs[hostname].emplace_back(handle);
-    AddResolveQueue.emplace(hostname);
     ResumeSender();
     co_await std::suspend_always{};
-    auto& result = Addresses[hostname];
+    auto& result = Results[hostname];
     if (result.Exception) {
         std::rethrow_exception(result.Exception);
     }
