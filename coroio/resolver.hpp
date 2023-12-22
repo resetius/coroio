@@ -52,8 +52,9 @@ private:
 
     std::unordered_map<std::string, TResolveResult> Results;
     std::unordered_map<std::string, std::vector<std::coroutine_handle<>>> WaitingAddrs;
+    std::unordered_map<uint64_t, std::string> Inflight;
 
-    uint16_t Xid = 0;
+    uint16_t Xid = 1;
 };
 
 } // namespace NNet

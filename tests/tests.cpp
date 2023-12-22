@@ -679,6 +679,32 @@ void test_resolver(void**) {
 }
 
 template<typename TPoller>
+void test_resolve_bad_name(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+
+    TLoop loop;
+    TResolver<TPollerBase> resolver(loop.Poller());
+
+    std::exception_ptr ex;
+    NNet::TVoidSuspendedTask h1 = [](auto& resolver, auto& ex) -> NNet::TVoidSuspendedTask {
+        try {
+            co_await resolver.Resolve("bad.host.name.wtf123");
+        } catch (const std::exception& ) {
+            ex = std::current_exception();
+        }
+    }(resolver, ex);
+
+    while (!(h1.done())) {
+        loop.Step();
+    }
+
+    h1.destroy();
+
+    assert_true(!!ex);
+}
+
+template<typename TPoller>
 void test_read_write_full_ssl(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -916,6 +942,7 @@ int main() {
         my_unit_poller(test_read_write_lines),
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),
+        my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),

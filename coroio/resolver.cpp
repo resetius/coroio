@@ -37,10 +37,10 @@ struct TDnsRecordA {
     in_addr addr;
 } __attribute__((packed));
 
-void CreatePacket(const std::string& name, char* packet, int* size, uint16_t* xid)
+void CreatePacket(const std::string& name, char* packet, int* size, uint16_t xid)
 {
     TDnsHeader header = {
-        .xid = htons((*xid) ++),
+        .xid = htons(xid),
         .flags = htons(0x0100), /* Q=0, RD=1 */
         .qdcount = htons(1) /* Sending 1 question */
     };
@@ -92,10 +92,12 @@ void CreatePacket(const std::string& name, char* packet, int* size, uint16_t* xi
     memcpy(p, &question.dnsclass, sizeof (question.dnsclass));
 }
 
-void ParsePacket(std::vector<TAddress>& addresses, std::string& name, char* buf, ssize_t size) {
-    if (size < sizeof(TDnsHeader)) { throw std::runtime_error("Not enough data"); }
+void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, std::string& name, char* buf, ssize_t size) {
     TDnsHeader* header = (TDnsHeader*)(&buf[0]);
-    assert ((ntohs (header->flags) & 0xf) == 0);
+    *xid = ntohs(header->xid);
+    if ((ntohs (header->flags) & 0xf) != 0) {
+        throw std::runtime_error("Resolver Error");
+    }
     uint8_t* startOfName = (uint8_t*)(&buf[0] + sizeof (TDnsHeader));
     uint8_t fragmentSize = 0;
     uint8_t* p = startOfName; size -= p - (uint8_t*)buf; if (size <= 0) { throw std::runtime_error("Not enough data"); }
@@ -200,7 +202,9 @@ TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
         auto hostname = AddResolveQueue.front(); AddResolveQueue.pop();
         int len;
         memset(buf, 0, sizeof(buf));
-        CreatePacket(hostname, buf, &len, &Xid);
+        Inflight[Xid] = hostname;
+        CreatePacket(hostname, buf, &len, Xid);
+        Xid = 1 + (Xid + 1) % 65535;
         auto size = co_await Socket.WriteSome(buf, len);
         assert(size == len);
     }
@@ -215,16 +219,21 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
         if (size < 0) {
             continue;
         }
+        if (size < sizeof(TDnsHeader)) {
+            continue;
+        }
 
         std::vector<TAddress> addresses;
         std::string name;
         std::exception_ptr exception;
+        uint16_t xid;
         try {
-            ParsePacket(addresses, name, buf, size);
+            ParsePacket(&xid, addresses, name, buf, size);
         } catch (const std::exception& ex) {
             exception = std::current_exception();
         }
 
+        name = Inflight[xid];
         Results[name] = TResolveResult {
             .Addresses = std::move(addresses),
             .Exception = exception
