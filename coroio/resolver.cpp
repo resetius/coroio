@@ -102,7 +102,6 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, std::string& n
     uint8_t fragmentSize = 0;
     uint8_t* p = startOfName; size -= p - (uint8_t*)buf; if (size <= 0) { throw std::runtime_error("Not enough data"); }
 
-    // TODO: Check size and truncate flag
     while (*p != 0)
     {
         /* Restore the dot in the name and advance to next length */
@@ -271,7 +270,7 @@ TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string&
     if (result.Exception) {
         std::rethrow_exception(result.Exception);
     }
-    co_return std::move(result.Addresses);
+    co_return result.Addresses;
 }
 
 template class TResolver<TPollerBase>;
