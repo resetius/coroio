@@ -1,5 +1,6 @@
 #pragma once
 
+#include <exception>
 #include <unordered_map>
 
 #include "promises.hpp"
@@ -32,7 +33,8 @@ public:
 private:
     TVoidSuspendedTask SenderTask();
     TVoidSuspendedTask ReceiverTask();
-    void CreatePacket(const std::string& name, char* buf, int* size);
+
+    void ResumeSender();
 
     TSocket Socket;
     TPoller& Poller;
@@ -42,7 +44,12 @@ private:
     std::coroutine_handle<> Receiver;
     std::queue<std::string> AddResolveQueue;
 
-    std::unordered_map<std::string, std::vector<TAddress>> Addresses;
+    struct TResolveResult {
+        std::vector<TAddress> Addresses;
+        std::exception_ptr Exception;
+    };
+
+    std::unordered_map<std::string, TResolveResult> Addresses;
     std::unordered_map<std::string, std::vector<std::coroutine_handle<>>> WaitingAddrs;
 
     uint16_t Xid = 0;
