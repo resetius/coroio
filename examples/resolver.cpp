@@ -5,10 +5,15 @@ using namespace NNet;
 
 template<typename TResolver>
 TVoidTask resolve(TResolver& resolver, std::string name, EDNSType type, int* inflight) {
-    auto addrs = co_await resolver.Resolve(name, type);
-    std::cout << "'" << name << "': ";
-    for (auto& a : addrs) {
-        std::cout << a.ToString() << ", ";
+    try {
+        auto addrs = co_await resolver.Resolve(name, type);
+        std::cout << "'" << name << "': ";
+        for (auto& a : addrs) {
+            std::cout << a.ToString() << ", ";
+        }
+    } catch (const std::exception& ex) {
+        std::cout << "'" << name << "': ";
+        std::cout << ex.what();
     }
     std::cout << "\n";
     --(*inflight);

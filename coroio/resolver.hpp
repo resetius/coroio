@@ -38,6 +38,7 @@ public:
 private:
     TVoidSuspendedTask SenderTask();
     TVoidSuspendedTask ReceiverTask();
+    TVoidSuspendedTask TimeoutsTask();
 
     void ResumeSender();
 
@@ -47,6 +48,7 @@ private:
     std::coroutine_handle<> Sender;
     std::coroutine_handle<> SenderSuspended;
     std::coroutine_handle<> Receiver;
+    std::coroutine_handle<> Timeouts;
 
     struct TResolveRequest {
         std::string Name;
@@ -73,12 +75,15 @@ private:
     };
 
     std::queue<TResolveRequest> AddResolveQueue;
+    std::queue<std::pair<TTime, TResolveRequest>> TimeoutsQueue;
 
     struct TResolveResult {
         std::vector<TAddress> Addresses;
         std::exception_ptr Exception;
         int Retries = 0;
     };
+
+    void ResumeWaiters(TResolveResult&& result, const TResolveRequest& req);
 
     std::unordered_map<TResolveRequest, TResolveResult, TResolveRequestHash> Results;
     std::unordered_map<TResolveRequest, std::vector<std::coroutine_handle<>>, TResolveRequestHash> WaitingAddrs;

@@ -195,6 +195,7 @@ TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller)
     // Start tasks after fields initialization
     Sender = SenderTask();
     Receiver = ReceiverTask();
+    Timeouts = TimeoutsTask();
 }
 
 template<typename TPoller>
@@ -202,6 +203,7 @@ TResolver<TPoller>::~TResolver()
 {
     Sender.destroy();
     Receiver.destroy();
+    Timeouts.destroy();
 }
 
 template<typename TPoller>
@@ -227,6 +229,32 @@ TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
 }
 
 template<typename TPoller>
+TVoidSuspendedTask TResolver<TPoller>::TimeoutsTask() {
+    while (true) {
+        TTime now = TClock::now();
+        while (!TimeoutsQueue.empty() && TimeoutsQueue.front().first <= now) {
+            auto req = std::move(TimeoutsQueue.front().second);
+            ResumeWaiters({.Exception = std::make_exception_ptr(std::runtime_error("Timeout"))}, req);
+            TimeoutsQueue.pop();
+        }
+        co_await Poller.Sleep(now + std::chrono::milliseconds(100));
+    }
+}
+
+template<typename TPoller>
+void TResolver<TPoller>::ResumeWaiters(TResolveResult&& result, const TResolveRequest& req) {
+    auto maybeWaiting = WaitingAddrs.find(req);
+    if (maybeWaiting != WaitingAddrs.end()) {
+        Results[req] = std::move(result);
+        auto handles = std::move(maybeWaiting->second);
+        WaitingAddrs.erase(maybeWaiting);
+        for (auto h : handles) {
+            h.resume();
+        }
+    }
+}
+
+template<typename TPoller>
 TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
     char buf[512];
     while (true) {
@@ -247,19 +275,10 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
             exception = std::current_exception();
         }
 
-        auto req = Inflight[xid];
-        Results[req] = TResolveResult {
+        ResumeWaiters(std::move(TResolveResult {
             .Addresses = std::move(addresses),
             .Exception = exception
-        };
-        auto maybeWaiting = WaitingAddrs.find(req);
-        if (maybeWaiting != WaitingAddrs.end()) {
-            auto handles = std::move(maybeWaiting->second);
-            WaitingAddrs.erase(maybeWaiting);
-            for (auto h : handles) {
-                h.resume();
-            }
-        }
+        }), Inflight[xid]);
     }
     co_return;
 }
@@ -280,6 +299,7 @@ TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string&
     if (!WaitingAddrs.contains(req)) {
         Results[req].Retries = 5;
         AddResolveQueue.emplace(req);
+        TimeoutsQueue.emplace(std::make_pair(TClock::now() + std::chrono::milliseconds(2000), req));
     }
     WaitingAddrs[req].emplace_back(handle);
     ResumeSender();
