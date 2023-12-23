@@ -112,7 +112,10 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssi
         p += fragmentSize; size -= fragmentSize; if (size <= 0) { throw std::runtime_error("Not enough data"); }
     }
 
-    addresses.reserve(header->ancount);
+    addresses.reserve(ntohs(header->ancount));
+    if (ntohs(header->ancount) == 0) {
+        return;
+    }
     p += 5; size -= 5; if (size <= 0) { throw std::runtime_error("Not enough data"); }
     for (int i = 0; i < ntohs (header->ancount); i++)
     {
@@ -143,7 +146,7 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssi
         }
         p += sizeof(TDnsRecordA);
         p += addrLen;
-        size -= sizeof(TDnsRecordA); if (size < 0) { throw std::runtime_error("Not enough data"); }
+        size -= sizeof(TDnsRecordA); size -= addrLen; if (size < 0) { throw std::runtime_error("Not enough data"); }
     }
 }
 
