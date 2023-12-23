@@ -1,10 +1,11 @@
+#include "coroio/resolver.hpp"
 #include <coroio/all.hpp>
 
 using namespace NNet;
 
 template<typename TResolver>
-TVoidTask resolve(TResolver& resolver, std::string name, int* inflight) {
-    auto addrs = co_await resolver.Resolve(name);
+TVoidTask resolve(TResolver& resolver, std::string name, EDNSType type, int* inflight) {
+    auto addrs = co_await resolver.Resolve(name, type);
     std::cout << "'" << name << "': ";
     for (auto& a : addrs) {
         std::cout << a.ToString() << ", ";
@@ -15,7 +16,7 @@ TVoidTask resolve(TResolver& resolver, std::string name, int* inflight) {
 }
 
 template<typename TPoller>
-TVoidSuspendedTask resolve(TPoller& poller) {
+TVoidSuspendedTask resolve(TPoller& poller, EDNSType type) {
     TFileHandle input{0, poller}; // stdin
     TLineReader lineReader(input, 4096);
     TResolver<TPollerBase> resolver(poller);
@@ -25,7 +26,7 @@ TVoidSuspendedTask resolve(TPoller& poller) {
         std::string name = std::string(line.Part1);
         name += line.Part2;
         name.resize(name.size()-1);
-        resolve(resolver, std::move(name), &inflight);
+        resolve(resolver, std::move(name), type, &inflight);
     }
     while (inflight != 0) {
         co_await poller.Yield();
@@ -34,9 +35,9 @@ TVoidSuspendedTask resolve(TPoller& poller) {
 }
 
 template<typename TPoller>
-void run() {
+void run(EDNSType type) {
     TLoop<TPoller> loop;
-    auto h = resolve(loop.Poller());
+    auto h = resolve(loop.Poller(), type);
     while (!h.done()) {
         loop.Step();
     }
@@ -45,28 +46,31 @@ void run() {
 
 int main(int argc, char** argv) {
     std::string method = "poll";
+    EDNSType type = EDNSType::A;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--method") && i < argc-1) {
             method = argv[++i];
+        } else if (!strcmp(argv[i], "--ipv6")) {
+            type = EDNSType::AAAA;
         }
     }
 
     if (method == "select") {
-        run<TSelect>();
+        run<TSelect>(type);
     } else if (method == "poll") {
-        run<TPoll>();
+        run<TPoll>(type);
     }
 #ifdef __linux__
     else if (method == "epoll") {
-        run<TEPoll>();
+        run<TEPoll>(type);
     }
     else if (method == "uring") {
-        run<TUring>();
+        run<TUring>(type);
     }
 #endif
 #if defined(__APPLE__) || defined(__FreeBSD__)
     else if (method == "kqueue") {
-        run<TKqueue>();
+        run<TKqueue>(type);
     }
 #endif
     else {

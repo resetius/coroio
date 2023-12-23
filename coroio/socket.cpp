@@ -74,7 +74,7 @@ std::string TAddress::ToString() const {
     } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
         auto* r = inet_ntop(AF_INET6, &val->sin6_addr, buf, sizeof(buf));
         if (r) {
-            return std::string(r) + ":" + std::to_string(val->sin6_port);
+            return "[" + std::string(r) + "]:" + std::to_string(val->sin6_port);
         }
     }
 

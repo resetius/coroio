@@ -34,10 +34,12 @@ struct TDnsRecordA {
     uint16_t clazz;
     uint32_t ttl;
     uint16_t length;
-    in_addr addr;
+    char addr[0];
 } __attribute__((packed));
 
-void CreatePacket(const std::string& name, char* packet, int* size, uint16_t xid)
+static_assert(sizeof(TDnsRecordA) == 10);
+
+void CreatePacket(const std::string& name, EDNSType type, char* packet, int* size, uint16_t xid)
 {
     TDnsHeader header = {
         .xid = htons(xid),
@@ -48,7 +50,7 @@ void CreatePacket(const std::string& name, char* packet, int* size, uint16_t xid
     std::string query; query.resize(name.size() + 2);
     TDnsQuestion question = {
         .name = &query[0],
-        .dnstype = htons (1),  /* QTYPE 1=A */
+        .dnstype = htons (static_cast<uint16_t>(type)),  /* QTYPE 1=A */
         .dnsclass = htons (1), /* QCLASS 1=IN */
     };
 
@@ -92,7 +94,7 @@ void CreatePacket(const std::string& name, char* packet, int* size, uint16_t xid
     memcpy(p, &question.dnsclass, sizeof (question.dnsclass));
 }
 
-void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, std::string& name, char* buf, ssize_t size) {
+void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssize_t size) {
     TDnsHeader* header = (TDnsHeader*)(&buf[0]);
     *xid = ntohs(header->xid);
     if ((ntohs (header->flags) & 0xf) != 0) {
@@ -110,7 +112,6 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, std::string& n
         p += fragmentSize; size -= fragmentSize; if (size <= 0) { throw std::runtime_error("Not enough data"); }
     }
 
-    name = std::string((char*)startOfName+1);
     addresses.reserve(header->ancount);
     p += 5; size -= 5; if (size <= 0) { throw std::runtime_error("Not enough data"); }
     for (int i = 0; i < ntohs (header->ancount); i++)
@@ -125,8 +126,23 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, std::string& n
         }
 
         TDnsRecordA* record = (TDnsRecordA*)p;
-        addresses.emplace_back(TAddress{inet_ntoa (record->addr), 0});
+
+        auto addrLen = ntohs(record->length);
+        if (addrLen == 4) {
+            sockaddr_in addr = {
+                .sin_port = 0,
+                .sin_addr = *(in_addr*)record->addr,
+            };
+            addresses.emplace_back(TAddress{addr});
+        } else if (addrLen == 16) {
+            sockaddr_in6 addr = {
+                .sin6_port = 0,
+                .sin6_addr = *(in6_addr*)record->addr
+            };
+            addresses.emplace_back(TAddress{addr});
+        }
         p += sizeof(TDnsRecordA);
+        p += addrLen;
         size -= sizeof(TDnsRecordA); if (size < 0) { throw std::runtime_error("Not enough data"); }
     }
 }
@@ -198,11 +214,11 @@ TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
             co_await std::suspend_always{};
         }
         SenderSuspended = {};
-        auto hostname = AddResolveQueue.front(); AddResolveQueue.pop();
+        auto req = AddResolveQueue.front(); AddResolveQueue.pop();
         int len;
         memset(buf, 0, sizeof(buf));
-        Inflight[Xid] = hostname;
-        CreatePacket(hostname, buf, &len, Xid);
+        Inflight[Xid] = req;
+        CreatePacket(req.Name, req.Type, buf, &len, Xid);
         Xid = 1 + (Xid + 1) % 65535;
         auto size = co_await Socket.WriteSome(buf, len);
         assert(size == len);
@@ -223,21 +239,20 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
         }
 
         std::vector<TAddress> addresses;
-        std::string name;
         std::exception_ptr exception;
         uint16_t xid;
         try {
-            ParsePacket(&xid, addresses, name, buf, size);
+            ParsePacket(&xid, addresses, buf, size);
         } catch (const std::exception& ex) {
             exception = std::current_exception();
         }
 
-        name = Inflight[xid];
-        Results[name] = TResolveResult {
+        auto req = Inflight[xid];
+        Results[req] = TResolveResult {
             .Addresses = std::move(addresses),
             .Exception = exception
         };
-        auto maybeWaiting = WaitingAddrs.find(name);
+        auto maybeWaiting = WaitingAddrs.find(req);
         if (maybeWaiting != WaitingAddrs.end()) {
             auto handles = std::move(maybeWaiting->second);
             WaitingAddrs.erase(maybeWaiting);
@@ -257,16 +272,19 @@ void TResolver<TPoller>::ResumeSender() {
 }
 
 template<typename TPoller>
-TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname) {
+TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname, EDNSType type) {
     auto handle = co_await SelfId();
-    if (!WaitingAddrs.contains(hostname)) {
-        Results[hostname].Retries = 5;
-        AddResolveQueue.emplace(hostname);
+
+    TResolveRequest req = {.Name = hostname, .Type = type};
+
+    if (!WaitingAddrs.contains(req)) {
+        Results[req].Retries = 5;
+        AddResolveQueue.emplace(req);
     }
-    WaitingAddrs[hostname].emplace_back(handle);
+    WaitingAddrs[req].emplace_back(handle);
     ResumeSender();
     co_await std::suspend_always{};
-    auto& result = Results[hostname];
+    auto& result = Results[req];
     if (result.Exception) {
         std::rethrow_exception(result.Exception);
     }
