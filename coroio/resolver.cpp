@@ -181,19 +181,20 @@ void TResolvConf::Load(std::istream& input) {
 }
 
 template<typename TPoller>
-TResolver<TPoller>::TResolver(TPoller& poller)
-    : TResolver(TResolvConf(), poller)
+TResolver<TPoller>::TResolver(TPoller& poller, EDNSType defaultType)
+    : TResolver(TResolvConf(), poller, defaultType)
 { }
 
 template<typename TPoller>
-TResolver<TPoller>::TResolver(const TResolvConf& conf, TPoller& poller)
-    : TResolver(conf.Nameservers[0], poller)
+TResolver<TPoller>::TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType)
+    : TResolver(conf.Nameservers[0], poller, defaultType)
 { }
 
 template<typename TPoller>
-TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller)
+TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType)
     : Socket(std::move(dnsAddr), poller, SOCK_DGRAM)
     , Poller(poller)
+    , DefaultType(defaultType)
 {
     // Start tasks after fields initialization
     Sender = SenderTask();
@@ -296,6 +297,9 @@ void TResolver<TPoller>::ResumeSender() {
 template<typename TPoller>
 TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname, EDNSType type) {
     auto handle = co_await SelfId();
+    if (type == EDNSType::DEFAULT) {
+        type = DefaultType;
+    }
 
     TResolveRequest req = {.Name = hostname, .Type = type};
 
@@ -312,6 +316,33 @@ TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string&
         std::rethrow_exception(result.Exception);
     }
     co_return result.Addresses;
+}
+
+THostPort::THostPort(const std::string& hostPort) {
+    auto pos = hostPort.rfind(':');
+    if (pos == std::string::npos) {
+        throw std::runtime_error("Cannot parse hostPort");
+    }
+}
+
+THostPort::THostPort(const std::string& host, int port)
+    : Host(host)
+    , Port(port)
+{ }
+
+template<typename T>
+TValueTask<TAddress> THostPort::Resolve(TResolver<T>& resolver) {
+    char buf[16];
+    if (inet_pton(AF_INET, Host.c_str(), buf) == 1 || inet_pton(AF_INET6, Host.c_str(), buf)) {
+        co_return TAddress{Host, Port};
+    }
+
+    auto addresses = co_await resolver.Resolve(Host);
+    if (addresses.empty()) {
+        throw std::runtime_error("Empty address");
+    }
+
+    co_return addresses.front().WithPort(Port);
 }
 
 template class TResolver<TPollerBase>;

@@ -21,6 +21,7 @@ private:
 };
 
 enum class EDNSType {
+    DEFAULT = 0,
     A = 1,
     AAAA = 28,
 };
@@ -28,12 +29,12 @@ enum class EDNSType {
 template<typename TPoller>
 class TResolver {
 public:
-    TResolver(TPoller& poller);
-    TResolver(const TResolvConf& conf, TPoller& poller);
-    TResolver(TAddress dnsAddr, TPoller& poller);
+    TResolver(TPoller& poller, EDNSType defaultType = EDNSType::A);
+    TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType = EDNSType::A);
+    TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType = EDNSType::A);
     ~TResolver();
 
-    TValueTask<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::A);
+    TValueTask<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::DEFAULT);
 
 private:
     TVoidSuspendedTask SenderTask();
@@ -44,6 +45,7 @@ private:
 
     TSocket Socket;
     TPoller& Poller;
+    EDNSType DefaultType;
 
     std::coroutine_handle<> Sender;
     std::coroutine_handle<> SenderSuspended;
@@ -90,6 +92,19 @@ private:
     std::unordered_map<uint64_t, TResolveRequest> Inflight;
 
     uint16_t Xid = 1;
+};
+
+class THostPort {
+public:
+    THostPort(const std::string& hostPort);
+    THostPort(const std::string& host, int port);
+
+    template<typename T>
+    TValueTask<TAddress> Resolve(TResolver<T>& resolver);
+
+private:
+    std::string Host;
+    int Port;
 };
 
 } // namespace NNet

@@ -49,6 +49,18 @@ int TAddress::Domain() const {
     }
 }
 
+TAddress TAddress::WithPort(int port) const {
+    if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
+        auto v = *val; v.sin_port = htons(port);
+        return TAddress{v};
+    } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
+        auto v = *val; v.sin6_port = htons(port);
+        return TAddress{v};
+    } else {
+        throw std::runtime_error("Unknown address type");
+    }
+}
+
 const std::variant<sockaddr_in, sockaddr_in6>& TAddress::Addr() const { return Addr_; }
 std::pair<const sockaddr*, int> TAddress::RawAddr() const {
     if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {

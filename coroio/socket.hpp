@@ -26,6 +26,7 @@ public:
     std::pair<const sockaddr*, int> RawAddr() const;
     bool operator == (const TAddress& other) const;
     int Domain() const;
+    TAddress WithPort(int port) const;
 
     std::string ToString() const;
 
