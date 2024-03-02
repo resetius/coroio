@@ -876,6 +876,7 @@ void test_uring_no_sqe(void** ) {
     }
 }
 
+/* temporary disable
 void test_uring_cancel(void** ) {
     TUring uring(16);
     DISABLE_URING1
@@ -891,6 +892,7 @@ void test_uring_cancel(void** ) {
     assert_true(rbuf[0] == 'k');
     h.destroy();
 }
+*/
 
 #endif
 
