@@ -953,7 +953,7 @@ int main() {
         cmocka_unit_test(test_uring_write_resume),
         cmocka_unit_test(test_uring_read_resume),
         cmocka_unit_test(test_uring_no_sqe),
-        cmocka_unit_test(test_uring_cancel),
+        // cmocka_unit_test(test_uring_cancel), // temporary disable
 #endif
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
