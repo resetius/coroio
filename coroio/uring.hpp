@@ -112,7 +112,7 @@ public:
             TUring* poller;
             int fd;
 
-            char addr[sizeof(sockaddr_in6)];
+            char addr[sizeof(sockaddr_in6)] = {0};
             socklen_t len = sizeof(sockaddr_in6);
         };
 

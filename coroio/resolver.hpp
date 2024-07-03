@@ -80,8 +80,8 @@ private:
     std::queue<std::pair<TTime, TResolveRequest>> TimeoutsQueue;
 
     struct TResolveResult {
-        std::vector<TAddress> Addresses;
-        std::exception_ptr Exception;
+        std::vector<TAddress> Addresses = {};
+        std::exception_ptr Exception = nullptr;
         int Retries = 0;
     };
 

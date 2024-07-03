@@ -33,6 +33,12 @@ target_include_directories(coroio PUBLIC ${URING_INCLUDE_DIRS} ${OPENSSL_INCLUDE
 target_link_directories(coroio PUBLIC ${URING_LIBRARY_DIRS} ${OPENSSL_LIBRARY_DIRS})
 target_link_libraries(coroio PUBLIC ${URING_LIBRARIES} ${OPENSSL_LIBRARIES})
 
+if(MSVC)
+    target_compile_options(coroio PRIVATE /W4 /WX)
+else()
+    target_compile_options(coroio PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 macro(target name source)
   add_executable(${name} ${source})
   target_link_libraries(${name} coroio)

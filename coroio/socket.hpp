@@ -144,11 +144,11 @@ protected:
             }
         }
 
-        TPollerBase* poller;
-        int fd;
-        void* b; size_t s;
-        int ret;
-        bool ready;
+        TPollerBase* poller = nullptr;
+        int fd = -1;
+        void* b = nullptr; size_t s = 0;
+        int ret = -1;
+        bool ready = false;
     };
 };
 

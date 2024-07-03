@@ -83,7 +83,6 @@ public:
     }
 
     void WakeupReadyHandles() {
-        int i = 0;
         for (auto&& ev : ReadyEvents_) {
             Wakeup(std::move(ev));
         }

@@ -40,9 +40,9 @@ TAddress::TAddress(sockaddr* addr, socklen_t len) {
 }
 
 int TAddress::Domain() const {
-    if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
+    if (std::get_if<sockaddr_in>(&Addr_)) {
         return PF_INET;
-    } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
+    } else if (std::get_if<sockaddr_in6>(&Addr_)) {
         return PF_INET6;
     } else {
         return 0;

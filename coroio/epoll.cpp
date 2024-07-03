@@ -19,7 +19,7 @@ TEPoll::~TEPoll()
 void TEPoll::Poll() {
     auto ts = GetTimeout();
 
-    if (InEvents_.size() <= MaxFd_) {
+    if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
     }
 

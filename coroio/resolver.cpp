@@ -34,7 +34,7 @@ struct TDnsRecordA {
     uint16_t clazz;
     uint32_t ttl;
     uint16_t length;
-    char addr[0];
+//    char addr[0];
 } __attribute__((packed));
 
 static_assert(sizeof(TDnsRecordA) == 10);
@@ -132,16 +132,14 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssi
 
         auto addrLen = ntohs(record->length);
         if (addrLen == 4) {
-            sockaddr_in addr = {
-                .sin_port = 0,
-                .sin_addr = *(in_addr*)record->addr,
-            };
+            sockaddr_in addr;
+            addr.sin_port = 0,
+            addr.sin_addr = *(in_addr*)(record+1);
             addresses.emplace_back(TAddress{addr});
         } else if (addrLen == 16) {
-            sockaddr_in6 addr = {
-                .sin6_port = 0,
-                .sin6_addr = *(in6_addr*)record->addr
-            };
+            sockaddr_in6 addr;
+            addr.sin6_port = 0,
+            addr.sin6_addr = *(in6_addr*)(record+1);
             addresses.emplace_back(TAddress{addr});
         }
         p += sizeof(TDnsRecordA);
@@ -266,7 +264,7 @@ TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
         if (size < 0) {
             continue;
         }
-        if (size < sizeof(TDnsHeader)) {
+        if (size < static_cast<int>(sizeof(TDnsHeader))) {
             continue;
         }
 

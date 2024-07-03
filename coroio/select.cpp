@@ -7,10 +7,10 @@ void TSelect::Poll() {
 
     constexpr int bits = sizeof(fd_mask)*8;
 
-    if (InEvents_.size() <= MaxFd_) {
+    if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
     }
-    if (MaxFd_ >= ReadFds_.size()*bits) {
+    if (MaxFd_ >= static_cast<int>(ReadFds_.size())*bits) {
         ReadFds_.resize((MaxFd_+bits)/bits);
         WriteFds_.resize((MaxFd_+bits)/bits);
     }

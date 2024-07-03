@@ -21,7 +21,7 @@ namespace NNet {
 void TPoll::Poll() {
     auto ts = GetTimeout();
 
-    if (InEvents_.size() <= MaxFd_) {
+    if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1, std::make_tuple(THandlePair{}, -1));
     }
 
