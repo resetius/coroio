@@ -22,13 +22,12 @@ void TKqueue::Poll()
     auto ts = GetTimeout();
 
     ChangeList_.clear();
-    if (InEvents_.size() <= MaxFd_) {
+    if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
     }
     for (auto& ch : Changes_) {
         int fd = ch.Fd;
         struct kevent kev = {};
-        bool changed = false;
         auto& ev = InEvents_[fd];
 
         if (ch.Handle) {

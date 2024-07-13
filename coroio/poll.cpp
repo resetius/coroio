@@ -3,7 +3,7 @@
 namespace {
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
-int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigset_t* sigmask) {
+int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigset_t* /*sigmask*/) {
     int timeout = 0;
     if (ts) {
         timeout  = ts->tv_sec;
