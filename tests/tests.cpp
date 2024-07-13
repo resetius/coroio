@@ -407,6 +407,43 @@ void test_timeout(void**) {
 }
 
 template<typename TPoller>
+void test_timeout2(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
+    auto now = std::chrono::steady_clock::now();
+    auto timeout1 = std::chrono::milliseconds(100);
+    auto timeout2 = std::chrono::milliseconds(200);
+    int val1, val2, val;
+    val1 = val2 = val = 0;
+    TVoidSuspendedTask h1 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TVoidSuspendedTask
+    {
+        co_await poller.Sleep(timeout);
+        (*val)++;
+        *val1 = *val;
+        co_return;
+    } (loop.Poller(), timeout1, &val1, &val);
+
+    TVoidSuspendedTask h2 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TVoidSuspendedTask
+    {
+        co_await poller.Sleep(timeout);
+        (*val)++;
+        *val1 = *val;
+        co_return;
+    } (loop.Poller(), timeout2, &val2, &val);
+
+    while (!h1.done() || !h2.done()) {
+        loop.Step();
+    }
+    h1.destroy();
+    h2.destroy();
+
+    assert_true(val1 == 1);
+    assert_true(val2 == 2);
+    assert_true(val == 2);
+}
+
+template<typename TPoller>
 void test_read_write_full(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -931,6 +968,7 @@ int main() {
         cmocka_unit_test(test_resolv_nameservers),
         my_unit_poller(test_listen),
         my_unit_poller(test_timeout),
+        my_unit_poller(test_timeout2),
         my_unit_poller(test_accept),
         my_unit_poller(test_write_after_connect),
         my_unit_poller(test_write_after_accept),
