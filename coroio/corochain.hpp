@@ -7,14 +7,14 @@
 
 namespace NNet {
 
-template<typename T> struct TFinalSuspendContinuation;
+template<typename T> struct TFinalAwaiter;
 
 template<typename T> struct TValueTask;
 
 template<typename T>
 struct TValuePromiseBase {
     std::suspend_never initial_suspend() { return {}; }
-    TFinalSuspendContinuation<T> final_suspend() noexcept;
+    TFinalAwaiter<T> final_suspend() noexcept;
     std::coroutine_handle<> Caller = std::noop_coroutine();
 };
 
@@ -92,7 +92,7 @@ struct TValueTask<void> : public TValueTaskBase<void> {
 };
 
 template<typename T>
-struct TFinalSuspendContinuation {
+struct TFinalAwaiter {
     bool await_ready() noexcept { return false; }
     std::coroutine_handle<> await_suspend(std::coroutine_handle<TValuePromise<T>> h) noexcept {
         return h.promise().Caller;
@@ -106,6 +106,6 @@ TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>::fr
 
 
 template<typename T>
-TFinalSuspendContinuation<T> TValuePromiseBase<T>::final_suspend() noexcept { return {}; }
+TFinalAwaiter<T> TValuePromiseBase<T>::final_suspend() noexcept { return {}; }
 
 } // namespace NNet
