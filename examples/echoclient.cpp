@@ -6,7 +6,7 @@
 using namespace NNet;
 
 template<bool debug, typename TPoller>
-TVoidSuspendedTask client(TPoller& poller, TAddress addr)
+TFuture<void> client(TPoller& poller, TAddress addr)
 {
     static constexpr int maxLineSize = 4096;
     using TSocket = typename TPoller::TSocket;
@@ -38,8 +38,8 @@ TVoidSuspendedTask client(TPoller& poller, TAddress addr)
 template<typename TPoller>
 void run(bool debug, TAddress address)
 {
-    NNet::TLoop<TPoller> loop;
-    NNet::THandle h;
+    TLoop<TPoller> loop;
+    TFuture<void> h;
     if (debug) {
         h = client<true>(loop.Poller(), std::move(address));
     } else {
@@ -48,7 +48,6 @@ void run(bool debug, TAddress address)
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 }
 
 int main(int argc, char** argv) {
