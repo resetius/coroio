@@ -39,6 +39,7 @@ struct TValuePromise: public TValuePromiseBase<T> {
 
 template<typename T>
 struct TValueTaskBase {
+    TValueTaskBase() = default;
     TValueTaskBase(TValuePromise<T>& promise)
         : Coro(Coro.from_promise(promise))
     { }
