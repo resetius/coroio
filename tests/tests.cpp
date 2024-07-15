@@ -825,7 +825,6 @@ void test_uring_read_more_than_write(void**) {
     assert_true(rbuf[0] == 'e');
 }
 
-#if 0
 void test_uring_write_resume(void**) {
     TUring uring(256);
     char buf[1] = {'e'};
@@ -869,7 +868,6 @@ void test_uring_read_resume(void**) {
     assert_true(h.done());
     h.destroy();
 }
-#endif
 
 void test_uring_no_sqe(void** ) {
     TUring uring(1);
@@ -961,8 +959,8 @@ int main() {
         cmocka_unit_test(test_uring_write),
         cmocka_unit_test(test_uring_read),
         cmocka_unit_test(test_uring_read_more_than_write),
-        cmocka_unit_test(test_uring_write_resume),
-        cmocka_unit_test(test_uring_read_resume),
+        // cmocka_unit_test(test_uring_write_resume), // temporary disable
+        // cmocka_unit_test(test_uring_read_resume), // temporary disable
         cmocka_unit_test(test_uring_no_sqe),
         // cmocka_unit_test(test_uring_cancel), // temporary disable
 #endif
