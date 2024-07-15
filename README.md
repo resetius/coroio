@@ -78,7 +78,7 @@ socket.ReadSome(buffer, bufferSize);
 using namespace NNet;
 
 template<typename TPoller>
-TVoidSuspendedTask client(TPoller& poller, TAddress addr)
+TFuture<void> client(TPoller& poller, TAddress addr)
 {
     static constexpr int maxLineSize = 4096;
     using TSocket = typename TPoller::TSocket;

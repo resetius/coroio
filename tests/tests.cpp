@@ -111,14 +111,14 @@ void test_accept(void**) {
     socket.Bind();
     socket.Listen();
 
-    TVoidSuspendedTask h1 = [](TPoller& poller) -> TVoidSuspendedTask
+    TFuture<void> h1 = [](TPoller& poller) -> TFuture<void>
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
         co_return;
     }(loop.Poller());
 
-    TVoidSuspendedTask h2 = [](TSocket* socket, TSocket* clientSocket) -> TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket* socket, TSocket* clientSocket) -> TFuture<void>
     {
         *clientSocket = std::move(co_await socket->Accept());
         co_return;
@@ -127,7 +127,6 @@ void test_accept(void**) {
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
-    h1.destroy(); h2.destroy();
 
     in_addr addr1 = std::get<sockaddr_in>(clientSocket.Addr().Addr()).sin_addr;
     in_addr addr2 = std::get<sockaddr_in>(socket.Addr().Addr()).sin_addr;
@@ -145,7 +144,7 @@ void test_write_after_connect(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[256] = {0};
 
-    TVoidSuspendedTask h1 = [](TPoller& poller, char* buf, int size) -> TVoidSuspendedTask
+    TFuture<void> h1 = [](TPoller& poller, char* buf, int size) -> TFuture<void>
     {
         TSocket client(TAddress{"127.0.0.1", 8898}, poller);
         co_await client.Connect();
@@ -153,7 +152,7 @@ void test_write_after_connect(void**) {
         co_return;
     }(loop.Poller(), send_buf, sizeof(send_buf));
 
-    TVoidSuspendedTask h2 = [](TSocket* socket, char* buf, int size) -> TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         co_await clientSocket.ReadSome(buf, size);
@@ -163,7 +162,6 @@ void test_write_after_connect(void**) {
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
-    h1.destroy(); h2.destroy();
 
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
@@ -179,7 +177,7 @@ void test_write_after_accept(void**) {
     char send_buf[128] = "Hello";
     char rcv_buf[256] = {0};
 
-    TVoidSuspendedTask h1 = [](TPoller& poller, char* buf, int size) -> TVoidSuspendedTask
+    TFuture<void> h1 = [](TPoller& poller, char* buf, int size) -> TFuture<void>
     {
         TSocket client(TAddress{"127.0.0.1", 8888}, poller);
         co_await client.Connect();
@@ -187,7 +185,7 @@ void test_write_after_accept(void**) {
         co_return;
     }(loop.Poller(), rcv_buf, sizeof(rcv_buf));
 
-    TVoidSuspendedTask h2 = [](TSocket* socket, char* buf, int size) -> TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         auto s = co_await clientSocket.WriteSome(buf, size);
@@ -197,7 +195,6 @@ void test_write_after_accept(void**) {
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
-    h1.destroy(); h2.destroy();
 
     assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
@@ -215,13 +212,13 @@ void test_read_write_same_socket(void**) {
 
     TSocket client(TAddress{"127.0.0.1", 8888}, loop.Poller());
 
-    TVoidSuspendedTask h1 = [](TSocket& client) -> TVoidSuspendedTask
+    TFuture<void> h1 = [](TSocket& client) -> TFuture<void>
     {
         co_await client.Connect();
         co_return;
     }(client);
 
-    TVoidSuspendedTask h2 = [](TSocket* socket, char* buf, int size) -> TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         TSocket clientSocket = std::move(co_await socket->Accept());
         char b[128] = "Hello from server";
@@ -234,14 +231,14 @@ void test_read_write_same_socket(void**) {
         loop.Step();
     }
 
-    TVoidSuspendedTask h3 = [](TSocket& client) -> TVoidSuspendedTask
+    TFuture<void> h3 = [](TSocket& client) -> TFuture<void>
     {
         char b[128] = "Hello from client";
         co_await client.WriteSomeYield(b, sizeof(b));
         co_return;
     }(client);
 
-    TVoidSuspendedTask h4 = [](TSocket& client, char* buf, int size) -> TVoidSuspendedTask
+    TFuture<void> h4 = [](TSocket& client, char* buf, int size) -> TFuture<void>
     {
         co_await client.ReadSomeYield(buf, size);
         co_return;
@@ -253,11 +250,6 @@ void test_read_write_same_socket(void**) {
 
     assert_string_equal(buf1, "Hello from client");
     assert_string_equal(buf2, "Hello from server");
-
-    h1.destroy();
-    h2.destroy();
-    h3.destroy();
-    h4.destroy();
 }
 
 template<typename TPoller>
@@ -267,7 +259,7 @@ void test_connection_timeout(void**) {
     TLoop loop;
     bool timeout = false;
 
-    TVoidSuspendedTask h = [](TPoller& poller, bool& timeout) -> TVoidSuspendedTask
+    TFuture<void> h = [](TPoller& poller, bool& timeout) -> TFuture<void>
     {
         // TODO: use other addr
         TSocket client(TAddress{"10.0.0.1", 18889}, poller);
@@ -286,7 +278,6 @@ void test_connection_timeout(void**) {
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 
     assert_true(timeout);
 }
@@ -302,7 +293,7 @@ void test_remove_connection_timeout(void**) {
 
     bool timeout = false;
 
-    TVoidSuspendedTask h = [](TPoller& poller, bool& timeout) -> TVoidSuspendedTask
+    TFuture<void> h = [](TPoller& poller, bool& timeout) -> TFuture<void>
     {
         TSocket client(TAddress{"127.0.0.1", 18889}, poller);
         try {
@@ -321,7 +312,6 @@ void test_remove_connection_timeout(void**) {
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 
     assert_false(timeout);
 }
@@ -333,7 +323,7 @@ void test_connection_refused_on_write(void**) {
     TLoop loop;
     std::error_code err;
 
-    TVoidSuspendedTask h = [](TPoller& poller, std::error_code* err) -> TVoidSuspendedTask
+    TFuture<void> h = [](TPoller& poller, std::error_code* err) -> TFuture<void>
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
@@ -349,7 +339,6 @@ void test_connection_refused_on_write(void**) {
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 
     // EPIPE in MacOS
     assert_true(err.value() == ECONNREFUSED || err.value() == EPIPE);
@@ -362,7 +351,7 @@ void test_connection_refused_on_read(void**) {
     TLoop loop;
     std::error_code err;
 
-    TVoidSuspendedTask h = [](TPoller& poller, std::error_code* err) -> TVoidSuspendedTask
+    TFuture<void> h = [](TPoller& poller, std::error_code* err) -> TFuture<void>
     {
         TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
         char buffer[] = "test";
@@ -378,7 +367,6 @@ void test_connection_refused_on_read(void**) {
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 
     assert_int_equal(err.value(), ECONNREFUSED);
 }
@@ -391,7 +379,7 @@ void test_timeout(void**) {
     auto now = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(100);
     TTime next;
-    TVoidSuspendedTask h = [](TPollerBase& poller, TTime* next, std::chrono::milliseconds timeout) -> TVoidSuspendedTask
+    TFuture<void> h = [](TPollerBase& poller, TTime* next, std::chrono::milliseconds timeout) -> TFuture<void>
     {
         co_await poller.Sleep(timeout);
         *next = std::chrono::steady_clock::now();
@@ -401,7 +389,6 @@ void test_timeout(void**) {
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 
     assert_true(next >= now + timeout);
 }
@@ -416,7 +403,7 @@ void test_timeout2(void**) {
     auto timeout2 = std::chrono::milliseconds(200);
     int val1, val2, val;
     val1 = val2 = val = 0;
-    TVoidSuspendedTask h1 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TVoidSuspendedTask
+    TFuture<void> h1 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TFuture<void>
     {
         co_await poller.Sleep(timeout);
         (*val)++;
@@ -424,7 +411,7 @@ void test_timeout2(void**) {
         co_return;
     } (loop.Poller(), timeout1, &val1, &val);
 
-    TVoidSuspendedTask h2 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TVoidSuspendedTask
+    TFuture<void> h2 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TFuture<void>
     {
         co_await poller.Sleep(timeout);
         (*val)++;
@@ -435,8 +422,6 @@ void test_timeout2(void**) {
     while (!h1.done() || !h2.done()) {
         loop.Step();
     }
-    h1.destroy();
-    h2.destroy();
 
     assert_true(val1 == 1);
     assert_true(val2 == 2);
@@ -462,7 +447,7 @@ void test_read_write_full(void**) {
 
     TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
 
-    NNet::TVoidSuspendedTask h1 = [](TSocket& client, const std::vector<char>& data) -> NNet::TVoidSuspendedTask
+    TFuture<void> h1 = [](TSocket& client, const std::vector<char>& data) -> TFuture<void>
     {
         co_await client.Connect();
         co_await TByteWriter(client).Write(data.data(), data.size());
@@ -470,7 +455,7 @@ void test_read_write_full(void**) {
     }(client, data);
 
     std::vector<char> received(1024*1024);
-    NNet::TVoidSuspendedTask h2 = [](TSocket& server, std::vector<char>& received) -> NNet::TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
         auto client = std::move(co_await server.Accept());
         co_await TByteReader(client).Read(received.data(), received.size());
@@ -482,8 +467,6 @@ void test_read_write_full(void**) {
     }
 
     assert_memory_equal(data.data(), received.data(), data.size());
-
-    h1.destroy(); h2.destroy();
 }
 
 template<typename TPoller>
@@ -509,7 +492,7 @@ void test_read_write_struct(void**) {
 
     TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
 
-    NNet::TVoidSuspendedTask h1 = [](TSocket& client, auto& data) -> NNet::TVoidSuspendedTask
+    TFuture<void> h1 = [](TSocket& client, auto& data) -> TFuture<void>
     {
         co_await client.Connect();
         co_await TByteWriter(client).Write(&data, data.data.size());
@@ -517,7 +500,7 @@ void test_read_write_struct(void**) {
     }(client, data);
 
     Test received;
-    NNet::TVoidSuspendedTask h2 = [](TSocket& server, auto& received) -> NNet::TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
         auto client = std::move(co_await server.Accept());
         received = co_await TStructReader<Test, TSocket>(client).Read();
@@ -529,8 +512,6 @@ void test_read_write_struct(void**) {
     }
 
     assert_memory_equal(data.data.data(), received.data.data(), data.data.size());
-
-    h1.destroy(); h2.destroy();
 }
 
 template<typename TPoller>
@@ -552,7 +533,7 @@ void test_read_write_lines(void**) {
     socket.Bind();
     socket.Listen();
 
-    NNet::TVoidSuspendedTask h1 = [](auto& poller, auto& lines) -> NNet::TVoidSuspendedTask
+    TFuture<void> h1 = [](auto& poller, auto& lines) -> TFuture<void>
     {
         TSocket client(NNet::TAddress{"127.0.0.1", 8988}, poller);
         co_await client.Connect();
@@ -563,7 +544,7 @@ void test_read_write_lines(void**) {
     }(loop.Poller(), lines);
 
     std::vector<std::string> received;
-    NNet::TVoidSuspendedTask h2 = [](TSocket& server, auto& received) -> NNet::TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
         auto client = std::move(co_await server.Accept());
         auto reader = TLineReader<TSocket>(client, 16);
@@ -586,8 +567,6 @@ void test_read_write_lines(void**) {
     for (int i = 0; i < lines.size(); i++) {
         assert_string_equal(lines[i].data(), received[i].data());
     }
-
-    h1.destroy(); h2.destroy();
 }
 
 void test_line_splitter(void**) {
@@ -664,13 +643,12 @@ void test_zero_copy_line_splitter(void**) {
 
 void test_self_id(void**) {
     void* id;
-    NNet::TVoidSuspendedTask h = [](void** id) -> NNet::TVoidSuspendedTask {
+    TFuture<void> h = [](void** id) -> TFuture<void> {
         *id = (co_await SelfId()).address();
         co_return;
     }(&id);
 
     assert_ptr_equal(id, h.address());
-    h.destroy();
 }
 
 void test_resolv_nameservers(void**) {
@@ -698,7 +676,7 @@ void test_resolver(void**) {
     TResolver<TPollerBase> resolver(loop.Poller());
 
     std::vector<TAddress> addresses;
-    NNet::TVoidSuspendedTask h1 = [](auto& resolver, std::vector<TAddress>& addresses) -> NNet::TVoidSuspendedTask {
+    TFuture<void> h1 = [](auto& resolver, std::vector<TAddress>& addresses) -> TFuture<void> {
         addresses = co_await resolver.Resolve("www.google.com");
         //for (auto& addr : addresses) {
         //    std::cout << addr.ToString() << "\n";
@@ -711,8 +689,6 @@ void test_resolver(void**) {
     }
 
     assert_true(!addresses.empty());
-
-    h1.destroy();
 }
 
 template<typename TPoller>
@@ -724,7 +700,7 @@ void test_resolve_bad_name(void**) {
     TResolver<TPollerBase> resolver(loop.Poller());
 
     std::exception_ptr ex;
-    NNet::TVoidSuspendedTask h1 = [](auto& resolver, auto& ex) -> NNet::TVoidSuspendedTask {
+    TFuture<void> h1 = [](auto& resolver, auto& ex) -> TFuture<void> {
         try {
             co_await resolver.Resolve("bad.host.name.wtf123");
         } catch (const std::exception& ) {
@@ -735,8 +711,6 @@ void test_resolve_bad_name(void**) {
     while (!(h1.done())) {
         loop.Step();
     }
-
-    h1.destroy();
 
     assert_true(!!ex);
 }
@@ -760,7 +734,7 @@ void test_read_write_full_ssl(void**) {
 
     TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
 
-    NNet::TVoidSuspendedTask h1 = [](TSocket&& client, const std::vector<char>& data) -> NNet::TVoidSuspendedTask
+    TFuture<void> h1 = [](TSocket&& client, const std::vector<char>& data) -> TFuture<void>
     {
         TSslContext ctx = TSslContext::Client();
         auto sslClient = TSslSocket(std::move(client), ctx);
@@ -770,7 +744,7 @@ void test_read_write_full_ssl(void**) {
     }(std::move(client), data);
 
     std::vector<char> received(1024*1024);
-    NNet::TVoidSuspendedTask h2 = [](TSocket& server, std::vector<char>& received) -> NNet::TVoidSuspendedTask
+    TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
         TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
         auto client = std::move(co_await server.Accept());
@@ -785,8 +759,6 @@ void test_read_write_full_ssl(void**) {
     }
 
     assert_memory_equal(data.data(), received.data(), data.size());
-
-    h1.destroy(); h2.destroy();
 }
 
 #ifdef __linux__
@@ -846,12 +818,11 @@ void test_uring_read_more_than_write(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     assert_int_equal(1, write(p[1], buf, 1));
-    TTestSuspendTask h = []() -> TTestSuspendTask { co_return; }();
+    TFuture<void> h = []() -> TFuture<void> { co_return; }();
     uring.Read(p[0], rbuf, sizeof(rbuf), h);
     assert_int_equal(uring.Wait(), 1);
     assert_int_equal(uring.Result(), 1);
     assert_true(rbuf[0] == 'e');
-    h.destroy();
 }
 
 void test_uring_write_resume(void**) {
@@ -861,7 +832,7 @@ void test_uring_write_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TTestSuspendTask h = [](TUring* uring, int* r) -> TTestSuspendTask {
+    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
         *r = uring->Result();
         co_return;
     }(&uring, &r);
@@ -873,7 +844,6 @@ void test_uring_write_resume(void**) {
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
-    h.destroy();
 }
 
 void test_uring_read_resume(void**) {
@@ -883,7 +853,7 @@ void test_uring_read_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TTestSuspendTask h = [](TUring* uring, int* r) -> TTestSuspendTask {
+    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
         *r = uring->Result();
         co_return;
     }(&uring, &r);
@@ -895,7 +865,6 @@ void test_uring_read_resume(void**) {
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
-    h.destroy();
 }
 
 void test_uring_no_sqe(void** ) {

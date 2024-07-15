@@ -108,4 +108,7 @@ TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>::fr
 template<typename T>
 TFinalAwaiter<T> TValuePromiseBase<T>::final_suspend() noexcept { return {}; }
 
+template<typename T>
+using TFuture = TValueTask<T>;
+
 } // namespace NNet
