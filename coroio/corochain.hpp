@@ -69,6 +69,10 @@ struct TValueTaskBase {
         return Coro.address();
     }
 
+    std::coroutine_handle<> raw() {
+        return Coro;
+    }
+
     void await_suspend(std::coroutine_handle<> caller) {
         Coro.promise().Caller = caller;
     }

@@ -819,7 +819,7 @@ void test_uring_read_more_than_write(void**) {
     assert_int_equal(0, pipe(p));
     assert_int_equal(1, write(p[1], buf, 1));
     TFuture<void> h = []() -> TFuture<void> { co_return; }();
-    uring.Read(p[0], rbuf, sizeof(rbuf), h);
+    uring.Read(p[0], rbuf, sizeof(rbuf), h.raw());
     assert_int_equal(uring.Wait(), 1);
     assert_int_equal(uring.Result(), 1);
     assert_true(rbuf[0] == 'e');
@@ -836,7 +836,7 @@ void test_uring_write_resume(void**) {
         *r = uring->Result();
         co_return;
     }(&uring, &r);
-    uring.Write(p[1], buf, 1, h);
+    uring.Write(p[1], buf, 1, h.raw());
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -858,7 +858,7 @@ void test_uring_read_resume(void**) {
         co_return;
     }(&uring, &r);
     assert_int_equal(1, write(p[1], buf, 1));
-    uring.Read(p[0], rbuf, 1, h);
+    uring.Read(p[0], rbuf, 1, h.raw());
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
