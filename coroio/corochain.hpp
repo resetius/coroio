@@ -43,10 +43,18 @@ struct TValueTaskBase {
         : Coro(Coro.from_promise(promise))
     { }
     TValueTaskBase(TValueTaskBase&& other)
-        : Coro(other.Coro)
     {
-        other.Coro = nullptr;
+        *this = std::move(other);
     }
+    TValueTaskBase(const TValueTaskBase&) = delete;
+    TValueTaskBase& operator=(const TValueTaskBase&) = delete;
+    TValueTaskBase& operator=(TValueTaskBase&& other) {
+        if (this != &other) {
+            std::swap(Coro, other.Coro);
+        }
+        return *this;
+    }
+
     ~TValueTaskBase() { if (Coro) { Coro.destroy(); } }
 
     bool await_ready() const {
@@ -68,7 +76,7 @@ struct TValueTaskBase {
     using promise_type = TValuePromise<T>;
 
 protected:
-    std::coroutine_handle<TValuePromise<T>> Coro;
+    std::coroutine_handle<TValuePromise<T>> Coro = nullptr;
 };
 
 template<typename T>
