@@ -832,11 +832,11 @@ void test_uring_write_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
+    TVoidSuspendedTask h = [](TUring* uring, int* r) -> TVoidSuspendedTask {
         *r = uring->Result();
         co_return;
     }(&uring, &r);
-    uring.Write(p[1], buf, 1, h.raw());
+    uring.Write(p[1], buf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -844,6 +844,7 @@ void test_uring_write_resume(void**) {
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
+    h.destroy();
 }
 
 void test_uring_read_resume(void**) {
@@ -853,18 +854,19 @@ void test_uring_read_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
+    TVoidSuspendedTask h = [](TUring* uring, int* r) -> TVoidSuspendedTask {
         *r = uring->Result();
         co_return;
     }(&uring, &r);
     assert_int_equal(1, write(p[1], buf, 1));
-    uring.Read(p[0], rbuf, 1, h.raw());
+    uring.Read(p[0], rbuf, 1, h);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
+    h.destroy();
 }
 
 void test_uring_no_sqe(void** ) {
