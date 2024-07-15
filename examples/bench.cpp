@@ -31,7 +31,7 @@ struct Stat {
 };
 
 template<typename TSocket>
-TVoidSuspendedTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
+TFuture<void> pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     ssize_t size;
     char buf[1] = {0};
 
@@ -54,14 +54,14 @@ TVoidSuspendedTask pipe_reader(TSocket& r, TSocket& w, Stat& s) {
 }
 
 template<typename TSocket>
-TVoidSuspendedTask write_one(TSocket& w, Stat& s) {
+TFuture<void> write_one(TSocket& w, Stat& s) {
     char buf[1] = {'e'};
     co_await w.WriteSome(buf, 1);
     s.fired ++;
     co_return;
 }
 
-TVoidSuspendedTask yield(TPollerBase& poller) {
+TFuture<void> yield(TPollerBase& poller) {
     co_await poller.Sleep(std::chrono::milliseconds(0));
     co_return;
 }
@@ -72,7 +72,7 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     vector<TFileHandle> pipes;
-    vector<coroutine_handle<>> handles;
+    vector<TFuture<void>> handles;
     pipes.reserve(num_pipes*2);
     handles.reserve(num_pipes+num_writes);
     int fired = 0;
@@ -116,10 +116,6 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
          << "failures: " << s.failures << ", "
          << "out: " << s.out << endl;
     cerr << "elapsed: " <<  duration.count() << endl;
-
-    for (auto& h : handles) {
-        h.destroy();
-    }
 
     return duration;
 }

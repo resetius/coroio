@@ -38,24 +38,43 @@ struct TValuePromise: public TValuePromiseBase<T> {
 };
 
 template<typename T>
-struct TValueTaskBase : std::coroutine_handle<TValuePromise<T>> {
-    ~TValueTaskBase() { this->destroy(); }
+struct TValueTaskBase {
+    TValueTaskBase(TValuePromise<T>& promise)
+        : Coro(Coro.from_promise(promise))
+    { }
+    TValueTaskBase(TValueTaskBase&& other)
+        : Coro(other.Coro)
+    {
+        other.Coro = nullptr;
+    }
+    ~TValueTaskBase() { if (Coro) { Coro.destroy(); } }
 
-    bool await_ready() {
-        return !!this->promise().ErrorOr;
+    bool await_ready() const {
+        return !!Coro.promise().ErrorOr;
+    }
+
+    bool done() const {
+        return Coro.done();
+    }
+
+    void* address() const {
+        return Coro.address();
     }
 
     void await_suspend(std::coroutine_handle<> caller) {
-        this->promise().Caller = caller;
+        Coro.promise().Caller = caller;
     }
 
     using promise_type = TValuePromise<T>;
+
+protected:
+    std::coroutine_handle<TValuePromise<T>> Coro;
 };
 
 template<typename T>
 struct TValueTask : public TValueTaskBase<T> {
     T await_resume() {
-        auto& errorOr = *this->promise().ErrorOr;
+        auto& errorOr = *this->Coro.promise().ErrorOr;
         if (auto* res = std::get_if<T>(&errorOr)) {
             return std::move(*res);
         } else {
@@ -84,7 +103,7 @@ struct TValuePromise<void>: public TValuePromiseBase<void> {
 template<>
 struct TValueTask<void> : public TValueTaskBase<void> {
     void await_resume() {
-        auto& errorOr = *this->promise().ErrorOr;
+        auto& errorOr = *this->Coro.promise().ErrorOr;
         if (errorOr) {
             std::rethrow_exception(errorOr);
         }
@@ -100,9 +119,9 @@ struct TFinalAwaiter {
     void await_resume() noexcept { }
 };
 
-inline TValueTask<void> TValuePromise<void>::get_return_object() { return { TValueTask<void>::from_promise(*this) }; }
+inline TValueTask<void> TValuePromise<void>::get_return_object() { return { TValueTask<void>(*this) }; }
 template<typename T>
-TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>::from_promise(*this) }; }
+TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>(*this) }; }
 
 
 template<typename T>
