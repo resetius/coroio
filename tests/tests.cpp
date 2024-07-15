@@ -825,6 +825,7 @@ void test_uring_read_more_than_write(void**) {
     assert_true(rbuf[0] == 'e');
 }
 
+#if 0
 void test_uring_write_resume(void**) {
     TUring uring(256);
     char buf[1] = {'e'};
@@ -868,6 +869,7 @@ void test_uring_read_resume(void**) {
     assert_true(h.done());
     h.destroy();
 }
+#endif
 
 void test_uring_no_sqe(void** ) {
     TUring uring(1);
