@@ -4,6 +4,7 @@
 #include <optional>
 #include <variant>
 #include <memory>
+#include <functional>
 
 namespace NNet {
 
@@ -93,6 +94,13 @@ struct TValueTask : public TValueTaskBase<T> {
         } else {
             std::rethrow_exception(std::get<std::exception_ptr>(errorOr));
         }
+    }
+
+    template<typename Func>
+    auto Apply(Func func) -> TValueTask<decltype(func(std::declval<T>()))> {
+        auto prev = std::move(*this);
+        auto ret = co_await prev;
+        co_return func(ret);
     }
 };
 

@@ -761,6 +761,24 @@ void test_read_write_full_ssl(void**) {
     assert_memory_equal(data.data(), received.data(), data.size());
 }
 
+template<typename TPoller>
+void test_future_chaining(void**) {
+    TFuture<int> intFuture = []() -> TFuture<int> {
+        co_return 1;
+    }();
+
+    TFuture<double> doubleFuture = intFuture.Apply([](int value) -> double {
+        return value * 1.5;
+    });
+
+    double val = -1;
+    [&](TFuture<double>&& f, double* val) -> TFuture<void> {
+        *val = co_await f;
+    }(std::move(doubleFuture), &val);
+
+    assert_true(std::abs(val - 1.5) < 1e-13);
+}
+
 #ifdef __linux__
 
 namespace {
@@ -951,6 +969,7 @@ int main() {
         my_unit_poller(test_read_write_full),
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
+        my_unit_poller(test_future_chaining),
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),
         my_unit_test2(test_resolve_bad_name, TSelect, TPoll),

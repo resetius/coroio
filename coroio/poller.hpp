@@ -45,6 +45,11 @@ public:
         Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE, {}});
     }
 
+    void RemoveEvent(THandle /*h*/) {
+        // TODO: Add new vector for this type of removing
+        // Will be called in destuctor of unfinished futures
+    }
+
     auto Sleep(TTime until) {
         struct TAwaitable {
             bool await_ready() {
