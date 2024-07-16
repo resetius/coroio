@@ -21,7 +21,7 @@ TVoidTask resolve(TResolver& resolver, std::string name, EDNSType type, int* inf
 }
 
 template<typename TPoller>
-TVoidSuspendedTask resolve(TPoller& poller, EDNSType type) {
+TFuture<void> resolve(TPoller& poller, EDNSType type) {
     TFileHandle input{0, poller}; // stdin
     TLineReader lineReader(input, 4096);
     TResolver<TPollerBase> resolver(poller);
@@ -46,7 +46,6 @@ void run(EDNSType type) {
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 }
 
 int main(int argc, char** argv) {

@@ -151,4 +151,22 @@ TFinalAwaiter<T> TValuePromiseBase<T>::final_suspend() noexcept { return {}; }
 template<typename T>
 using TFuture = TValueTask<T>;
 
+template<typename T>
+TFuture<std::vector<T>> All(std::vector<TFuture<T>>&& futures) {
+    auto waiting = std::move(futures);
+    std::vector<T> ret; ret.reserve(waiting.size());
+    for (auto& f : waiting) {
+        ret.emplace_back(std::move(co_await f));
+    }
+    co_return ret;
+}
+
+inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
+    auto waiting = std::move(futures);
+    for (auto& f : waiting) {
+        co_await f;
+    }
+    co_return;
+}
+
 } // namespace NNet

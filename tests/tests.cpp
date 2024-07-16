@@ -779,6 +779,36 @@ void test_future_chaining(void**) {
     assert_true(std::abs(val - 1.5) < 1e-13);
 }
 
+template<typename TPoller>
+void test_futures_all(void**) {
+    std::vector<int> r;
+    TFuture<void> h1 = [](std::vector<int>* r) -> TFuture<void> {
+        std::vector<TFuture<int>> futures;
+        futures.emplace_back([]() -> TFuture<int> { co_return 1; }());
+        futures.emplace_back([]() -> TFuture<int> { co_return 2; }());
+        futures.emplace_back([]() -> TFuture<int> { co_return 3; }());
+        futures.emplace_back([]() -> TFuture<int> { co_return 4; }());
+        *r = co_await All(std::move(futures));
+        co_return;
+    }(&r);
+
+    assert_true(r == (std::vector<int>{1, 2, 3, 4}));
+
+    int ok = 0;
+    TFuture<void> h2 = [](int* ok) -> TFuture<void> {
+        std::vector<TFuture<void>> futures;
+        futures.emplace_back([]() -> TFuture<void> { co_return; }());
+        futures.emplace_back([]() -> TFuture<void> { co_return; }());
+        futures.emplace_back([]() -> TFuture<void> { co_return; }());
+        futures.emplace_back([]() -> TFuture<void> { co_return; }());
+        co_await All(std::move(futures));
+        *ok = 1;
+        co_return;
+    }(&ok);
+
+    assert_true(ok == 1);
+}
+
 #ifdef __linux__
 
 namespace {
@@ -970,6 +1000,7 @@ int main() {
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
         my_unit_poller(test_future_chaining),
+        my_unit_poller(test_futures_all),
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),
         my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
