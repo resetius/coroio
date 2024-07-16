@@ -780,6 +780,42 @@ void test_future_chaining(void**) {
 }
 
 template<typename TPoller>
+void test_futures_any(void**) {
+    using TLoop = TLoop<TPoller>;
+    TLoop loop;
+
+    int ok = 0;
+    TFuture<void> h2 = [](TPoller& poller, int* ok) -> TFuture<void> {
+        std::vector<TFuture<void>> futures;
+        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+            co_return;
+        }(poller));
+        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+            co_return;
+        }(poller));
+        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+            co_return;
+        }(poller));
+        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+            co_return;
+        }(poller));
+        co_await Any(std::move(futures));
+        *ok = 1;
+        co_return;
+    }(loop.Poller(), &ok);
+
+    while (!h2.done()) {
+        loop.Step();
+    }
+
+    assert_true(ok == 1);
+}
+
+template<typename TPoller>
 void test_futures_all(void**) {
     std::vector<int> r;
     TFuture<void> h1 = [](std::vector<int>* r) -> TFuture<void> {
@@ -1000,6 +1036,7 @@ int main() {
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
         my_unit_poller(test_future_chaining),
+        // my_unit_poller(test_futures_any), // TODO: unfinished
         my_unit_poller(test_futures_all),
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),

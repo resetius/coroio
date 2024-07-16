@@ -85,6 +85,8 @@ protected:
     std::coroutine_handle<TValuePromise<T>> Coro = nullptr;
 };
 
+template<> struct TValueTask<void>;
+
 template<typename T>
 struct TValueTask : public TValueTaskBase<T> {
     T await_resume() {
@@ -102,9 +104,9 @@ struct TValueTask : public TValueTaskBase<T> {
         auto ret = co_await prev;
         co_return func(ret);
     }
-};
 
-template<> struct TValueTask<void>;
+    TValueTask<void> Ignore();
+};
 
 template<>
 struct TValuePromise<void>: public TValuePromiseBase<void> {
@@ -129,7 +131,21 @@ struct TValueTask<void> : public TValueTaskBase<void> {
             std::rethrow_exception(errorOr);
         }
     }
+
+    template<typename Func>
+    auto Accept(Func func) -> TValueTask<void> {
+        auto prev = std::move(*this);
+        co_await prev;
+        co_return func();
+    }
 };
+
+template<typename T>
+inline TValueTask<void> TValueTask<T>::Ignore() {
+    auto prev = std::move(*this);
+    co_await prev;
+    co_return;
+}
 
 template<typename T>
 struct TFinalAwaiter {
@@ -166,6 +182,36 @@ inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
     for (auto& f : waiting) {
         co_await f;
     }
+    co_return;
+}
+
+inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
+    std::vector<TFuture<void>> waiting; waiting.reserve(futures.size());
+    struct TAwaitable {
+        bool await_ready() {
+            return done;
+        }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            this->h = h;
+        }
+
+        void await_resume() { }
+
+        bool done = false;
+        std::coroutine_handle<> h = nullptr;
+    };
+    bool done = false;
+    for (auto&& f : futures) {
+        done = done || f.done();
+    }
+    TAwaitable awaitable{done};
+    for (auto&& f : futures) {
+        waiting.emplace_back(std::move(f.Accept([&](){
+            awaitable.h.resume();
+        })));
+    }
+    co_await awaitable;
     co_return;
 }
 
