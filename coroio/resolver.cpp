@@ -201,15 +201,7 @@ TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaul
 }
 
 template<typename TPoller>
-TResolver<TPoller>::~TResolver()
-{
-    Sender.destroy();
-    Receiver.destroy();
-    Timeouts.destroy();
-}
-
-template<typename TPoller>
-TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
+TFuture<void> TResolver<TPoller>::SenderTask() {
     co_await Socket.Connect();
     char buf[512];
     while (true) {
@@ -231,7 +223,7 @@ TVoidSuspendedTask TResolver<TPoller>::SenderTask() {
 }
 
 template<typename TPoller>
-TVoidSuspendedTask TResolver<TPoller>::TimeoutsTask() {
+TFuture<void> TResolver<TPoller>::TimeoutsTask() {
     while (true) {
         TTime now = TClock::now();
         while (!TimeoutsQueue.empty() && TimeoutsQueue.front().first <= now) {
@@ -257,7 +249,7 @@ void TResolver<TPoller>::ResumeWaiters(TResolveResult&& result, const TResolveRe
 }
 
 template<typename TPoller>
-TVoidSuspendedTask TResolver<TPoller>::ReceiverTask() {
+TFuture<void> TResolver<TPoller>::ReceiverTask() {
     char buf[512];
     while (true) {
         auto size = co_await Socket.ReadSome(buf, sizeof(buf));
@@ -329,7 +321,7 @@ THostPort::THostPort(const std::string& host, int port)
 { }
 
 template<typename T>
-TValueTask<TAddress> THostPort::Resolve(TResolver<T>& resolver) {
+TFuture<TAddress> THostPort::Resolve(TResolver<T>& resolver) {
     char buf[16];
     if (inet_pton(AF_INET, Host.c_str(), buf) == 1 || inet_pton(AF_INET6, Host.c_str(), buf)) {
         co_return TAddress{Host, Port};
