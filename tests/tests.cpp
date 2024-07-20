@@ -827,24 +827,29 @@ void test_futures_any_same_wakeup(void**) {
     int ok = 0;
     TFuture<void> h2 = [](TPoller& poller, int* ok) -> TFuture<void> {
         std::vector<TFuture<void>> futures;
-        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
-            co_await poller.Sleep(std::chrono::milliseconds(100));
+        auto until = TClock::now() + std::chrono::milliseconds(100);
+        futures.emplace_back([](TPoller& poller, TTime until, int* ok) -> TFuture<void> {
+            co_await poller.Sleep(until);
+            (*ok)++;
             co_return;
-        }(poller));
-        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
-            co_await poller.Sleep(std::chrono::milliseconds(100));
+        }(poller, until, ok));
+        futures.emplace_back([](TPoller& poller, TTime until, int* ok) -> TFuture<void> {
+            co_await poller.Sleep(until);
+            (*ok)++;
             co_return;
-        }(poller));
-        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
-            co_await poller.Sleep(std::chrono::milliseconds(100));
+        }(poller, until, ok));
+        futures.emplace_back([](TPoller& poller, TTime until, int* ok) -> TFuture<void> {
+            co_await poller.Sleep(until);
+            (*ok)++;
             co_return;
-        }(poller));
-        futures.emplace_back([](TPoller& poller) -> TFuture<void> {
-            co_await poller.Sleep(std::chrono::milliseconds(100));
+        }(poller, until, ok));
+        futures.emplace_back([](TPoller& poller, TTime until, int* ok) -> TFuture<void> {
+            co_await poller.Sleep(until);
+            (*ok)++;
             co_return;
-        }(poller));
+        }(poller, until, ok));
         co_await Any(std::move(futures));
-        *ok = 1;
+        (*ok)++;
         co_return;
     }(loop.Poller(), &ok);
 
@@ -856,7 +861,7 @@ void test_futures_any_same_wakeup(void**) {
         loop.Step();
     }
 
-    assert_true(ok == 1);
+    assert_true(ok == 2);
 }
 
 template<typename TPoller>
