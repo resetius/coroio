@@ -214,12 +214,12 @@ public:
             void await_suspend(std::coroutine_handle<> h) {
                 poller->AddWrite(fd, h);
                 if (deadline != TTime::max()) {
-                    poller->AddTimer(fd, deadline, h);
+                    timerId = poller->AddTimer(fd, deadline, h);
                 }
             }
 
             void await_resume() {
-                if (deadline != TTime::max() && poller->RemoveTimer(fd, deadline)) {
+                if (deadline != TTime::max() && poller->RemoveTimer(fd, timerId, deadline)) {
                     throw std::system_error(std::make_error_code(std::errc::timed_out));
                 }
             }
@@ -228,6 +228,7 @@ public:
             int fd;
             std::pair<const sockaddr*, int> addr;
             TTime deadline;
+            unsigned timerId = 0;
         };
         return TAwaitable{Poller_, Fd_, Addr_.RawAddr(), deadline};
     }

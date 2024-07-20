@@ -18,9 +18,10 @@ using THandle = std::coroutine_handle<>;
 struct TTimer {
     TTime Deadline;
     int Fd;
+    unsigned Id;
     THandle Handle;
     bool operator<(const TTimer& e) const {
-        return std::tuple(Deadline, Fd, static_cast<bool>(Handle)) > std::tuple(e.Deadline, e.Fd, static_cast<bool>(e.Handle));
+        return std::tuple(Deadline, Fd, Id, static_cast<bool>(Handle)) > std::tuple(e.Deadline, e.Fd, e.Id, static_cast<bool>(e.Handle));
     }
 };
 
