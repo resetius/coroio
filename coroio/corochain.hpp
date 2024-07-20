@@ -6,6 +6,9 @@
 #include <memory>
 #include <functional>
 
+#include "promises.hpp"
+#include "poller.hpp"
+
 namespace NNet {
 
 template<typename T> struct TFinalAwaiter;
@@ -14,9 +17,25 @@ template<typename T> struct TValueTask;
 
 template<typename T>
 struct TValuePromiseBase {
+    ~TValuePromiseBase() {
+        if (Unregister) { Unregister(); }
+    }
+
     std::suspend_never initial_suspend() { return {}; }
     TFinalAwaiter<T> final_suspend() noexcept;
+
+    auto await_transform(TPollerBase::TAwaitableSleep&& awaitable) {
+        Unregister = [&](){ awaitable.cancel(); }; // TODO: ugly code
+        return std::move(awaitable);
+    }
+
+    template<typename U>
+    auto await_transform(U&& awaitable) {
+        return std::move(awaitable);
+    }
+
     std::coroutine_handle<> Caller = std::noop_coroutine();
+    std::function<void(void)> Unregister;
 };
 
 template<typename T>
@@ -186,32 +205,22 @@ inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
 }
 
 inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
-    std::vector<TFuture<void>> waiting; waiting.reserve(futures.size());
-    struct TAwaitable {
-        bool await_ready() {
-            return done;
-        }
+    std::vector<TFuture<void>> all = std::move(futures);
 
-        void await_suspend(std::coroutine_handle<> h) {
-            this->h = h;
-        }
-
-        void await_resume() { }
-
-        bool done = false;
-        std::coroutine_handle<> h = nullptr;
-    };
     bool done = false;
-    for (auto&& f : futures) {
+    for (auto& f : all) {
         done = done || f.done();
     }
-    TAwaitable awaitable{done};
-    for (auto&& f : futures) {
-        waiting.emplace_back(std::move(f.Accept([&](){
-            awaitable.h.resume();
-        })));
+    auto self = co_await SelfId();
+
+    if (done) {
+        co_return;
     }
-    co_await awaitable;
+   
+    for (auto& f : all) {
+        f.await_suspend(self);
+    }
+    co_await std::suspend_always();
     co_return;
 }
 

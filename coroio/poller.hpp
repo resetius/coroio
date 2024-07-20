@@ -50,22 +50,31 @@ public:
         // Will be called in destuctor of unfinished futures
     }
 
+    struct TAwaitableSleep {
+        bool await_ready() {
+            return false;
+        }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            poller->AddTimer(-1, n, h);
+        }
+
+        void await_resume() { resumed = true; }
+
+        void cancel() {
+            // TODO: can remove wrong timer
+            if (resumed == false) {
+                poller->RemoveTimer(-1, n);
+            }
+        }
+
+        TPollerBase* poller;
+        TTime n;
+        bool resumed = false;
+    };
+
     auto Sleep(TTime until) {
-        struct TAwaitable {
-            bool await_ready() {
-                return false;
-            }
-
-            void await_suspend(std::coroutine_handle<> h) {
-                poller->AddTimer(-1, n, h);
-            }
-
-            void await_resume() { }
-
-            TPollerBase* poller;
-            TTime n;
-        };
-        return TAwaitable{this,until};
+        return TAwaitableSleep{this,until};
     }
 
     template<typename Rep, typename Period>
@@ -98,6 +107,10 @@ public:
         MaxDurationTs_ = GetMaxDuration(MaxDuration_);
     }
 
+    auto TimersSize() const {
+        return Timers_.size();
+    }
+
 protected:
     timespec GetTimeout() const {
         return Timers_.empty()
@@ -121,11 +134,11 @@ protected:
 
     void ProcessTimers() {
         auto now = TClock::now();
-        int prevFd = -1;
+        int prevFd = -2;
         while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
             TTimer timer = Timers_.top();
 
-            if ((prevFd == -1 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
+            if ((prevFd == -2 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
                 ReadyEvents_.emplace_back(TEvent{-1, 0, timer.Handle});
             }
 
