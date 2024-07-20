@@ -207,15 +207,10 @@ inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
 inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
     std::vector<TFuture<void>> all = std::move(futures);
 
-    bool done = false;
-    for (auto& f : all) {
-        done = done || f.done();
-    }
-
-    if (done) {
+    if (std::all_of(all.begin(), all.end(), [](auto& f) { return f.done(); })) {
         co_return;
     }
-   
+
     for (auto& f : all) {
         f.await_suspend(co_await SelfId());
     }
