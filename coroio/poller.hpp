@@ -50,30 +50,43 @@ public:
         // Will be called in destuctor of unfinished futures
     }
 
-    struct TAwaitableSleep {
-        bool await_ready() {
-            return false;
-        }
-
-        void await_suspend(std::coroutine_handle<> h) {
-            poller->AddTimer(-1, n, h);
-        }
-
-        void await_resume() { resumed = true; }
-
-        void cancel() {
-            // TODO: can remove wrong timer
-            if (resumed == false) {
-                poller->RemoveTimer(-1, n);
-            }
-        }
-
-        TPollerBase* poller;
-        TTime n;
-        bool resumed = false;
-    };
-
     auto Sleep(TTime until) {
+        struct TAwaitableSleep {
+            TAwaitableSleep(TPollerBase* poller, TTime n)
+                : poller(poller)
+                , n(n)
+            { }
+            ~TAwaitableSleep() {
+                // TODO: can remove wrong timer
+                if (poller) {
+                    poller->RemoveTimer(-1, n);
+                }
+            }
+
+            TAwaitableSleep(TAwaitableSleep&& other)
+                : poller(other.poller)
+                , n(other.n)
+            {
+                other.poller = nullptr;
+            }
+
+            TAwaitableSleep(const TAwaitableSleep&) = delete;
+            TAwaitableSleep& operator=(const TAwaitableSleep&) = delete;
+
+            bool await_ready() {
+                return false;
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->AddTimer(-1, n, h);
+            }
+
+            void await_resume() { poller = nullptr; }
+
+            TPollerBase* poller;
+            TTime n;
+        };
+
         return TAwaitableSleep{this,until};
     }
 

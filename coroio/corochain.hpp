@@ -17,23 +17,8 @@ template<typename T> struct TValueTask;
 
 template<typename T>
 struct TValuePromiseBase {
-    ~TValuePromiseBase() {
-        if (Unregister) { Unregister(); }
-    }
-
     std::suspend_never initial_suspend() { return {}; }
     TFinalAwaiter<T> final_suspend() noexcept;
-
-    auto await_transform(TPollerBase::TAwaitableSleep&& awaitable) {
-        Unregister = [&](){ awaitable.cancel(); }; // TODO: ugly code
-        return std::move(awaitable);
-    }
-
-    template<typename U>
-    auto await_transform(U&& awaitable) {
-        return std::move(awaitable);
-    }
-
     std::coroutine_handle<> Caller = std::noop_coroutine();
     std::function<void(void)> Unregister;
 };
