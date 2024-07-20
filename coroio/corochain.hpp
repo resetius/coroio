@@ -211,14 +211,13 @@ inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
     for (auto& f : all) {
         done = done || f.done();
     }
-    auto self = co_await SelfId();
 
     if (done) {
         co_return;
     }
    
     for (auto& f : all) {
-        f.await_suspend(self);
+        f.await_suspend(co_await SelfId());
     }
     co_await std::suspend_always();
     co_return;
