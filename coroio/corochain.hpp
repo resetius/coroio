@@ -189,10 +189,26 @@ inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
     co_return;
 }
 
+template<typename T>
+TFuture<T> Any(std::vector<TFuture<T>>&& futures) {
+    std::vector<TFuture<T>> all = std::move(futures);
+
+    auto it = std::find_if(all.begin(), all.end(), [](auto& f) { return f.done(); });
+    if (it != all.end()) {
+        co_return it->await_resume();
+    }
+
+    for (auto& f : all) {
+        f.await_suspend(co_await SelfId());
+    }
+    co_await std::suspend_always();
+    co_return std::find_if(all.begin(), all.end(), [](auto& f) { return f.done(); })->await_resume();
+}
+
 inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
     std::vector<TFuture<void>> all = std::move(futures);
 
-    if (std::all_of(all.begin(), all.end(), [](auto& f) { return f.done(); })) {
+    if (std::find_if(all.begin(), all.end(), [](auto& f) { return f.done(); }) != all.end()) {
         co_return;
     }
 
