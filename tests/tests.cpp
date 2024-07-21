@@ -820,6 +820,45 @@ void test_futures_any(void**) {
 }
 
 template<typename TPoller>
+void test_futures_any_result(void**) {
+    using TLoop = TLoop<TPoller>;
+    TLoop loop;
+
+    int ok = 0;
+    TFuture<void> h2 = [](TPoller& poller, int* ok) -> TFuture<void> {
+        std::vector<TFuture<int>> futures;
+        futures.emplace_back([](TPoller& poller) -> TFuture<int> {
+            co_await poller.Sleep(std::chrono::milliseconds(204));
+            co_return 1;
+        }(poller));
+        futures.emplace_back([](TPoller& poller) -> TFuture<int> {
+            co_await poller.Sleep(std::chrono::milliseconds(100));
+            co_return 2;
+        }(poller));
+        futures.emplace_back([](TPoller& poller) -> TFuture<int> {
+            co_await poller.Sleep(std::chrono::milliseconds(201));
+            co_return 3;
+        }(poller));
+        futures.emplace_back([](TPoller& poller) -> TFuture<int> {
+            co_await poller.Sleep(std::chrono::milliseconds(202));
+            co_return 4;
+        }(poller));
+        *ok = co_await Any(std::move(futures));
+        co_return;
+    }(loop.Poller(), &ok);
+
+    while (!h2.done()) {
+        loop.Step();
+    }
+
+    while (loop.Poller().TimersSize() > 0) {
+        loop.Step();
+    }
+
+    assert_true(ok == 2);
+}
+
+template<typename TPoller>
 void test_futures_any_same_wakeup(void**) {
     using TLoop = TLoop<TPoller>;
     TLoop loop;
@@ -1086,6 +1125,7 @@ int main() {
         my_unit_poller(test_read_write_lines),
         my_unit_poller(test_future_chaining),
         my_unit_poller(test_futures_any), 
+        my_unit_poller(test_futures_any_result),
         my_unit_poller(test_futures_any_same_wakeup),
         my_unit_poller(test_futures_all),
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
