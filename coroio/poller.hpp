@@ -17,14 +17,15 @@ public:
     TPollerBase(const TPollerBase& ) = delete;
     TPollerBase& operator=(const TPollerBase& ) = delete;
 
-    void AddTimer(int fd, TTime deadline, THandle h) {
-        Timers_.emplace(TTimer{deadline, fd, h});
+    unsigned AddTimer(TTime deadline, THandle h) {
+        Timers_.emplace(TTimer{deadline, TimerId_, h});
+        return TimerId_++;
     }
 
-    bool RemoveTimer(int fd, TTime deadline) {
-        bool fired = deadline < LastTimersProcessTime_;
+    bool RemoveTimer(unsigned timerId, TTime deadline) {
+        bool fired = timerId == LastFiredTimer_;
         if (!fired) {
-            Timers_.emplace(TTimer{deadline, fd, {}}); // insert empty timer before existing
+            Timers_.emplace(TTimer{deadline, timerId, {}}); // insert empty timer before existing
         }
         return fired;
     }
@@ -57,9 +58,8 @@ public:
                 , n(n)
             { }
             ~TAwaitableSleep() {
-                // TODO: can remove wrong timer
                 if (poller) {
-                    poller->RemoveTimer(-1, n);
+                    poller->RemoveTimer(timerId, n);
                 }
             }
 
@@ -78,13 +78,14 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
-                poller->AddTimer(-1, n, h);
+                timerId = poller->AddTimer(n, h);
             }
 
             void await_resume() { poller = nullptr; }
 
             TPollerBase* poller;
             TTime n;
+            unsigned timerId = 0;
         };
 
         return TAwaitableSleep{this,until};
@@ -147,25 +148,31 @@ protected:
 
     void ProcessTimers() {
         auto now = TClock::now();
-        int prevFd = -2;
-        while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
-            TTimer timer = Timers_.top();
+        bool first = true;
+        unsigned prevId = 0;
 
-            if ((prevFd == -2 || prevFd != timer.Fd) && timer.Handle) { // skip removed timers
-                ReadyEvents_.emplace_back(TEvent{-1, 0, timer.Handle});
+        while (!Timers_.empty()&&Timers_.top().Deadline <= now) {
+            TTimer timer = Timers_.top(); Timers_.pop();
+
+            if ((first || prevId != timer.Id) && timer.Handle) { // skip removed timers
+                LastFiredTimer_ = timer.Id;
+                timer.Handle.resume();
             }
 
-            prevFd = timer.Fd;
-            Timers_.pop();
+            first = false;
+            prevId = timer.Id;
         }
+
         LastTimersProcessTime_ = now;
     }
 
     int MaxFd_ = 0;
     std::vector<TEvent> Changes_;
     std::vector<TEvent> ReadyEvents_;
+    unsigned TimerId_ = 0;
     std::priority_queue<TTimer> Timers_;
     TTime LastTimersProcessTime_;
+    unsigned LastFiredTimer_ = (unsigned)(-1);
     std::chrono::milliseconds MaxDuration_ = std::chrono::milliseconds(100);
     timespec MaxDurationTs_ = GetMaxDuration(MaxDuration_);
 };
