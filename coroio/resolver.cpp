@@ -206,7 +206,7 @@ TFuture<void> TResolver<TPoller>::SenderTask() {
     char buf[512];
     while (true) {
         while (AddResolveQueue.empty()) {
-            SenderSuspended = co_await SelfId();
+            SenderSuspended = co_await Self();
             co_await std::suspend_always{};
         }
         SenderSuspended = {};
@@ -286,7 +286,7 @@ void TResolver<TPoller>::ResumeSender() {
 
 template<typename TPoller>
 TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname, EDNSType type) {
-    auto handle = co_await SelfId();
+    auto handle = co_await Self();
     if (type == EDNSType::DEFAULT) {
         type = DefaultType;
     }

@@ -20,7 +20,6 @@ struct TValuePromiseBase {
     std::suspend_never initial_suspend() { return {}; }
     TFinalAwaiter<T> final_suspend() noexcept;
     std::coroutine_handle<> Caller = std::noop_coroutine();
-    std::function<void(void)> Unregister;
 };
 
 template<typename T>
@@ -64,15 +63,11 @@ struct TValueTaskBase {
     ~TValueTaskBase() { if (Coro) { Coro.destroy(); } }
 
     bool await_ready() const {
-        return !!Coro.promise().ErrorOr;
+        return Coro.promise().ErrorOr != std::nullopt;
     }
 
     bool done() const {
         return Coro.done();
-    }
-
-    void* address() const {
-        return Coro.address();
     }
 
     std::coroutine_handle<> raw() {
@@ -198,8 +193,9 @@ TFuture<T> Any(std::vector<TFuture<T>>&& futures) {
         co_return it->await_resume();
     }
 
+    auto self = co_await Self();
     for (auto& f : all) {
-        f.await_suspend(co_await SelfId());
+        f.await_suspend(self);
     }
     co_await std::suspend_always();
     co_return std::find_if(all.begin(), all.end(), [](auto& f) { return f.done(); })->await_resume();
@@ -212,8 +208,9 @@ inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
         co_return;
     }
 
+    auto self = co_await Self();
     for (auto& f : all) {
-        f.await_suspend(co_await SelfId());
+        f.await_suspend(self);
     }
     co_await std::suspend_always();
     co_return;

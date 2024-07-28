@@ -644,11 +644,11 @@ void test_zero_copy_line_splitter(void**) {
 void test_self_id(void**) {
     void* id;
     TFuture<void> h = [](void** id) -> TFuture<void> {
-        *id = (co_await SelfId()).address();
+        *id = (co_await Self()).address();
         co_return;
     }(&id);
 
-    assert_ptr_equal(id, h.address());
+    assert_ptr_equal(id, h.raw().address());
 }
 
 void test_resolv_nameservers(void**) {

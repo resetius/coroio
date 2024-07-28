@@ -35,25 +35,21 @@ struct TVoidSuspendedPromise
     void unhandled_exception() {}
 };
 
-inline auto SelfId() {
-    struct Awaitable {
-        bool await_ready() {
-            return false;
-        }
+struct Self {
+    bool await_ready() {
+        return false;
+    }
 
-        bool await_suspend(std::coroutine_handle<> h) {
-            H = h;
-            return false;
-        }
+    bool await_suspend(std::coroutine_handle<> h) {
+        H = h;
+        return false;
+    }
 
-        auto await_resume() noexcept {
-            return H;
-        }
+    auto await_resume() noexcept {
+        return H;
+    }
 
-        std::coroutine_handle<> H;
-    };
-
-    return Awaitable{};
-}
+    std::coroutine_handle<> H;
+};
 
 } // namespace NNet
