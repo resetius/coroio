@@ -1,6 +1,10 @@
 #pragma once
 
+#ifdef _WIN32
+#include <winsock2.h>
+#else
 #include <sys/select.h>
+#endif
 #include <assert.h>
 #include <system_error>
 
