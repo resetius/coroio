@@ -5,7 +5,7 @@
 using namespace NNet;
 
 template<bool debug, typename TPoller>
-TVoidSuspendedTask client(TPoller& poller, TSslContext& ctx, TAddress addr)
+TFuture<void> client(TPoller& poller, TSslContext& ctx, TAddress addr)
 {
     static constexpr int maxLineSize = 4096;
     using TSocket = typename TPoller::TSocket;
@@ -39,7 +39,7 @@ template<typename TPoller>
 void run(bool debug, TAddress address)
 {
     NNet::TLoop<TPoller> loop;
-    NNet::THandle h;
+    NNet::TFuture<void> h;
     if (debug) {
         TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
         h = client<true>(loop.Poller(), ctx, std::move(address));
@@ -50,7 +50,6 @@ void run(bool debug, TAddress address)
     while (!h.done()) {
         loop.Step();
     }
-    h.destroy();
 }
 
 int main(int argc, char** argv) {
