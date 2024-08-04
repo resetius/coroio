@@ -1004,11 +1004,12 @@ void test_uring_write_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TVoidSuspendedTask h = [](TUring* uring, int* r) -> TVoidSuspendedTask {
+    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
+        co_await std::suspend_always();
         *r = uring->Result();
         co_return;
     }(&uring, &r);
-    uring.Write(p[1], buf, 1, h);
+    uring.Write(p[1], buf, 1, h.raw());
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -1016,7 +1017,6 @@ void test_uring_write_resume(void**) {
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
-    h.destroy();
 }
 
 void test_uring_read_resume(void**) {
@@ -1026,19 +1026,19 @@ void test_uring_read_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TVoidSuspendedTask h = [](TUring* uring, int* r) -> TVoidSuspendedTask {
+    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
+        co_await std::suspend_always();
         *r = uring->Result();
         co_return;
     }(&uring, &r);
     assert_int_equal(1, write(p[1], buf, 1));
-    uring.Read(p[0], rbuf, 1, h);
+    uring.Read(p[0], rbuf, 1, h.raw());
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
     assert_true(rbuf[0] == 'e');
     assert_int_equal(r, 1);
     assert_true(h.done());
-    h.destroy();
 }
 
 void test_uring_no_sqe(void** ) {
@@ -1124,7 +1124,7 @@ int main() {
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
         my_unit_poller(test_future_chaining),
-        my_unit_poller(test_futures_any), 
+        my_unit_poller(test_futures_any),
         my_unit_poller(test_futures_any_result),
         my_unit_poller(test_futures_any_same_wakeup),
         my_unit_poller(test_futures_all),
@@ -1136,8 +1136,8 @@ int main() {
         cmocka_unit_test(test_uring_write),
         cmocka_unit_test(test_uring_read),
         cmocka_unit_test(test_uring_read_more_than_write),
-        // cmocka_unit_test(test_uring_write_resume), // temporary disable
-        // cmocka_unit_test(test_uring_read_resume), // temporary disable
+        cmocka_unit_test(test_uring_write_resume),
+        cmocka_unit_test(test_uring_read_resume),
         cmocka_unit_test(test_uring_no_sqe),
         // cmocka_unit_test(test_uring_cancel), // temporary disable
 #endif
