@@ -31,7 +31,7 @@ void TEPoll::Poll() {
         bool change = false;
         bool newEv = false;
         if (ch.Handle) {
-            newEv = !!ev.Read && !!ev.Write;
+            newEv = !!ev.Read && !!ev.Write && !!ev.RHup;
             if (ch.Type & TEvent::READ) {
                 eev.events |= EPOLLIN;
                 change |= ev.Read != ch.Handle;
@@ -41,6 +41,11 @@ void TEPoll::Poll() {
                 eev.events |= EPOLLOUT;
                 change |= ev.Write != ch.Handle;
                 ev.Write = ch.Handle;
+            }
+            if (ch.Type & TEvent::RHUP) {
+                eev.events |= EPOLLRDHUP;
+                change |= ev.RHup != ch.Handle;
+                ev.RHup = ch.Handle;
             }
         } else {
             if (ch.Type & TEvent::READ) {
@@ -56,6 +61,9 @@ void TEPoll::Poll() {
             }
             if (ev.Write) {
                 eev.events |= EPOLLOUT;
+            }
+            if (ev.RHup) {
+                eev.events |= EPOLLRDHUP;
             }
         }
 
@@ -111,6 +119,17 @@ void TEPoll::Poll() {
             }
             if (ev.Write) {
                 ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
+            }
+        }
+        if (OutEvents_[i].events & EPOLLRDHUP) {
+            if (ev.Read) {
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
+            }
+            if (ev.Write) {
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
+            }
+            if (ev.RHup) {
+                ReadyEvents_.emplace_back(TEvent{fd, TEvent::RHUP, ev.RHup});
             }
         }
     }

@@ -43,6 +43,10 @@ void TPoll::Poll() {
                 pev.events |= POLLOUT;
                 ev.Write = ch.Handle;
             }
+            if (ch.Type & TEvent::RHUP) {
+                pev.events |= POLLRDHUP;
+                ev.Write = ch.Handle;
+            }
         } else if (idx != -1) {
             if (ch.Type & TEvent::READ) {
                 Fds_[idx].events &= ~POLLIN;
@@ -51,6 +55,10 @@ void TPoll::Poll() {
             if (ch.Type & TEvent::WRITE) {
                 Fds_[idx].events &= ~POLLOUT;
                 ev.Write = {};
+            }
+            if (ch.Type & TEvent::RHUP) {
+                Fds_[idx].events &= ~POLLRDHUP;
+                ev.RHup = {};
             }
             if (Fds_[idx].events == 0) {
                 std::swap(Fds_[idx], Fds_.back());
@@ -85,6 +93,17 @@ void TPoll::Poll() {
             }
             if (ev.Write) {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
+            }
+        }
+        if (pev.revents & POLLRDHUP) {
+            if (ev.Read) {
+                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read});
+            }
+            if (ev.Write) {
+                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
+            }
+            if (ev.RHup) {
+                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::RHUP, ev.RHup});
             }
         }
     }
