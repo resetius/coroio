@@ -27,13 +27,15 @@ struct TTimer {
 struct THandlePair {
     THandle Read;
     THandle Write;
+    THandle RHup;
 };
 
 struct TEvent {
     int Fd;
     enum {
         READ = 1,
-        WRITE = 2
+        WRITE = 2,
+        RHUP = 4
     };
     int Type;
     THandle Handle;
