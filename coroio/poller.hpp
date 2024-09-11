@@ -40,10 +40,15 @@ public:
         Changes_.emplace_back(TEvent{fd, TEvent::WRITE, h});
     }
 
+    void AddRemoteHup(int fd, THandle h) {
+        MaxFd_ = std::max(MaxFd_, fd);
+        Changes_.emplace_back(TEvent{fd, TEvent::RHUP, h});
+    }
+
     void RemoveEvent(int fd) {
         // TODO: resume waiting coroutines here
         MaxFd_ = std::max(MaxFd_, fd);
-        Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE, {}});
+        Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP, {}});
     }
 
     void RemoveEvent(THandle /*h*/) {
