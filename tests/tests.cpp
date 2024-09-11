@@ -1056,6 +1056,39 @@ void test_uring_no_sqe(void** ) {
     }
 }
 
+template<typename TPoller>
+void test_remote_disconnect(void**) {
+    bool changed = false;
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
+    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    TFuture<void> h1 = [](TPoller& poller, bool *changed) -> TFuture<void>
+    {
+        auto clientSocket = TSocket(TAddress{"127.0.0.1", 8888}, poller);
+        co_await clientSocket.Connect();
+        co_await clientSocket.Monitor();
+        *changed = true;
+        co_return;
+    }(loop.Poller(), &changed);
+
+    TFuture<void> h2 = [](TSocket* socket) -> TFuture<void>
+    {
+        auto clientSocket = co_await socket->Accept();
+        clientSocket.Close();
+        co_return;
+    }(&socket);
+
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
+
+    assert_true(changed);
+}
+
 /* temporary disable
 void test_uring_cancel(void** ) {
     TUring uring(16);
@@ -1131,6 +1164,7 @@ int main() {
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),
         my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
+        my_unit_test2(test_remote_disconnect, TPoll, TEPoll),
 #ifdef __linux__
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
