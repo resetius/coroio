@@ -1,5 +1,6 @@
 #include "resolver.hpp"
 #include "socket.hpp"
+#include "sockutils.hpp"
 #include "promises.hpp"
 #ifdef __linux__
 #include "uring.hpp"
@@ -216,8 +217,7 @@ TFuture<void> TResolver<TPoller>::SenderTask() {
         Inflight[Xid] = req;
         CreatePacket(req.Name, req.Type, buf, &len, Xid);
         Xid = 1 + (Xid + 1) % 65535;
-        auto size = co_await Socket.WriteSome(buf, len);
-        assert(size == len);
+        co_await TByteWriter(Socket).Write(buf, len);
     }
     co_return;
 }
