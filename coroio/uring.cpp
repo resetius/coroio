@@ -104,7 +104,7 @@ int TUring::Wait(timespec ts) {
     int err;
 
     for (auto& ev : Changes_) {
-        assert(ev.Type == (TEvent::READ|TEvent::WRITE));
+        assert(ev.Type == (TEvent::READ|TEvent::WRITE|TEvent::RHUP));
         assert(!ev.Handle);
         Cancel(ev.Fd);
     }
