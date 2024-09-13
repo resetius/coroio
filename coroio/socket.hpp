@@ -122,6 +122,19 @@ public:
         return TAwaitableWrite{Poller_,Fd_,const_cast<void*>(buf),size};
     }
 
+    auto Monitor() {
+        struct TAwaitableClose: public TAwaitable<TAwaitableClose> {
+            void run() {
+                this->ret = true;
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                this->poller->AddRemoteHup(this->fd, h);
+            }
+        };
+        return TAwaitableClose{Poller_,Fd_};
+    }
+
 protected:
     template<typename T>
     struct TAwaitable {
