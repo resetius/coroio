@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <io.h>
 #else
 #include <arpa/inet.h>
 #include <sys/stat.h>
@@ -193,11 +194,19 @@ public:
 class TSockOps {
 public:
     static auto read(int fd, void* buf, size_t count) {
+#ifdef _WIN32
+        return ::recv(fd, static_cast<char*>(buf), count, 0);
+#else
         return ::recv(fd, buf, count, 0);
+#endif
     }
 
     static auto write(int fd, const void* buf, size_t count) {
+#ifdef _WIN32
+        return ::send(fd, static_cast<const char*>(buf), count, 0);
+#else
         return ::send(fd, buf, count, 0);
+#endif
     }
 };
 

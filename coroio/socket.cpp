@@ -105,7 +105,7 @@ TSocketOps::TSocketOps(int fd, TPollerBase& poller)
 
 int TSocketOps::Create(int domain, int type) {
     auto s = socket(domain, type, 0);
-    if (s < 0) {
+    if (s == static_cast<decltype(s)>(-1)) {
         throw std::system_error(errno, std::generic_category(), "socket");
     }
     return Setup(s);

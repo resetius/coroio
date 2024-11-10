@@ -1,3 +1,4 @@
+#ifndef _WIN32
 #include "poll.hpp"
 
 namespace {
@@ -74,7 +75,6 @@ void TPoll::Poll() {
     }
 
     Reset();
-
     if (ppoll(&Fds_[0], Fds_.size(), &ts, nullptr) < 0) {
         throw std::system_error(errno, std::generic_category(), "poll");
     }
@@ -112,3 +112,4 @@ void TPoll::Poll() {
 }
 
 } // namespace NNet
+#endif
