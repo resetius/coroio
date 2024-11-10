@@ -9,6 +9,10 @@
 
 #include "base.hpp"
 
+#ifdef Yield
+#undef Yield
+#endif
+
 namespace NNet {
 
 class TPollerBase {
@@ -142,7 +146,10 @@ protected:
     static constexpr timespec GetMaxDuration(std::chrono::milliseconds duration) {
         auto p1 = std::chrono::duration_cast<std::chrono::seconds>(duration);
         auto p2 = std::chrono::duration_cast<std::chrono::nanoseconds>(duration - p1);
-        return {p1.count(), p2.count()};
+        timespec ts;
+        ts.tv_sec = p1.count();
+        ts.tv_nsec = p2.count();
+        return ts;
     }
 
     void Reset() {

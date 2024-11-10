@@ -67,7 +67,10 @@ GetDurationPair(TTime now, TTime deadline, std::chrono::milliseconds maxDuration
 inline timespec GetTimespec(TTime now, TTime deadline, std::chrono::milliseconds maxDuration)
 {
     auto [p1, p2] = GetDurationPair<std::chrono::seconds, std::chrono::nanoseconds>(now, deadline, maxDuration);
-    return {p1.count(), p2.count()};
+    timespec ret;
+    ret.tv_sec = p1.count();
+    ret.tv_nsec = p2.count();
+    return ret;
 }
 
 } // namespace NNet
