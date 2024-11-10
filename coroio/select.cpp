@@ -2,18 +2,28 @@
 
 namespace NNet {
 
+#ifdef _WIN32
+    TSelect::TSelect() {
+        FD_ZERO(&ReadFds_);
+        FD_ZERO(&WriteFds_);
+    }
+#endif
+
 void TSelect::Poll() {
     auto ts = GetTimeout();
-
-    constexpr int bits = sizeof(fd_mask)*8;
 
     if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
     }
+
+#ifndef _WIN32
+    constexpr int bits = sizeof(fd_mask)*8;
+
     if (MaxFd_ >= static_cast<int>(ReadFds_.size())*bits) {
         ReadFds_.resize((MaxFd_+bits)/bits);
         WriteFds_.resize((MaxFd_+bits)/bits);
     }
+#endif
 
     for (const auto& ch : Changes_) {
         int fd = ch.Fd;
@@ -37,7 +47,15 @@ void TSelect::Poll() {
 
     Reset();
 
+#ifdef _WIN32
+    timeval tv;
+    tv.tv_sec = ts.tv_sec;
+    tv.tv_usec = ts.tv_nsec / 1000;
+
+    if (select(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &tv) < 0) {
+#else
     if (pselect(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &ts, nullptr) < 0) {
+#endif
         throw std::system_error(errno, std::generic_category(), "select");
     }
 

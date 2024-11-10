@@ -41,6 +41,8 @@ namespace NNet {
 using TDefaultPoller = TKqueue;
 #elif defined(__linux__)
 using TDefaultPoller = TEPoll;
+#elif defined(_WIN32)
+using TDefaultPoller = TSelect;
 #else
 using TDefaultPoller = TPoll;
 #endif
