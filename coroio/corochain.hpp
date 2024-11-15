@@ -155,9 +155,9 @@ struct TFinalAwaiter {
     void await_resume() noexcept { }
 };
 
-inline TValueTask<void> TValuePromise<void>::get_return_object() { return { TValueTask<void>(*this) }; }
+inline TValueTask<void> TValuePromise<void>::get_return_object() { return { TValueTask<void>{*this} }; }
 template<typename T>
-TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>(*this) }; }
+TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>{*this} }; }
 
 
 template<typename T>
