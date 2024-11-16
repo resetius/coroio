@@ -112,16 +112,16 @@ int TSocketOps::Create(int domain, int type) {
 }
 
 int TSocketOps::Setup(int s) {
-    char value;
+    int value;
     socklen_t len = sizeof(value);
 
-    if (getsockopt(s, SOL_SOCKET, SO_TYPE, &value, &len) == 0) {
+    if (getsockopt(s, SOL_SOCKET, SO_TYPE, (char*) &value, &len) == 0) {
         value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, len) < 0) {
+        if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*) &value, len) < 0) {
             throw std::system_error(errno, std::generic_category(), "setsockopt");
         }
         value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, len) < 0) {
+        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &value, len) < 0) {
             throw std::system_error(errno, std::generic_category(), "setsockopt");
         }
     }
