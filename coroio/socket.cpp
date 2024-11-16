@@ -113,7 +113,7 @@ int TSocketOps::Create(int domain, int type) {
 
 int TSocketOps::Setup(int s) {
     char value;
-    int len = sizeof(value);
+    socklen_t len = sizeof(value);
 
     if (getsockopt(s, SOL_SOCKET, SO_TYPE, &value, &len) == 0) {
         value = 1;
