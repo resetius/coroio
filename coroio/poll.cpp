@@ -45,7 +45,7 @@ void TPoll::Poll() {
                 ev.Write = ch.Handle;
             }
             if (ch.Type & TEvent::RHUP) {
-                pev.events |= POLLRDHUP;
+                pev.events |= POLLHUP;
                 ev.Write = ch.Handle;
             }
         } else if (idx != -1) {
@@ -58,7 +58,7 @@ void TPoll::Poll() {
                 ev.Write = {};
             }
             if (ch.Type & TEvent::RHUP) {
-                Fds_[idx].events &= ~POLLRDHUP;
+                Fds_[idx].events &= ~POLLHUP;
                 ev.RHup = {};
             }
             if (Fds_[idx].events == 0) {
@@ -95,6 +95,7 @@ void TPoll::Poll() {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
             }
         }
+#ifdef __linux__
         if (pev.revents & POLLRDHUP) {
             if (ev.Read) {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read});
@@ -106,6 +107,7 @@ void TPoll::Poll() {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::RHUP, ev.RHup});
             }
         }
+#endif
     }
 
     ProcessTimers();
