@@ -53,7 +53,9 @@ void run(bool debug, TAddress address)
 }
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
+#endif
     std::string addr;
     int port = 0;
     std::string method = "select";
@@ -74,9 +76,12 @@ int main(int argc, char** argv) {
 
     if (method == "select") {
         run<TSelect>(debug, address);
-    } else if (method == "poll") {
+    }
+#ifndef _WIN32
+    else if (method == "poll") {
         run<TPoll>(debug, address);
     }
+#endif
 #ifdef __linux__
     else if (method == "epoll") {
         run<TEPoll>(debug, address);
