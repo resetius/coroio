@@ -1132,7 +1132,9 @@ void test_uring_cancel(void** ) {
 #endif
 
 int main() {
+#ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
+#endif
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
         cmocka_unit_test(test_addr6),

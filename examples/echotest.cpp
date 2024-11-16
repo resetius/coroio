@@ -67,7 +67,9 @@ TVoidTask client(TLoop* loop, int clientId)
 }
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
+#endif
 
     TLoop loop;
     int clients = 0;

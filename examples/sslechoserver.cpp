@@ -3,7 +3,10 @@
 using NNet::TVoidTask;
 using NNet::TAddress;
 using NNet::TSelect;
+
+#ifndef _WIN32
 using NNet::TPoll;
+#endif
 
 #ifdef __linux__
 using NNet::TEPoll;
@@ -76,7 +79,9 @@ void run(bool debug, TAddress address, int buffer_size)
 }
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
+#endif
     int port = 0;
     int buffer_size = 128;
     std::string method = "select";
@@ -100,9 +105,12 @@ int main(int argc, char** argv) {
 
     if (method == "select") {
         run<TSelect>(debug, address, buffer_size);
-    } else if (method == "poll") {
+    }
+#ifndef _WIN32
+    else if (method == "poll") {
         run<TPoll>(debug, address, buffer_size);
     }
+#endif
 #ifdef __linux__
     else if (method == "epoll") {
         run<TEPoll>(debug, address, buffer_size);
