@@ -24,6 +24,14 @@ int pipe(int pipes[2]);
 
 namespace NNet {
 
+class TInitializer {
+public:
+    TInitializer();
+#ifdef _WIN32
+    ~TInitializer();
+#endif
+};
+
 class TAddress {
 public:
     TAddress(const std::string& addr, int port);

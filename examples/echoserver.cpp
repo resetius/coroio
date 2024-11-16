@@ -64,9 +64,7 @@ void run(bool debug, TAddress address, int buffer_size)
 }
 
 int main(int argc, char** argv) {
-#ifndef _WIN32
-    signal(SIGPIPE, SIG_IGN);
-#endif
+    NNet::TInitializer init;
     int port = 0;
     int buffer_size = 128;
     std::string method = "select";

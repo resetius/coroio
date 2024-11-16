@@ -67,10 +67,7 @@ TVoidTask client(TLoop* loop, int clientId)
 }
 
 int main(int argc, char** argv) {
-#ifndef _WIN32
-    signal(SIGPIPE, SIG_IGN);
-#endif
-
+    NNet::TInitializer init;
     TLoop loop;
     int clients = 0;
     if (argc > 1) { clients = atoi(argv[1]); }
