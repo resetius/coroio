@@ -51,9 +51,7 @@ void run(bool debug, TAddress address)
 }
 
 int main(int argc, char** argv) {
-#ifndef _WIN32
-    signal(SIGPIPE, SIG_IGN);
-#endif
+    TInitializer init;
     std::string addr = "127.0.0.1";
     int port = 0;
     std::string method = "select";

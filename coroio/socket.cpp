@@ -1,6 +1,28 @@
 #include "socket.hpp"
 
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
 namespace NNet {
+
+TInitializer::TInitializer() {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#else
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0) {
+        throw std::runtime_error("WSAStartup failed with error: " + std::to_string(result));
+    }
+#endif
+}
+
+#ifdef _WIN32
+TInitializer::~TInitializer() {
+    WSACleanup();
+}
+#endif
 
 TAddress::TAddress(const std::string& addr, int port)
 {
