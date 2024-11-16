@@ -4,6 +4,7 @@
 namespace {
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
+#define POLLRDHUP POLLHUP
 int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigset_t* /*sigmask*/) {
     int timeout = 0;
     if (ts) {
