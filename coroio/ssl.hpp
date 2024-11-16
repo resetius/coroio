@@ -125,7 +125,6 @@ public:
     TValueTask<ssize_t> WriteSome(const void* data, size_t size) {
         co_await WaitHandshake();
 
-        char buf[1024];
         auto r = size;
         const char* p = (const char*)data;
         while (size != 0) {
