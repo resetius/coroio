@@ -14,9 +14,11 @@ TInitializer::TInitializer() {
 #endif
 }
 
+#ifdef _WIN32
 TInitializer::~TInitializer() {
     WSACleanup();
 }
+#endif
 
 TAddress::TAddress(const std::string& addr, int port)
 {
