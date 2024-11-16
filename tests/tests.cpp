@@ -1172,7 +1172,7 @@ int main() {
 #else
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),
-        my_unit_test2(test_resolve_bad_name, TSelect, TPoll)
+        my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
 #endif
 #ifdef __linux__
         my_unit_test2(test_remote_disconnect, TPoll, TEPoll),
