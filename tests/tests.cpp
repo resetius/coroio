@@ -1164,8 +1164,8 @@ int main() {
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
         my_unit_test2(test_resolver, TSelect, TPoll),
         my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
-        my_unit_test2(test_remote_disconnect, TPoll, TEPoll),
 #ifdef __linux__
+        my_unit_test2(test_remote_disconnect, TPoll, TEPoll),
         cmocka_unit_test(test_uring_create),
         cmocka_unit_test(test_uring_write),
         cmocka_unit_test(test_uring_read),
