@@ -1,5 +1,9 @@
 #include "socket.hpp"
 
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
 namespace NNet {
 
 TInitializer::TInitializer() {
