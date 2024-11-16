@@ -18,6 +18,10 @@
 
 #include "poller.hpp"
 
+#ifdef _WIN32
+int pipe(int pipes[2]);
+#endif
+
 namespace NNet {
 
 class TAddress {

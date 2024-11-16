@@ -159,12 +159,12 @@ int main(int argc, char** argv) {
             usage(argv[0]); return 1;
         }
     }
-    if (!strcmp(method, "poll")) {
-        run_test<TPoll>(num_pipes, num_writes, num_active);
+    if (!strcmp(method, "select")) {
+        run_test<TSelect>(num_pipes, num_writes, num_active);
     }
 #ifndef _WIN32
-    else if (!strcmp(method, "select")) {
-        run_test<TSelect>(num_pipes, num_writes, num_active);
+    else if (!strcmp(method, "poll")) {
+        run_test<TPoll>(num_pipes, num_writes, num_active);
     }
 #endif
 #ifdef __linux__

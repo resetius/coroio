@@ -112,19 +112,26 @@ int TSocketOps::Create(int domain, int type) {
 }
 
 int TSocketOps::Setup(int s) {
-    struct stat statbuf;
-    fstat(s, &statbuf);
-    if (S_ISSOCK(statbuf.st_mode)) {
-        int value;
+    int value;
+    socklen_t len = sizeof(value);
+
+    if (getsockopt(s, SOL_SOCKET, SO_TYPE, (char*) &value, &len) == 0) {
         value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(int)) < 0) {
+        if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*) &value, len) < 0) {
             throw std::system_error(errno, std::generic_category(), "setsockopt");
         }
         value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)) < 0) {
+        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &value, len) < 0) {
             throw std::system_error(errno, std::generic_category(), "setsockopt");
         }
     }
+
+#ifdef _WIN32
+    u_long mode = 1;  // Неблокирующий режим (0 для блокирующего)
+    if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+        throw std::system_error(WSAGetLastError(), std::system_category(), "ioctlsocket");
+    }
+#else
     auto flags = fcntl(s, F_GETFL, 0);
     if (flags < 0) {
         throw std::system_error(errno, std::generic_category(), "fcntl");
@@ -132,6 +139,7 @@ int TSocketOps::Setup(int s) {
     if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
         throw std::system_error(errno, std::generic_category(), "fcntl");
     }
+#endif
     return s;
 }
 

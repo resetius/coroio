@@ -27,11 +27,15 @@ add_library(coroio
   coroio/kqueue.cpp
   coroio/resolver.cpp
   coroio/ssl.cpp
+  coroio/win32_pipe.cpp
   )
 
 target_include_directories(coroio PUBLIC ${URING_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIRS})
 target_link_directories(coroio PUBLIC ${URING_LIBRARY_DIRS} ${OPENSSL_LIBRARY_DIRS})
 target_link_libraries(coroio PUBLIC ${URING_LIBRARIES} ${OPENSSL_LIBRARIES})
+if (WIN32)
+    target_link_libraries(coroio PUBLIC ws2_32)
+endif()
 
 if(MSVC)
     target_compile_options(coroio PRIVATE /W4 /WX)
