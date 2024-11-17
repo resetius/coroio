@@ -116,6 +116,9 @@ public:
         struct TAwaitableWrite: public TAwaitable<TAwaitableWrite> {
             void run() {
                 this->ret = TSockOps::write(this->fd, this->b, this->s);
+                if (this->ret < 0) {
+                    process_errno();
+                }
             }
 
             void await_suspend(std::coroutine_handle<> h) {
