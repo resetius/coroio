@@ -44,6 +44,7 @@ private:
 #ifdef _WIN32
     fd_set ReadFds_;
     fd_set WriteFds_;
+    TSocket DummySocket_; // for timeouts
 #else
     std::vector<fd_mask> ReadFds_;
     std::vector<fd_mask> WriteFds_;

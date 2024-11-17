@@ -3,13 +3,21 @@
 namespace NNet {
 
 #ifdef _WIN32
-    TSelect::TSelect() {
+    TSelect::TSelect()
+        : DummySocket_({}, *this)
+    {
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);
+
+        MaxFd_ = std::max<int>(MaxFd_, DummySocket_.Fd());
     }
 #endif
 
 void TSelect::Poll() {
+#ifdef _WIN32
+    FD_SET(DummySocket_.Fd(), ReadFds());
+#endif
+
     auto ts = GetTimeout();
 
     if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
@@ -51,7 +59,6 @@ void TSelect::Poll() {
     timeval tv;
     tv.tv_sec = ts.tv_sec;
     tv.tv_usec = ts.tv_nsec / 1000;
-
     if (select(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &tv) < 0) {
 #else
     if (pselect(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &ts, nullptr) < 0) {
