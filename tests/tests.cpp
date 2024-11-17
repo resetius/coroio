@@ -25,6 +25,11 @@ static uint32_t rand_(uint32_t* seed) {
     return *seed;
 }
 
+int getport() {
+    static int port = 8000;
+    return port++;
+}
+
 } // namespace
 
 using namespace NNet;
@@ -66,9 +71,10 @@ void test_timespec(void**) {
 }
 
 void test_addr(void**) {
-    TAddress address("127.0.0.1", 8888);
+    int port = getport();
+    TAddress address("127.0.0.1", port);
     auto low = std::get<sockaddr_in>(address.Addr());
-    assert_true(low.sin_port == ntohs(8888));
+    assert_true(low.sin_port == ntohs(port));
     assert_true(low.sin_family == AF_INET);
 
     unsigned int value = ntohl((127<<24)|(0<<16)|(0<<8)|1);
@@ -76,16 +82,18 @@ void test_addr(void**) {
 }
 
 void test_addr6(void**) {
-    TAddress address("::1", 8888);
+    int port = getport();
+    TAddress address("::1", port);
     auto low = std::get<sockaddr_in6>(address.Addr());
-    assert_true(low.sin6_port == ntohs(8888));
+    assert_true(low.sin6_port == ntohs(port));
     assert_true(low.sin6_family == AF_INET6);
 }
 
 void test_bad_addr(void**) {
+    int port = getport();
     int flag = 0;
     try {
-        TAddress address("wtf", 8888);
+        TAddress address("wtf", port);
     } catch (const std::exception& ex) {
         flag = 1;
     }
@@ -94,8 +102,9 @@ void test_bad_addr(void**) {
 
 template<typename TPoller>
 void test_listen(void**) {
+    int port = getport();
     TLoop<TPoller> loop;
-    TAddress address("127.0.0.1", 8888);
+    TAddress address("127.0.0.1", port);
     TSocket socket(std::move(address), loop.Poller());
     socket.Bind();
     socket.Listen();
@@ -103,24 +112,25 @@ void test_listen(void**) {
 
 template<typename TPoller>
 void test_accept(void**) {
+    int port = getport();
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
     TSocket clientSocket{};
     socket.Bind();
     socket.Listen();
 
-    TFuture<void> h1 = [](TPoller& poller) -> TFuture<void>
+    TFuture<void> h1 = [](TPoller& poller, int port) -> TFuture<void>
     {
         try {
-            TSocket client(TAddress{"127.0.0.1", 8888}, poller);
+            TSocket client(TAddress{"127.0.0.1", port}, poller);
             co_await client.Connect();
         } catch (const std::exception& ex) {
             std::cerr << "Error on connect: " << ex.what() << std::endl;
         }
         co_return;
-    }(loop.Poller());
+    }(loop.Poller(), port);
 
     TFuture<void> h2 = [](TSocket* socket, TSocket* clientSocket) -> TFuture<void>
     {
@@ -145,20 +155,21 @@ template<typename TPoller>
 void test_write_after_connect(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8898}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[256] = {0};
 
-    TFuture<void> h1 = [](TPoller& poller, char* buf, int size) -> TFuture<void>
+    TFuture<void> h1 = [](TPoller& poller, char* buf, int size, int port) -> TFuture<void>
     {
-        TSocket client(TAddress{"127.0.0.1", 8898}, poller);
+        TSocket client(TAddress{"127.0.0.1", port}, poller);
         co_await client.Connect();
         co_await client.WriteSome(buf, size);
         co_return;
-    }(loop.Poller(), send_buf, sizeof(send_buf));
+    }(loop.Poller(), send_buf, sizeof(send_buf), port);
 
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
@@ -178,20 +189,21 @@ template<typename TPoller>
 void test_write_after_accept(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char send_buf[128] = "Hello";
     char rcv_buf[256] = {0};
 
-    TFuture<void> h1 = [](TPoller& poller, char* buf, int size) -> TFuture<void>
+    TFuture<void> h1 = [](TPoller& poller, char* buf, int size, int port) -> TFuture<void>
     {
-        TSocket client(TAddress{"127.0.0.1", 8888}, poller);
+        TSocket client(TAddress{"127.0.0.1", port}, poller);
         co_await client.Connect();
         co_await client.ReadSome(buf, size);
         co_return;
-    }(loop.Poller(), rcv_buf, sizeof(rcv_buf));
+    }(loop.Poller(), rcv_buf, sizeof(rcv_buf), port);
 
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
@@ -211,14 +223,15 @@ template<typename TPoller>
 void test_read_write_same_socket(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
     char buf1[128] = {0};
     char buf2[128] = {0};
 
-    TSocket client(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    TSocket client(TAddress{"127.0.0.1", port}, loop.Poller());
 
     TFuture<void> h1 = [](TSocket& client) -> TFuture<void>
     {
@@ -264,13 +277,14 @@ template<typename TPoller>
 void test_connection_timeout(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
     bool timeout = false;
 
-    TFuture<void> h = [](TPoller& poller, bool& timeout) -> TFuture<void>
+    TFuture<void> h = [](TPoller& poller, bool& timeout, int port) -> TFuture<void>
     {
         // TODO: use other addr
-        TSocket client(TAddress{"10.0.0.1", 18889}, poller);
+        TSocket client(TAddress{"10.0.0.1", port}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(100));
         } catch (const std::system_error& ex) {
@@ -281,7 +295,7 @@ void test_connection_timeout(void**) {
             }
         }
         co_return;
-    }(loop.Poller(), timeout);
+    }(loop.Poller(), timeout, port);
 
     while (!h.done()) {
         loop.Step();
@@ -294,16 +308,17 @@ template<typename TPoller>
 void test_remove_connection_timeout(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 18889}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
     bool timeout = false;
 
-    TFuture<void> h = [](TPoller& poller, bool& timeout) -> TFuture<void>
+    TFuture<void> h = [](TPoller& poller, bool& timeout, int port) -> TFuture<void>
     {
-        TSocket client(TAddress{"127.0.0.1", 18889}, poller);
+        TSocket client(TAddress{"127.0.0.1", port}, poller);
         try {
             co_await client.Connect(TClock::now()+std::chrono::milliseconds(10));
             co_await poller.Sleep(std::chrono::milliseconds(100));
@@ -315,7 +330,7 @@ void test_remove_connection_timeout(void**) {
             }
         }
         co_return;
-    }(loop.Poller(), timeout);
+    }(loop.Poller(), timeout, port);
 
     while (!h.done()) {
         loop.Step();
@@ -328,12 +343,13 @@ template<typename TPoller>
 void test_connection_refused_on_write(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
     std::error_code err;
 
-    TFuture<void> h = [](TPoller& poller, std::error_code* err) -> TFuture<void>
+    TFuture<void> h = [](TPoller& poller, std::error_code* err, int port) -> TFuture<void>
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
+        TSocket clientSocket(TAddress{"127.0.0.1", port}, poller);
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
@@ -342,7 +358,7 @@ void test_connection_refused_on_write(void**) {
             *err = ex.code();
         }
         co_return;
-    }(loop.Poller(), &err);
+    }(loop.Poller(), &err, port);
 
     while (!h.done()) {
         loop.Step();
@@ -356,12 +372,13 @@ template<typename TPoller>
 void test_connection_refused_on_read(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
     std::error_code err;
 
-    TFuture<void> h = [](TPoller& poller, std::error_code* err) -> TFuture<void>
+    TFuture<void> h = [](TPoller& poller, std::error_code* err, int port) -> TFuture<void>
     {
-        TSocket clientSocket(TAddress{"127.0.0.1", 8888}, poller);
+        TSocket clientSocket(TAddress{"127.0.0.1", port}, poller);
         char buffer[] = "test";
         try {
             co_await clientSocket.Connect();
@@ -370,7 +387,7 @@ void test_connection_refused_on_read(void**) {
             *err = ex.code();
         }
         co_return;
-    }(loop.Poller(), &err);
+    }(loop.Poller(), &err, port);
 
     while (!h.done()) {
         loop.Step();
@@ -441,6 +458,7 @@ void test_read_write_full(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
+    int port = getport();
     std::vector<char> data(1024*1024);
     int cur = 0;
     for (auto& ch : data) {
@@ -449,11 +467,11 @@ void test_read_write_full(void**) {
     }
 
     TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
-    TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
 
     TFuture<void> h1 = [](TSocket& client, const std::vector<char>& data) -> TFuture<void>
     {
@@ -493,12 +511,13 @@ void test_read_write_struct(void**) {
         cur = (cur + 1) % ('z' - 'a' + 1);
     }
 
+    int port = getport();
     TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
-    TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
 
     TFuture<void> h1 = [](TSocket& client, auto& data) -> TFuture<void>
     {
@@ -536,20 +555,21 @@ void test_read_write_lines(void**) {
         lines.emplace_back(std::move(line));
     }
 
+    int port = getport();
     TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
-    TFuture<void> h1 = [](auto& poller, auto& lines) -> TFuture<void>
+    TFuture<void> h1 = [](auto& poller, auto& lines, int port) -> TFuture<void>
     {
-        TSocket client(NNet::TAddress{"127.0.0.1", 8988}, poller);
+        TSocket client(NNet::TAddress{"127.0.0.1", port}, poller);
         co_await client.Connect();
         for (auto& line : lines) {
             co_await TByteWriter(client).Write(line.data(), line.size());
         }
         co_return;
-    }(loop.Poller(), lines);
+    }(loop.Poller(), lines, port);
 
     std::vector<std::string> received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
@@ -728,6 +748,7 @@ void test_read_write_full_ssl(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
+    int port = getport();
     std::vector<char> data(1024);
     int cur = 0;
     for (auto& ch : data) {
@@ -736,11 +757,11 @@ void test_read_write_full_ssl(void**) {
     }
 
     TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
-    TSocket client(NNet::TAddress{"127.0.0.1", 8988}, loop.Poller());
+    TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
 
     TFuture<void> h1 = [](TSocket&& client, const std::vector<char>& data) -> TFuture<void>
     {
@@ -1069,19 +1090,20 @@ void test_remote_disconnect(void**) {
     bool changed = false;
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
+    int port = getport();
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop.Poller());
+    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
     socket.Bind();
     socket.Listen();
 
-    TFuture<void> h1 = [](TPoller& poller, bool *changed) -> TFuture<void>
+    TFuture<void> h1 = [](TPoller& poller, bool *changed, int port) -> TFuture<void>
     {
-        auto clientSocket = TSocket(TAddress{"127.0.0.1", 8888}, poller);
+        auto clientSocket = TSocket(TAddress{"127.0.0.1", port}, poller);
         co_await clientSocket.Connect();
         co_await clientSocket.Monitor();
         *changed = true;
         co_return;
-    }(loop.Poller(), &changed);
+    }(loop.Poller(), &changed, port);
 
     TFuture<void> h2 = [](TSocket* socket) -> TFuture<void>
     {
