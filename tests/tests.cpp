@@ -397,7 +397,7 @@ void test_connection_refused_on_read(void**) {
     }
 
     // std::errc::timed_out for windows
-    assert_int_equal(err == std::errc::timed_out || err.value(), ECONNREFUSED);
+    assert_true(err == std::errc::timed_out || err.value() == ECONNREFUSED);
 }
 
 template<typename TPoller>
