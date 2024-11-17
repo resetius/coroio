@@ -113,14 +113,22 @@ void test_accept(void**) {
 
     TFuture<void> h1 = [](TPoller& poller) -> TFuture<void>
     {
-        TSocket client(TAddress{"127.0.0.1", 8888}, poller);
-        co_await client.Connect();
+        try {
+            TSocket client(TAddress{"127.0.0.1", 8888}, poller);
+            co_await client.Connect();
+        } catch (const std::exception& ex) {
+            std::cerr << "Error on connect: " << ex.what() << std::endl;
+        }
         co_return;
     }(loop.Poller());
 
     TFuture<void> h2 = [](TSocket* socket, TSocket* clientSocket) -> TFuture<void>
     {
-        *clientSocket = std::move(co_await socket->Accept());
+        try {
+            *clientSocket = std::move(co_await socket->Accept());
+        } catch (const std::exception& ex) {
+            std::cerr << "Error on accept: " << ex.what() << std::endl;
+        }
         co_return;
     }(&socket, &clientSocket);
 

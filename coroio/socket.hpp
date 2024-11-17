@@ -22,6 +22,8 @@
 int pipe(int pipes[2]);
 #endif
 
+int process_errno();
+
 namespace NNet {
 
 class TInitializer {
@@ -244,6 +246,7 @@ public:
         struct TAwaitable {
             bool await_ready() {
                 int ret = connect(fd, addr.first, addr.second);
+                process_errno();
                 if (ret < 0 && !(errno == EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
                     throw std::system_error(errno, std::generic_category(), "connect");
                 }
