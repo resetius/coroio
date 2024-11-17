@@ -95,6 +95,7 @@ void TPoll::Poll() {
             if (ev.Write) {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
             }
+            pev.revents = pev.revents & ~POLLHUP;
         }
         if (pev.revents & POLLRDHUP) {
             if (ev.Read) {
