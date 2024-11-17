@@ -28,6 +28,7 @@ add_library(coroio
   coroio/resolver.cpp
   coroio/ssl.cpp
   coroio/win32_pipe.cpp
+  coroio/win32_errors.cpp
   )
 
 target_include_directories(coroio PUBLIC ${URING_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIRS})

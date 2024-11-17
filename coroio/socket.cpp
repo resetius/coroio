@@ -136,20 +136,15 @@ int TSocketOps::Create(int domain, int type) {
 int TSocketOps::Setup(int s) {
     int value;
     socklen_t len = sizeof(value);
-
     if (getsockopt(s, SOL_SOCKET, SO_TYPE, (char*) &value, &len) == 0) {
         value = 1;
         if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*) &value, len) < 0) {
             throw std::system_error(errno, std::generic_category(), "setsockopt");
         }
-        value = 1;
-        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &value, len) < 0) {
-            throw std::system_error(errno, std::generic_category(), "setsockopt");
-        }
     }
 
 #ifdef _WIN32
-    u_long mode = 1;  // Неблокирующий режим (0 для блокирующего)
+    u_long mode = 1;
     if (ioctlsocket(s, FIONBIO, &mode) != 0) {
         throw std::system_error(WSAGetLastError(), std::system_category(), "ioctlsocket");
     }
@@ -211,6 +206,11 @@ TSocket& TSocket::operator=(TSocket&& other) {
 
 void TSocket::Bind() {
     auto [addr, len] = Addr_.RawAddr();
+    int optval = 1;
+    socklen_t optlen = sizeof(optval);
+    if (setsockopt(Fd_, SOL_SOCKET, SO_REUSEADDR, (char*) &optval, optlen) < 0) {
+        throw std::system_error(errno, std::generic_category(), "setsockopt");
+    }
     if (bind(Fd_, addr, len) < 0) {
         throw std::system_error(errno, std::generic_category(), "bind");
     }
