@@ -178,7 +178,7 @@ protected:
         LastTimersProcessTime_ = now;
     }
 
-    int MaxFd_ = 0;
+    int MaxFd_ = -1;
     std::vector<TEvent> Changes_;
     std::vector<TEvent> ReadyEvents_;
     unsigned TimerId_ = 0;
