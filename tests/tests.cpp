@@ -705,7 +705,11 @@ void test_resolver(void**) {
     using TSocket = typename TPoller::TSocket;
 
     TLoop loop;
+#ifdef _WIN32
+    TResolver<TPollerBase> resolver(TAddress{"8.8.8.8", 53}, loop.Poller());
+#else
     TResolver<TPollerBase> resolver(loop.Poller());
+#endif
 
     std::vector<TAddress> addresses;
     TFuture<void> h1 = [](auto& resolver, std::vector<TAddress>& addresses) -> TFuture<void> {

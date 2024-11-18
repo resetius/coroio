@@ -103,12 +103,12 @@ std::string TAddress::ToString() const {
     if (const auto* val = std::get_if<sockaddr_in>(&Addr_)) {
         auto* r = inet_ntop(AF_INET, &val->sin_addr, buf, sizeof(buf));
         if (r) {
-            return std::string(r) + ":" + std::to_string(val->sin_port);
+            return std::string(r) + ":" + std::to_string(ntohs(val->sin_port));
         }
     } else if (const auto* val = std::get_if<sockaddr_in6>(&Addr_)) {
         auto* r = inet_ntop(AF_INET6, &val->sin6_addr, buf, sizeof(buf));
         if (r) {
-            return "[" + std::string(r) + "]:" + std::to_string(val->sin6_port);
+            return "[" + std::string(r) + "]:" + std::to_string(ntohs(val->sin6_port));
         }
     }
 
@@ -138,8 +138,12 @@ int TSocketOps::Setup(int s) {
     socklen_t len = sizeof(value);
     if (getsockopt(s, SOL_SOCKET, SO_TYPE, (char*) &value, &len) == 0) {
         value = 1;
+        // TODO: set for STREAM only
         if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*) &value, len) < 0) {
-            throw std::system_error(errno, std::generic_category(), "setsockopt");
+#ifdef _WIN32
+            if (WSAGetLastError() != WSAENOPROTOOPT)
+#endif
+                throw std::system_error(errno, std::generic_category(), "setsockopt");
         }
     }
 
@@ -188,7 +192,11 @@ TSocket::~TSocket()
 void TSocket::Close()
 {
     if (Fd_ >= 0) {
+#ifdef _WIN32
+        closesocket(Fd_);
+#else
         close(Fd_);
+#endif
         Poller_->RemoveEvent(Fd_);
     }
 }
