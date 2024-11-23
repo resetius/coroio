@@ -1,10 +1,8 @@
-#ifndef _WIN32
 #include "poll.hpp"
 
 namespace {
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
-#define POLLRDHUP POLLHUP
 int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigset_t* /*sigmask*/) {
     int timeout = 0;
     if (ts) {
@@ -14,13 +12,44 @@ int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigs
     // TODO: support sigmask
     return poll(fds, nfds, timeout);
 }
+#elif defined(_WIN32)
+int ppoll(struct pollfd* fds, int nfds, const struct timespec* ts, const void* /*sigmask*/) {
+    int timeout = 0;
+    if (ts) {
+        timeout  = ts->tv_sec;
+        timeout += ts->tv_nsec / 1000000;
+    }
+    // TODO: support sigmask
+    int ret = WSAPoll(fds, nfds, timeout);
+    if (ret < 0) { process_errno(); }
+    return ret;
+}
 #endif
 
 } // namespace
 
 namespace NNet {
 
-void TPoll::Poll() {
+#ifdef _WIN32
+TPoll::TPoll()
+    : DummySocket_({}, *this)
+{
+    int fd = DummySocket_.Fd();
+    MaxFd_ = std::max<int>(MaxFd_, fd);
+    if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
+        InEvents_.resize(MaxFd_+1, std::make_tuple(THandlePair{}, -1));
+    }
+    auto& [_, idx] = InEvents_[fd];
+    idx = Fds_.size();
+    Fds_.emplace_back(pollfd{});
+    pollfd& pev = Fds_[idx];
+    pev.fd = fd;
+    pev.events |= POLLIN;
+}
+#endif
+
+void TPoll::Poll()
+{
     auto ts = GetTimeout();
 
     if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
@@ -45,10 +74,12 @@ void TPoll::Poll() {
                 pev.events |= POLLOUT;
                 ev.Write = ch.Handle;
             }
+#ifdef __linux__
             if (ch.Type & TEvent::RHUP) {
                 pev.events |= POLLRDHUP;
                 ev.Write = ch.Handle;
             }
+#endif
         } else if (idx != -1) {
             if (ch.Type & TEvent::READ) {
                 Fds_[idx].events &= ~POLLIN;
@@ -58,10 +89,12 @@ void TPoll::Poll() {
                 Fds_[idx].events &= ~POLLOUT;
                 ev.Write = {};
             }
+#ifdef __linux__
             if (ch.Type & TEvent::RHUP) {
                 Fds_[idx].events &= ~POLLRDHUP;
                 ev.RHup = {};
             }
+#endif
             if (Fds_[idx].events == 0) {
                 std::swap(Fds_[idx], Fds_.back());
                 std::get<1>(InEvents_[Fds_[idx].fd]) = idx;
@@ -83,20 +116,21 @@ void TPoll::Poll() {
     for (auto& pev : Fds_) {
         auto [ev, _] = InEvents_[pev.fd];
         if (pev.revents & POLLIN) {
-            ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read}); ev.Read = {};
+            ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::READ, ev.Read}); ev.Read = {};
         }
         if (pev.revents & POLLOUT) {
-            ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write}); ev.Write = {};
+            ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::WRITE, ev.Write}); ev.Write = {};
         }
         if (pev.revents & POLLHUP) {
             if (ev.Read) {
-                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read});
+                ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::READ, ev.Read});
             }
             if (ev.Write) {
-                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
+                ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::WRITE, ev.Write});
             }
             pev.revents = pev.revents & ~POLLHUP;
         }
+#ifdef __linux__
         if (pev.revents & POLLRDHUP) {
             if (ev.Read) {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read});
@@ -108,10 +142,11 @@ void TPoll::Poll() {
                 ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::RHUP, ev.RHup});
             }
         }
+#endif
     }
 
     ProcessTimers();
 }
 
 } // namespace NNet
-#endif
+
