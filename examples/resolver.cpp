@@ -62,11 +62,9 @@ int main(int argc, char** argv) {
     if (method == "select") {
         run<TSelect>(type);
     }
-#ifndef _WIN32
     else if (method == "poll") {
         run<TPoll>(type);
     }
-#endif
 #ifdef __linux__
     else if (method == "epoll") {
         run<TEPoll>(type);
