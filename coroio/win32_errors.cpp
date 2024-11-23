@@ -23,7 +23,7 @@ int map_winsock_error_to_errno(int winsock_error) {
 } // namespace
 
 int process_errno() {
-    return errno = map_winsock_error_to_errno(WSAGetLastError());
+    return errno == 0 ? errno = map_winsock_error_to_errno(WSAGetLastError()) : errno;
 }
 #else
 int process_errno()

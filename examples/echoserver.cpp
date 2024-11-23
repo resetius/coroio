@@ -43,6 +43,7 @@ TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
     typename TPoller::TSocket socket(std::move(address), poller);
     socket.Bind();
     socket.Listen();
+    std::cerr << "Listening on: " << socket.Addr().ToString() << std::endl;
 
     while (true) {
         auto client = co_await socket.Accept();

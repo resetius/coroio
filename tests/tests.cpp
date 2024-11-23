@@ -352,7 +352,8 @@ void test_connection_refused_on_write(void**) {
         TSocket clientSocket(TAddress{"127.0.0.1", port}, poller);
         char buffer[] = "test";
         try {
-            co_await clientSocket.Connect();
+            // set timeout (windows workaround)
+            co_await clientSocket.Connect(TClock::now()+std::chrono::milliseconds(100));
             co_await clientSocket.WriteSome(buffer, sizeof(buffer));
         } catch (const std::system_error& ex) {
             *err = ex.code();
@@ -365,7 +366,8 @@ void test_connection_refused_on_write(void**) {
     }
 
     // EPIPE in MacOS
-    assert_true(err.value() == ECONNREFUSED || err.value() == EPIPE);
+    // std::errc::timed_out for windows
+    assert_true(err == std::errc::timed_out || err.value() == ECONNREFUSED || err.value() == EPIPE);
 }
 
 template<typename TPoller>
@@ -381,7 +383,8 @@ void test_connection_refused_on_read(void**) {
         TSocket clientSocket(TAddress{"127.0.0.1", port}, poller);
         char buffer[] = "test";
         try {
-            co_await clientSocket.Connect();
+            // set timeout (windows workaround)
+            co_await clientSocket.Connect(TClock::now()+std::chrono::milliseconds(100));
             co_await clientSocket.ReadSome(buffer, sizeof(buffer));
         } catch (const std::system_error& ex) {
             *err = ex.code();
@@ -393,7 +396,8 @@ void test_connection_refused_on_read(void**) {
         loop.Step();
     }
 
-    assert_int_equal(err.value(), ECONNREFUSED);
+    // std::errc::timed_out for windows
+    assert_true(err == std::errc::timed_out || err.value() == ECONNREFUSED);
 }
 
 template<typename TPoller>
@@ -701,7 +705,11 @@ void test_resolver(void**) {
     using TSocket = typename TPoller::TSocket;
 
     TLoop loop;
+#ifdef _WIN32
+    TResolver<TPollerBase> resolver(TAddress{"8.8.8.8", 53}, loop.Poller());
+#else
     TResolver<TPollerBase> resolver(loop.Poller());
+#endif
 
     std::vector<TAddress> addresses;
     TFuture<void> h1 = [](auto& resolver, std::vector<TAddress>& addresses) -> TFuture<void> {
