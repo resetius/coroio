@@ -17,7 +17,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(coroio
+set(SOURCES
   coroio/socket.cpp
   coroio/sockutils.cpp
   coroio/poll.cpp
@@ -29,7 +29,16 @@ add_library(coroio
   coroio/ssl.cpp
   coroio/win32_pipe.cpp
   coroio/win32_errors.cpp
+)
+
+if (WIN32)
+  list(APPEND SOURCES
+    coroio/wepoll.c
   )
+  set_source_files_properties(coroio/wepoll.c PROPERTIES COMPILE_FLAGS "-w")
+endif ()
+
+add_library(coroio ${SOURCES})
 
 target_include_directories(coroio PUBLIC ${URING_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIRS})
 target_link_directories(coroio PUBLIC ${URING_LIBRARY_DIRS} ${OPENSSL_LIBRARY_DIRS})
