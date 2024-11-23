@@ -34,6 +34,15 @@ This library leverages C++20 coroutines for asynchronous programming, providing 
    - **`TByteReader`** and **`TByteWriter`**: Ensure the specified number of bytes is read or written, useful for guaranteed data transmission.
    - **`TLineReader`**: Facilitates line-by-line reading, simplifying the handling of text-based protocols or file inputs.
 
+#### Supported Operating Systems
+
+The library supports the following operating systems:
+
+- **Linux**: Fully supported with `epoll` and `liburing` for high-performance I/O operations.
+- **FreeBSD**: Supported via the `kqueue` mechanism.
+- **macOS**: Supported via the `kqueue` mechanism.
+- **Windows**: Supported using the `select` and `poll` mechanisms.
+
 #### Using the Library
 
 1. **Setup**: Include the library in your project and ensure C++20 support is enabled in your compiler settings.
