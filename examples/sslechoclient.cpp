@@ -75,11 +75,9 @@ int main(int argc, char** argv) {
     if (method == "select") {
         run<TSelect>(debug, address);
     }
-#ifndef _WIN32
     else if (method == "poll") {
         run<TPoll>(debug, address);
     }
-#endif
 #ifdef __linux__
     else if (method == "epoll") {
         run<TEPoll>(debug, address);

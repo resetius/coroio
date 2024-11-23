@@ -3,10 +3,7 @@
 using NNet::TVoidTask;
 using NNet::TAddress;
 using NNet::TSelect;
-
-#ifndef _WIN32
 using NNet::TPoll;
-#endif
 
 #ifdef __linux__
 using NNet::TEPoll;
@@ -104,11 +101,9 @@ int main(int argc, char** argv) {
     if (method == "select") {
         run<TSelect>(debug, address, buffer_size);
     }
-#ifndef _WIN32
     else if (method == "poll") {
         run<TPoll>(debug, address, buffer_size);
     }
-#endif
 #ifdef __linux__
     else if (method == "epoll") {
         run<TEPoll>(debug, address, buffer_size);

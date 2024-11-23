@@ -14,10 +14,7 @@
 #include "poller.hpp"
 
 #include "select.hpp"
-
-#ifndef _WIN32
 #include "poll.hpp"
-#endif
 
 #ifdef __linux__
 #include "epoll.hpp"

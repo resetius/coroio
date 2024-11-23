@@ -162,11 +162,9 @@ int main(int argc, char** argv) {
     if (!strcmp(method, "select")) {
         run_test<TSelect>(num_pipes, num_writes, num_active);
     }
-#ifndef _WIN32
     else if (!strcmp(method, "poll")) {
         run_test<TPoll>(num_pipes, num_writes, num_active);
     }
-#endif
 #ifdef __linux__
     else if (!strcmp(method, "epoll")) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
