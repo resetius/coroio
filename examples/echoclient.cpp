@@ -20,7 +20,8 @@ TFuture<void> client(TPoller& poller, TAddress addr)
         TByteWriter byteWriter(socket);
         TByteReader byteReader(socket);
 
-        co_await socket.Connect();
+        // Windows unable to detect 'connection refused' without setting timeout
+        co_await socket.Connect(TClock::now()+std::chrono::milliseconds(1000));
         while (auto line = co_await lineReader.Read()) {
             co_await byteWriter.Write(line);
             co_await byteReader.Read(in.data(), line.Size());

@@ -85,6 +85,9 @@ public:
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             void run() {
                 this->ret = TSockOps::read(this->fd, this->b, this->s);
+                // TODO: In windows ret could be < 0 with errno = 0
+                // Need to process WSAGetLastError
+                if (this->ret < 0) { process_errno(); }
             }
 
             void await_suspend(std::coroutine_handle<> h) {

@@ -136,8 +136,10 @@ int TSocketOps::Create(int domain, int type) {
 int TSocketOps::Setup(int s) {
     int value;
     socklen_t len = sizeof(value);
+    bool isSocket = false;
     if (getsockopt(s, SOL_SOCKET, SO_TYPE, (char*) &value, &len) == 0) {
         value = 1;
+        isSocket = true;
         // TODO: set for STREAM only
         if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*) &value, len) < 0) {
 #ifdef _WIN32
@@ -148,8 +150,9 @@ int TSocketOps::Setup(int s) {
     }
 
 #ifdef _WIN32
+    // TODO: This code works only with sockets!
     u_long mode = 1;
-    if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+    if (isSocket && ioctlsocket(s, FIONBIO, &mode) != 0) {
         throw std::system_error(WSAGetLastError(), std::system_category(), "ioctlsocket");
     }
 #else
