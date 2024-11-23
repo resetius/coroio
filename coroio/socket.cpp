@@ -136,7 +136,7 @@ int TSocketOps::Create(int domain, int type) {
 int TSocketOps::Setup(int s) {
     int value;
     socklen_t len = sizeof(value);
-    bool isSocket = false;
+    [[maybe_unused]] bool isSocket = false;
     if (getsockopt(s, SOL_SOCKET, SO_TYPE, (char*) &value, &len) == 0) {
         value = 1;
         isSocket = true;
