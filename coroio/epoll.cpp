@@ -1,19 +1,48 @@
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 #include "epoll.hpp"
 
 namespace NNet {
 
+namespace {
+#ifdef _WIN32
+int epoll_pwait2(HANDLE ephnd, struct epoll_event* events, int maxevents, const struct timespec* ts, const void* /*sigmask*/) {
+    int timeout = 0;
+    if (ts) {
+        timeout  = ts->tv_sec;
+        timeout += ts->tv_nsec / 1000000;
+    }
+    // TODO: support sigmask
+    return epoll_wait(ephnd, events, maxevents, timeout);
+}
+#endif
+}
+
+#ifdef __linux__
+static constexpr int epoll_flags = EPOLL_CLOEXEC;
+static constexpr int invalid_handle = -1;
+#else
+static constexpr int epoll_flags = 0;
+static constexpr HANDLE invalid_handle = nullptr;
+#endif
+
 TEPoll::TEPoll()
-    : Fd_(epoll_create1(EPOLL_CLOEXEC))
+    : Fd_(epoll_create1(epoll_flags))
 {
-    if (Fd_ < 0) {
+    if (Fd_ ==  invalid_handle) {
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
 }
 
 TEPoll::~TEPoll()
 {
-    if (Fd_ >= 0) { close(Fd_); }
+    if (Fd_ != invalid_handle) {
+#ifdef __linux__
+        close(Fd_);
+#endif
+#ifdef _WIN32
+        epoll_close(Fd_);
+#endif
+    }
 }
 
 void TEPoll::Poll() {

@@ -78,15 +78,17 @@ int main(int argc, char** argv) {
     else if (method == "poll") {
         run<TPoll>(debug, address);
     }
-#ifdef __linux__
+#ifdef HAVE_EPOLL
     else if (method == "epoll") {
         run<TEPoll>(debug, address);
     }
+#endif
+#ifdef HAVE_URING
     else if (method == "uring") {
         run<TUring>(debug, address);
     }
 #endif
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#ifdef HAVE_KQUEUE
     else if (method == "kqueue") {
         run<TKqueue>(debug, address);
     }
