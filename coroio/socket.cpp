@@ -201,6 +201,7 @@ void TSocket::Close()
         close(Fd_);
 #endif
         Poller_->RemoveEvent(Fd_);
+        Fd_ = -1;
     }
 }
 

@@ -28,7 +28,6 @@ set(SOURCES
   coroio/resolver.cpp
   coroio/ssl.cpp
   coroio/win32_pipe.cpp
-  coroio/win32_errors.cpp
 )
 
 if (WIN32)

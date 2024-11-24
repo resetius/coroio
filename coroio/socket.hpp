@@ -22,8 +22,6 @@
 int pipe(int pipes[2]);
 #endif
 
-int process_errno();
-
 namespace NNet {
 
 class TInitializer {
@@ -85,9 +83,6 @@ public:
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
             void run() {
                 this->ret = TSockOps::read(this->fd, this->b, this->s);
-                // TODO: In windows ret could be < 0 with errno = 0
-                // Need to process WSAGetLastError
-                if (this->ret < 0) { process_errno(); }
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -175,9 +170,15 @@ protected:
 
         void SafeRun() {
             ((T*)this)->run();
+#ifdef _WIN32
+            if (ret < 0 && WSAGetLastError() != WSAEWOULDBLOCK ) {
+                throw std::system_error(WSAGetLastError(), std::generic_category());
+            }
+#else
             if (ret < 0 && !(errno==EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
                 throw std::system_error(errno, std::generic_category());
             }
+#endif
         }
 
         TPollerBase* poller = nullptr;
@@ -249,10 +250,15 @@ public:
         struct TAwaitable {
             bool await_ready() {
                 int ret = connect(fd, addr.first, addr.second);
-                process_errno();
+#ifdef _WIN32
+                if (ret < 0 && WSAGetLastError() != WSAEWOULDBLOCK) {
+                    throw std::system_error(WSAGetLastError(), std::generic_category(), "connect");
+                }
+#else
                 if (ret < 0 && !(errno == EINTR||errno==EAGAIN||errno==EINPROGRESS)) {
                     throw std::system_error(errno, std::generic_category(), "connect");
                 }
+#endif
                 return ret >= 0;
             }
 
