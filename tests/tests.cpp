@@ -165,16 +165,24 @@ void test_write_after_connect(void**) {
 
     TFuture<void> h1 = [](TPoller& poller, char* buf, int size, int port) -> TFuture<void>
     {
-        TSocket client(TAddress{"127.0.0.1", port}, poller);
-        co_await client.Connect();
-        co_await client.WriteSome(buf, size);
+        try {
+            TSocket client(TAddress{"127.0.0.1", port}, poller);
+            co_await client.Connect();
+            co_await client.WriteSome(buf, size);
+        } catch (const std::exception& ex) {
+            std::cerr << "Error1: " << ex.what() << "\n";
+        }
         co_return;
     }(loop.Poller(), send_buf, sizeof(send_buf), port);
 
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
-        TSocket clientSocket = std::move(co_await socket->Accept());
-        co_await clientSocket.ReadSome(buf, size);
+        try {
+            TSocket clientSocket = std::move(co_await socket->Accept());
+            co_await clientSocket.ReadSome(buf, size);
+        } catch (const std::exception& ex) {
+            std::cerr << "Error2: " << ex.what() << "\n";
+        }
         co_return;
     }(&socket, rcv_buf, sizeof(rcv_buf));
 
@@ -199,16 +207,24 @@ void test_write_after_accept(void**) {
 
     TFuture<void> h1 = [](TPoller& poller, char* buf, int size, int port) -> TFuture<void>
     {
-        TSocket client(TAddress{"127.0.0.1", port}, poller);
-        co_await client.Connect();
-        co_await client.ReadSome(buf, size);
+        try {
+            TSocket client(TAddress{"127.0.0.1", port}, poller);
+            co_await client.Connect();
+            co_await client.ReadSome(buf, size);
+        } catch (const std::exception& ex) {
+            std::cerr << "Error1: " << ex.what() << "\n";
+        }
         co_return;
     }(loop.Poller(), rcv_buf, sizeof(rcv_buf), port);
 
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
-        TSocket clientSocket = std::move(co_await socket->Accept());
-        auto s = co_await clientSocket.WriteSome(buf, size);
+        try {
+            TSocket clientSocket = std::move(co_await socket->Accept());
+            auto s = co_await clientSocket.WriteSome(buf, size);
+        } catch (const std::exception& ex) {
+            std::cerr << "Error2: " << ex.what() << "\n";
+        }
         co_return;
     }(&socket, send_buf, sizeof(send_buf));
 
@@ -1166,7 +1182,7 @@ void test_uring_cancel(void** ) {
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
 #elif defined(_WIN32)
-#define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
+#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif

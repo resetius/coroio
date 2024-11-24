@@ -20,9 +20,7 @@ int ppoll(struct pollfd* fds, int nfds, const struct timespec* ts, const void* /
         timeout += ts->tv_nsec / 1000000;
     }
     // TODO: support sigmask
-    int ret = WSAPoll(fds, nfds, timeout);
-    if (ret < 0) { process_errno(); }
-    return ret;
+    return WSAPoll(fds, nfds, timeout);
 }
 #endif
 
