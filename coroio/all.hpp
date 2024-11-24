@@ -17,11 +17,34 @@
 #include "poll.hpp"
 
 #ifdef __linux__
+
+#ifndef HAVE_EPOLL
+#define HAVE_EPOLL
+#endif
+
+#ifndef HAVE_URING
+#define HAVE_URING
+#endif
+
 #include "epoll.hpp"
 #include "uring.hpp"
 #endif
 
+#ifdef _WIN32
+
+#ifndef HAVE_EPOLL
+#define HAVE_EPOLL
+#endif
+
+#include "epoll.hpp"
+#endif
+
 #if defined(__APPLE__) || defined(__FreeBSD__)
+
+#ifndef HAVE_KQUEUE
+#define HAVE_KQUEUE
+#endif
+
 #include "kqueue.hpp"
 #endif
 

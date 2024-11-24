@@ -165,16 +165,17 @@ int main(int argc, char** argv) {
     else if (!strcmp(method, "poll")) {
         run_test<TPoll>(num_pipes, num_writes, num_active);
     }
-#ifdef __linux__
+#ifdef HAVE_EPOLL
     else if (!strcmp(method, "epoll")) {
         run_test<TEPoll>(num_pipes, num_writes, num_active);
     }
+#endif
+#ifdef HAVE_URING
     else if (!strcmp(method, "uring")) {
         run_test<TUring>(num_pipes, num_writes, num_active);
     }
 #endif
-
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#ifdef HAVE_KQUEUE
     else if (!strcmp(method, "kqueue")) {
         run_test<TKqueue>(num_pipes, num_writes, num_active);
     }

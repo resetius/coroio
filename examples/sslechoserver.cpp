@@ -5,12 +5,13 @@ using NNet::TAddress;
 using NNet::TSelect;
 using NNet::TPoll;
 
-#ifdef __linux__
+#ifdef HAVE_EPOLL
 using NNet::TEPoll;
+#endif
+#ifdef HAVE_URING
 using NNet::TUring;
 #endif
-
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#ifdef HAVE_KQUEUE
 using NNet::TKqueue;
 #endif
 
@@ -104,15 +105,17 @@ int main(int argc, char** argv) {
     else if (method == "poll") {
         run<TPoll>(debug, address, buffer_size);
     }
-#ifdef __linux__
+#ifdef HAVE_EPOLL
     else if (method == "epoll") {
         run<TEPoll>(debug, address, buffer_size);
     }
+#endif
+#ifdef HAVE_URING
     else if (method == "uring") {
         run<TUring>(debug, address, buffer_size);
     }
 #endif
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#ifdef HAVE_KQUEUE
     else if (method == "kqueue") {
         run<TKqueue>(debug, address, buffer_size);
     }

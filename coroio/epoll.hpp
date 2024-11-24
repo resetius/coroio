@@ -1,7 +1,13 @@
 #pragma once
 
+#ifdef __linux__
 #include <sys/epoll.h>
 #include <unistd.h>
+#endif
+
+#ifdef _WIN32
+#include "wepoll.h"
+#endif
 
 #include "base.hpp"
 #include "poller.hpp"
@@ -20,7 +26,14 @@ public:
     void Poll();
 
 private:
+#ifdef __linux__
     int Fd_;
+#endif
+
+#ifdef _WIN32
+    HANDLE Fd_;
+#endif
+
     std::vector<THandlePair> InEvents_;       // all events in epoll
     std::vector<epoll_event> OutEvents_; // events out from epoll_wait
 };
