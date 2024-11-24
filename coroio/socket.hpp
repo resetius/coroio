@@ -20,6 +20,8 @@
 
 #ifdef _WIN32
 int pipe(int pipes[2]);
+int socketpair(int domain, int type, int protocol, SOCKET socks[2]);
+int socketpair(int domain, int type, int protocol, int socks[2]);
 #endif
 
 namespace NNet {

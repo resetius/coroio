@@ -35,4 +35,72 @@ int pipe(int pipes[2]) {
 
     return 0;
 }
+
+int socketpair(int domain, int type, int protocol, SOCKET socks[2]) {
+    if (domain != AF_INET || type != SOCK_STREAM || protocol != 0) {
+        WSASetLastError(WSAEINVAL);
+        return -1;
+    }
+
+    SOCKET listener = INVALID_SOCKET;
+    sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener == INVALID_SOCKET) {
+        return -1;
+    }
+
+    if (bind(listener, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(listener);
+        return -1;
+    }
+
+    int addrlen = sizeof(addr);
+    if (getsockname(listener, (sockaddr*)&addr, &addrlen) == SOCKET_ERROR) {
+        closesocket(listener);
+        return -1;
+    }
+
+    if (listen(listener, 1) == SOCKET_ERROR) {
+        closesocket(listener);
+        return -1;
+    }
+
+    socks[0] = socket(AF_INET, SOCK_STREAM, 0);
+    if (socks[0] == INVALID_SOCKET) {
+        closesocket(listener);
+        return -1;
+    }
+
+    if (connect(socks[0], (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(socks[0]);
+        closesocket(listener);
+        return -1;
+    }
+
+    socks[1] = accept(listener, NULL, NULL);
+    if (socks[1] == INVALID_SOCKET) {
+        closesocket(socks[0]);
+        closesocket(listener);
+        return -1;
+    }
+
+    closesocket(listener);
+    return 0;
+}
+
+int socketpair(int domain, int type, int protocol, int socks[2]) {
+    SOCKET tmp[2];
+    int ret = socketpair(domain, type, protocol, &tmp[0]);
+    if (ret != 0) {
+        return ret;
+    }
+    socks[0] = tmp[0];
+    socks[1] = tmp[1];
+    return ret;
+}
+
 #endif

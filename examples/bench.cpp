@@ -71,18 +71,31 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     Stat s;
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
+#ifdef _WIN32
+    vector<TSocket> pipes;
+#else
     vector<TFileHandle> pipes;
+#endif
     vector<TFuture<void>> handles;
     pipes.reserve(num_pipes*2);
     handles.reserve(num_pipes+num_writes);
     int fired = 0;
     for (int i = 0; i < num_pipes; i++) {
         int p[2];
+#ifdef _WIN32
+        if (socketpair(AF_INET, SOCK_STREAM, 0, &p[0]) < 0) {
+#else
         if (pipe(&p[0]) < 0) {
+#endif
             throw std::system_error(errno, std::generic_category(), "pipe");
         }
+#ifdef _WIN32
+        pipes.emplace_back(std::move(TSocket{{}, p[0], loop.Poller()}));
+        pipes.emplace_back(std::move(TSocket{{}, p[1], loop.Poller()}));
+#else
         pipes.emplace_back(std::move(TFileHandle{p[0], loop.Poller()}));
         pipes.emplace_back(std::move(TFileHandle{p[1], loop.Poller()}));
+#endif
     }
 
     s.writes = num_writes;
@@ -141,6 +154,7 @@ void run_test(int num_pipes, int num_writes, int num_active) {
 } // namespace {
 
 int main(int argc, char** argv) {
+    TInitializer init;
     int num_pipes = 100;
     int num_writes = num_pipes;
     int num_active = 1;
