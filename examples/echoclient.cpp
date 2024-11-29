@@ -50,6 +50,11 @@ void run(bool debug, TAddress address)
     }
 }
 
+void usage(const char* name) {
+    std::cerr << name << " [--port 80] [--addr 127.0.0.1] [--method select|poll|epoll|kqueue] [--debug] [--help]" << std::endl; 
+    std::exit(1);
+}
+
 int main(int argc, char** argv) {
     TInitializer init;
     std::string addr = "127.0.0.1";
@@ -65,6 +70,8 @@ int main(int argc, char** argv) {
             method = argv[++i];
         } else if (!strcmp(argv[i], "--debug")) {
             debug = true;
+        } else if (!strcmp(argv[i], "--help")) {
+            usage(argv[0]);
         }
     }
     if (port == 0) { port = 8888; }

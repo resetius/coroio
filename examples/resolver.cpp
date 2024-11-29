@@ -48,6 +48,11 @@ void run(EDNSType type) {
     }
 }
 
+void usage(const char* name) {
+    std::cerr << name << " [--method select|poll|epoll|kqueue] [--ipv6] [--help] < addr_file.txt" << std::endl;
+    std::exit(1);
+}
+
 int main(int argc, char** argv) {
     std::string method = "poll";
     EDNSType type = EDNSType::A;
@@ -56,6 +61,8 @@ int main(int argc, char** argv) {
             method = argv[++i];
         } else if (!strcmp(argv[i], "--ipv6")) {
             type = EDNSType::AAAA;
+        } else if (!strcmp(argv[i], "--help")) {
+            usage(argv[i]);
         }
     }
 

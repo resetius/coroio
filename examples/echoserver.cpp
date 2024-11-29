@@ -62,6 +62,11 @@ void run(bool debug, TAddress address, int buffer_size)
     loop.Loop();
 }
 
+void usage(const char* name) {
+    std::cerr << name << " [--port 80] [--method select|poll|epoll|kqueue] [--debug] [--buffer-size 100000] [--help]" << std::endl;
+    std::exit(1);
+}
+
 int main(int argc, char** argv) {
     NNet::TInitializer init;
     int port = 0;
@@ -77,6 +82,8 @@ int main(int argc, char** argv) {
             debug = true;
         } else if (!strcmp(argv[i], "--buffer-size") && i < argc-1) {
             buffer_size = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--help")) {
+            usage(argv[0]);
         }
     }
     if (port == 0) { port = 8888; }
