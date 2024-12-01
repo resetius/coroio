@@ -27,6 +27,7 @@ set(SOURCES
   coroio/kqueue.cpp
   coroio/resolver.cpp
   coroio/ssl.cpp
+  coroio/iocp.cpp
   coroio/win32_pipe.cpp
 )
 
