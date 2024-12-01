@@ -101,13 +101,13 @@ public:
                 poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, h);
             }
 
-            TUringSocket await_resume() {
+            TPollerDrivenSocket<T> await_resume() {
                 int clientfd = poller->Result();
                 if (clientfd < 0) {
                     throw std::system_error(-clientfd, std::generic_category(), "accept");
                 }
 
-                return TUringSocket{TAddress{reinterpret_cast<sockaddr*>(&addr[0]), len}, clientfd, *poller};
+                return TPollerDrivenSocket<T>{TAddress{reinterpret_cast<sockaddr*>(&addr[0]), len}, clientfd, *poller};
             }
 
             T* poller;
