@@ -19,11 +19,12 @@
 
 namespace NNet {
 
-class TUringSocket;
+template<typename T>
+class TPollerDrivenSocket;
 
 class TUring: public TPollerBase {
 public:
-    using TSocket = NNet::TUringSocket;
+    using TSocket = NNet::TPollerDrivenSocket<TUring>;
     using TFileHandle = NNet::TFileHandle;
 
     TUring(int queueSize = 256);
@@ -70,28 +71,28 @@ private:
     std::string KernelStr_;
 };
 
-// TODO: XXX
-class TUringSocket: public TSocket
+template<typename T>
+class TPollerDrivenSocket: public TSocket
 {
 public:
     using TPoller = TUring;
 
-    TUringSocket(TAddress addr, TUring& poller)
+    TPollerDrivenSocket(TAddress addr, T& poller)
         : TSocket(std::move(addr), poller)
-        , Uring_(&poller)
+        , Poller_(&poller)
     { }
 
-    TUringSocket(const TAddress& addr, int fd, TUring& poller)
+    TPollerDrivenSocket(const TAddress& addr, int fd, TUring& poller)
         : TSocket(addr, fd, poller)
-        , Uring_(&poller)
+        , Poller_(&poller)
     { }
 
-    TUringSocket(int fd, TUring& poller)
+    TPollerDrivenSocket(int fd, TUring& poller)
         : TSocket({}, fd, poller)
-        , Uring_(&poller)
+        , Poller_(&poller)
     { }
 
-    TUringSocket() = default;
+    TPollerDrivenSocket() = default;
 
     auto Accept() {
         struct TAwaitable {
@@ -109,14 +110,14 @@ public:
                 return TUringSocket{TAddress{reinterpret_cast<sockaddr*>(&addr[0]), len}, clientfd, *poller};
             }
 
-            TUring* poller;
+            T* poller;
             int fd;
 
             char addr[sizeof(sockaddr_in6)] = {0};
             socklen_t len = sizeof(sockaddr_in6);
         };
 
-        return TAwaitable{Uring_, Fd_};
+        return TAwaitable{Poller_, Fd_};
     }
 
     auto Connect(TTime deadline = TTime::max()) {
@@ -141,13 +142,13 @@ public:
                 }
             }
 
-            TUring* poller;
+            T* poller;
             int fd;
             std::pair<const sockaddr*, int> addr;
             TTime deadline;
             unsigned timerId = 0;
         };
-        return TAwaitable{Uring_, Fd_, Addr().RawAddr(), deadline};
+        return TAwaitable{Poller_, Fd_, Addr().RawAddr(), deadline};
     }
 
     auto ReadSome(void* buf, size_t size) {
@@ -172,7 +173,7 @@ public:
             size_t size;
         };
 
-        return TAwaitable{Uring_, Fd_, buf, size};
+        return TAwaitable{Poller_, Fd_, buf, size};
     }
 
     auto WriteSome(const void* buf, size_t size) {
@@ -197,7 +198,7 @@ public:
             size_t size;
         };
 
-        return TAwaitable{Uring_, Fd_, buf, size};
+        return TAwaitable{Poller_, Fd_, buf, size};
     }
 
     auto WriteSomeYield(const void* buf, size_t size) {
@@ -209,7 +210,7 @@ public:
     }
 
 private:
-    TUring* Uring_;
+    T* Poller_;
 };
 
 } // namespace NNet
