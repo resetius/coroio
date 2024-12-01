@@ -80,6 +80,12 @@ public:
     { }
 
     TSocketBase() = default;
+    TSocketBase(const TSocketBase& other) = delete;
+    TSocketBase& operator=(TSocketBase& other) const = delete;
+
+    ~TSocketBase() {
+        Close();
+    }
 
     auto ReadSome(void* buf, size_t size) {
         struct TAwaitableRead: public TAwaitable<TAwaitableRead> {
@@ -155,6 +161,15 @@ public:
         return TAwaitableClose{Poller_,Fd_};
     }
 
+    void Close()
+    {
+        if (Fd_ >= 0) {
+            TSockOps::close(Fd_);
+            Poller_->RemoveEvent(Fd_);
+            Fd_ = -1;
+        }
+    }
+
 protected:
     template<typename T>
     struct TAwaitable {
@@ -200,6 +215,10 @@ public:
     static auto write(int fd, const void* buf, size_t count) {
         return ::write(fd, buf, count);
     }
+
+    static auto close(int fd) {
+        return ::close(fd);
+    }
 };
 
 class TFileHandle: public TSocketBase<TFileOps> {
@@ -208,25 +227,30 @@ public:
         : TSocketBase(fd, poller)
     { }
 
+    TFileHandle(TFileHandle&& other);
+    TFileHandle& operator=(TFileHandle&& other);
+
     TFileHandle() = default;
 };
 
 class TSockOps {
 public:
     static auto read(int fd, void* buf, size_t count) {
-#ifdef _WIN32
         return ::recv(fd, static_cast<char*>(buf), count, 0);
-#else
-        return ::recv(fd, buf, count, 0);
-#endif
     }
 
     static auto write(int fd, const void* buf, size_t count) {
-#ifdef _WIN32
         return ::send(fd, static_cast<const char*>(buf), count, 0);
+    }
+
+    static auto close(int fd) {
+        if (fd >= 0) {
+#ifdef _WIN32
+            ::closesocket(fd);
 #else
-        return ::send(fd, buf, count, 0);
+            ::close(fd);
 #endif
+        }
     }
 };
 
@@ -234,19 +258,14 @@ class TSocket: public TSocketBase<TSockOps> {
 public:
     using TPoller = TPollerBase;
 
+    TSocket() = default;
+
     TSocket(TAddress&& addr, TPollerBase& poller, int type = SOCK_STREAM);
     TSocket(const TAddress& addr, int fd, TPollerBase& poller);
     TSocket(const TAddress& addr, TPollerBase& poller, int type = SOCK_STREAM);
+
     TSocket(TSocket&& other);
-    ~TSocket();
-
-    TSocket() = default;
-    TSocket(const TSocket& other) = delete;
-    TSocket& operator=(TSocket& other) const = delete;
-
     TSocket& operator=(TSocket&& other);
-
-    void Close();
 
     auto Connect(TTime deadline = TTime::max()) {
         struct TAwaitable {
@@ -399,6 +418,79 @@ public:
         };
         return TAwaitable{Poller_, Fd_, Addr().RawAddr(), deadline};
     }
+
+    auto ReadSome(void* buf, size_t size) {
+        struct TAwaitable {
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->Recv(fd, buf, size, h);
+            }
+
+            ssize_t await_resume() {
+                int ret = poller->Result();
+                if (ret < 0) {
+                    throw std::system_error(-ret, std::generic_category());
+                }
+                return ret;
+            }
+
+            T* poller;
+            int fd;
+
+            void* buf;
+            size_t size;
+        };
+
+        return TAwaitable{Poller_, Fd_, buf, size};
+    }
+
+    auto WriteSome(const void* buf, size_t size) {
+        struct TAwaitable {
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+                poller->Send(fd, buf, size, h);
+            }
+
+            ssize_t await_resume() {
+                int ret = poller->Result();
+                if (ret < 0) {
+                    throw std::system_error(-ret, std::generic_category());
+                }
+                return ret;
+            }
+
+            T* poller;
+            int fd;
+
+            const void* buf;
+            size_t size;
+        };
+
+        return TAwaitable{Poller_, Fd_, buf, size};
+    }
+
+    auto WriteSomeYield(const void* buf, size_t size) {
+        return WriteSome(buf, size);
+    }
+
+    auto ReadSomeYield(void* buf, size_t size) {
+        return ReadSome(buf, size);
+    }
+
+private:
+    T* Poller_;
+};
+
+template<typename T>
+class TPollerDrivenFileHandle: public TFileHandle
+{
+public:
+    using TPoller = T;
+
+    TPollerDrivenFileHandle(int fd, T& poller)
+        : TFileHandle(fd, poller)
+        , Poller_(&poller)
+    { }
 
     auto ReadSome(void* buf, size_t size) {
         struct TAwaitable {

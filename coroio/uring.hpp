@@ -22,7 +22,7 @@ namespace NNet {
 class TUring: public TPollerBase {
 public:
     using TSocket = NNet::TPollerDrivenSocket<TUring>;
-    using TFileHandle = NNet::TFileHandle;
+    using TFileHandle = NNet::TPollerDrivenFileHandle<TUring>;
 
     TUring(int queueSize = 256);
 
@@ -30,6 +30,8 @@ public:
 
     void Read(int fd, void* buf, int size, std::coroutine_handle<> handle);
     void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle);
+    void Recv(int fd, void* buf, int size, std::coroutine_handle<> handle);
+    void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle);
     void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle);
     void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
     void Cancel(int fd);
