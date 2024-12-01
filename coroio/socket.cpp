@@ -187,24 +187,6 @@ TSocket::TSocket(TSocket&& other)
     *this = std::move(other);
 }
 
-TSocket::~TSocket()
-{
-    Close();
-}
-
-void TSocket::Close()
-{
-    if (Fd_ >= 0) {
-#ifdef _WIN32
-        closesocket(Fd_);
-#else
-        close(Fd_);
-#endif
-        Poller_->RemoveEvent(Fd_);
-        Fd_ = -1;
-    }
-}
-
 TSocket& TSocket::operator=(TSocket&& other) {
     if (this != &other) {
         Close();
@@ -240,6 +222,21 @@ const TAddress& TSocket::Addr() const {
 
 int TSocket::Fd() const {
     return Fd_;
+}
+
+TFileHandle::TFileHandle(TFileHandle&& other)
+{
+    *this = std::move(other);
+}
+
+TFileHandle& TFileHandle::operator=(TFileHandle&& other) {
+    if (this != &other) {
+        Close();
+        Poller_ = other.Poller_;
+        Fd_ = other.Fd_;
+        other.Fd_ = -1;
+    }
+    return *this;
 }
 
 } // namespace NNet {
