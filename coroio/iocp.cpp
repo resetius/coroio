@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "iocp.hpp"
+#include <Mswsock.h>
 
 namespace NNet {
 
@@ -18,6 +19,10 @@ TIOCp::~TIOCp()
 
 TIOCp::TIO* TIOCp::NewTIO() {
     return new (Allocator_.allocate()) TIO();
+}
+
+void TIOCp::FreeTIO(TIO* tio) {
+    Allocator_.deallocate(tio);
 }
 
 void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
@@ -45,6 +50,24 @@ void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> hand
     auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
+    }
+}
+
+void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle)
+{
+    TIO* tio = NewTIO();
+    tio->event.Fd = fd;
+    tio->event.Handle = handle;
+    tio->event.Type = TEvent::READ;
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "socket");
+    }
+
+    DWORD dwBytesReceived = 0;
+    auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, *len, *len, &dwBytesReceived, (WSAOVERLAPPED*)tio);
+    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "AcceptEx");
     }
 }
 
