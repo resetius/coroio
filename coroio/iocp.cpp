@@ -1,6 +1,5 @@
 #ifdef _WIN32
 #include "iocp.hpp"
-#include <Mswsock.h>
 
 namespace NNet {
 

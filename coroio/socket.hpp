@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <Mswsock.h> // for ConnectEx, AcceptEx
 #include <io.h>
 #else
 #include <arpa/inet.h>
@@ -22,6 +23,8 @@
 int pipe(int pipes[2]);
 int socketpair(int domain, int type, int protocol, SOCKET socks[2]);
 int socketpair(int domain, int type, int protocol, int socks[2]);
+
+extern LPFN_CONNECTEX ConnectEx;
 #endif
 
 namespace NNet {

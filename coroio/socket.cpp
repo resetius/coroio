@@ -4,6 +4,10 @@
 #include <signal.h>
 #endif
 
+#ifdef _WIN32
+LPFN_CONNECTEX ConnectEx;
+#endif
+
 namespace NNet {
 
 TInitializer::TInitializer() {
@@ -15,6 +19,19 @@ TInitializer::TInitializer() {
     if (result != 0) {
         throw std::runtime_error("WSAStartup failed with error: " + std::to_string(result));
     }
+
+    auto sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) {
+        throw std::runtime_error("Cannot initialize dummy socket");
+    }
+    GUID guid = WSAID_CONNECTEX;
+    DWORD dwBytes = 0;
+    auto res = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &ConnectEx, sizeof(ConnectEx), &dwBytes, nullptr, nullptr);
+    if (res != 0) {
+        closesocket(sock);
+        throw std::runtime_error("Cannot query dummy socket");
+    }
+    closesocket(sock);
 #endif
 }
 
