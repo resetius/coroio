@@ -23,11 +23,14 @@
 int pipe(int pipes[2]);
 int socketpair(int domain, int type, int protocol, SOCKET socks[2]);
 int socketpair(int domain, int type, int protocol, int socks[2]);
-
-extern LPFN_CONNECTEX ConnectEx;
 #endif
 
 namespace NNet {
+
+#ifdef _WIN32
+extern LPFN_CONNECTEX ConnectEx;
+extern LPFN_ACCEPTEX AcceptEx;
+#endif
 
 class TInitializer {
 public:

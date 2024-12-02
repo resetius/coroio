@@ -118,6 +118,16 @@ void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> han
     }
 }
 
+void TIOCp::Cancel([[maybe_unused]] int fd)
+{
+    // TODO: implement
+}
+
+int TIOCp::Result() {
+    // TODO: implement
+    return -1;
+}
+
 long TIOCp::GetTimeoutMs() {
     auto ts = GetTimeout();
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
@@ -130,7 +140,8 @@ void TIOCp::Poll()
     TIO* event;
 
     while (GetQueuedCompletionStatus(Port_, &size, (PULONG_PTR)&completionKey, (LPOVERLAPPED*)&event, GetTimeoutMs()) == TRUE) {
-        ;
+        event->event.Handle.resume();
+        FreeTIO(event);
     }
 
     ProcessTimers();

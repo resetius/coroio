@@ -61,6 +61,7 @@ public:
     void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle);
     void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle);
     void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
+    void Cancel(int fd);
     int Result();
 
     void Poll();
