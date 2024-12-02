@@ -16,6 +16,37 @@ TIOCp::~TIOCp()
     CloseHandle(Port_);
 }
 
+TIOCp::TIO* TIOCp::NewTIO() {
+    return new (Allocator_.allocate()) TIO();
+}
+
+void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
+{
+    TIO* tio = NewTIO();
+    tio->event.Fd = fd;
+    tio->event.Handle = handle;
+    tio->event.Type = TEvent::READ;
+    WSABUF recvBuf = {(ULONG)size, (char*)buf};
+    DWORD outSize = 0;
+    auto ret = WSARecv((SOCKET)fd, &recvBuf, 1, &outSize, nullptr, (WSAOVERLAPPED*)tio, nullptr);
+    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
+    }
+}
+
+void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle)
+{
+    TIO* tio = NewTIO();
+    tio->event.Fd = fd;
+    tio->event.Handle = handle;
+    tio->event.Type = TEvent::READ;
+    WSABUF sendBuf = {(ULONG)size, (char*)buf};
+    DWORD outSize = 0;
+    auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
+    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
+    }
+}
 
 long TIOCp::GetTimeoutMs() {
     auto ts = GetTimeout();
