@@ -44,7 +44,7 @@ void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> hand
     TIO* tio = NewTIO();
     tio->event.Fd = fd;
     tio->event.Handle = handle;
-    tio->event.Type = TEvent::READ;
+    tio->event.Type = TEvent::WRITE;
     WSABUF sendBuf = {(ULONG)size, (char*)buf};
     DWORD outSize = 0;
     auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
@@ -86,7 +86,35 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
     auto ret = ConnectEx((SOCKET)fd, addr, len, nullptr, 0, &dwBytesSent, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "AcceptEx");
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "ConnectEx");
+    }
+}
+
+void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
+{
+    TIO* tio = NewTIO();
+    tio->event.Fd = fd;
+    tio->event.Handle = handle;
+    tio->event.Type = TEvent::READ;
+
+    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
+    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        FreeTIO(tio);
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "ReadFile");
+    }
+}
+
+void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle)
+{
+    TIO* tio = NewTIO();
+    tio->event.Fd = fd;
+    tio->event.Handle = handle;
+    tio->event.Type = TEvent::WRITE;
+
+    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
+    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        FreeTIO(tio);
+        throw std::system_error(WSAGetLastError(), std::generic_category(), "WriteFile");
     }
 }
 
