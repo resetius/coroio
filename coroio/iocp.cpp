@@ -162,6 +162,7 @@ long TIOCp::GetTimeoutMs() {
 
 void TIOCp::Poll()
 {
+    Reset();
     Entries_.resize(std::max(Allocator_.count(), 1));
 
     DWORD fired = 0;
@@ -172,7 +173,7 @@ void TIOCp::Poll()
 
     assert(Results_.empty());
 
-    for (DWORD i = 0; i < fired; i++) {
+    for (DWORD i = 0; i < fired && res == TRUE; i++) {
         TIO* event = (TIO*)Entries_[i].lpOverlapped;
         if (event->addr) {
             sockaddr_in* remoteAddr = nullptr;
@@ -185,24 +186,9 @@ void TIOCp::Poll()
         } else {
             Results_.push(Entries_[i].dwNumberOfBytesTransferred);
         }
-    }
-
-/*
-    while (GetQueuedCompletionStatus(Port_, &size, (PULONG_PTR)&completionKey, (LPOVERLAPPED*)&event, GetTimeoutMs()) == TRUE) {
-        Result_ = size;
-        if (event->addr) {
-            sockaddr_in* remoteAddr = nullptr;
-            sockaddr_in* localAddr = nullptr;
-            int localAddrLen = 0;
-            *event->len = 0;
-            Result_ = event->sock;
-            GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
-            memmove(event->addr, remoteAddr, *event->len);
-        }
-        event->handle.resume();
+        ReadyEvents_.emplace_back(TEvent{-1, 0, event->handle});
         FreeTIO(event);
     }
-*/
 
     ProcessTimers();
 }
