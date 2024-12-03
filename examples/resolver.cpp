@@ -87,6 +87,11 @@ int main(int argc, char** argv) {
         run<TKqueue>(type);
     }
 #endif
+#ifdef HAVE_KQUEUE
+    else if (method == "iocp") {
+        run<TIOCp>(type);
+    }
+#endif
     else {
         std::cerr << "Unknown method\n";
     }
