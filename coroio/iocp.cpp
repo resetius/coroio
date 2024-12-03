@@ -118,7 +118,12 @@ void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
     TIO* tio = NewTIO();
     tio->handle = handle;
 
-    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
+    auto fileHandle = (HANDLE)_get_osfhandle(fd);
+    if (fileHandle == INVALID_HANDLE_VALUE) {
+        throw std::runtime_error("Bad descriptor");
+    }
+
+    auto ret = ReadFile(fileHandle, buf, size, nullptr, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "ReadFile");
@@ -129,8 +134,12 @@ void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> han
 {
     TIO* tio = NewTIO();
     tio->handle = handle;
+    auto fileHandle = (HANDLE)_get_osfhandle(fd);
+    if (fileHandle == INVALID_HANDLE_VALUE) {
+        throw std::runtime_error("Bad descriptor");
+    }
 
-    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
+    auto ret = WriteFile(fileHandle, buf, size, nullptr, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WriteFile");
