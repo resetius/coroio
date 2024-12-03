@@ -9,6 +9,7 @@ namespace NNet {
 #ifdef _WIN32
 LPFN_CONNECTEX ConnectEx;
 LPFN_ACCEPTEX AcceptEx;
+LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
 #endif
 
 TInitializer::TInitializer() {
@@ -35,6 +36,13 @@ TInitializer::TInitializer() {
 
     guid = WSAID_ACCEPTEX;
     res = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &AcceptEx, sizeof(AcceptEx), &dwBytes, nullptr, nullptr);
+    if (res != 0) {
+        closesocket(sock);
+        throw std::runtime_error("Cannot query dummy socket");
+    }
+
+    guid = WSAID_GETACCEPTEXSOCKADDRS;
+    res = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &GetAcceptExSockaddrs, sizeof(GetAcceptExSockaddrs), &dwBytes, nullptr, nullptr);
     if (res != 0) {
         closesocket(sock);
         throw std::runtime_error("Cannot query dummy socket");

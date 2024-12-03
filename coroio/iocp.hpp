@@ -62,14 +62,18 @@ public:
     void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle);
     void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
     void Cancel(int fd);
+    void Register(int fd);
     int Result();
 
     void Poll();
 
 private:
     struct TIO {
-        WSAOVERLAPPED overlapped;
+        OVERLAPPED overlapped;
         TEvent event;
+        struct sockaddr* addr = nullptr; // for accept
+        socklen_t* len = nullptr; // for accept
+        int sock = -1; // for accept
 
         TIO() {
             memset(&overlapped, 0, sizeof(overlapped));
@@ -83,6 +87,7 @@ private:
     HANDLE Port_;
 
     TArenaAllocator<TIO> Allocator_;
+    int Result_ = -1;
 };
 
 }
