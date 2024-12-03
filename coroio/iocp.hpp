@@ -25,13 +25,19 @@ public:
         if (FreePages_.empty()) {
             AllocatePool();
         }
+        ++AllocatedObjects_;
         T* ret = FreePages_.top();
         FreePages_.pop();
         return ret;
     }
 
     void deallocate(T* obj) {
+        --AllocatedObjects_;
         FreePages_.push(obj);
+    }
+
+    int count() const {
+        return AllocatedObjects_;
     }
 
 private:
@@ -45,6 +51,7 @@ private:
 
     std::vector<T*> Pools_;
     std::stack<T*> FreePages_;
+    int AllocatedObjects_ = 0;
 };
 
 class TIOCp: public TPollerBase {
@@ -70,7 +77,7 @@ public:
 private:
     struct TIO {
         OVERLAPPED overlapped;
-        TEvent event;
+        THandle handle;
         struct sockaddr* addr = nullptr; // for accept
         socklen_t* len = nullptr; // for accept
         int sock = -1; // for accept
@@ -87,7 +94,8 @@ private:
     HANDLE Port_;
 
     TArenaAllocator<TIO> Allocator_;
-    int Result_ = -1;
+    std::vector<OVERLAPPED_ENTRY> Entries_;
+    std::queue<int> Results_;
 };
 
 }

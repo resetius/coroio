@@ -27,9 +27,7 @@ void TIOCp::FreeTIO(TIO* tio) {
 void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO();
-    tio->event.Fd = fd;
-    tio->event.Handle = handle;
-    tio->event.Type = TEvent::READ;
+    tio->handle = handle;
     WSABUF recvBuf = {(ULONG)size, (char*)buf};
     DWORD flags = 0;
     DWORD outSize = 0;
@@ -43,9 +41,7 @@ void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
 void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO();
-    tio->event.Fd = fd;
-    tio->event.Handle = handle;
-    tio->event.Type = TEvent::WRITE;
+    tio->handle = handle;
     WSABUF sendBuf = {(ULONG)size, (char*)buf};
     DWORD outSize = 0;
     auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
@@ -58,9 +54,7 @@ void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> hand
 void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO();
-    tio->event.Fd = fd;
-    tio->event.Handle = handle;
-    tio->event.Type = TEvent::READ;
+    tio->handle = handle;
     tio->addr = addr;
     tio->len = len;
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -88,9 +82,7 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine
 void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO();
-    tio->event.Fd = fd;
-    tio->event.Handle = handle;
-    tio->event.Type = TEvent::READ;
+    tio->handle = handle;
 
     int bind_rc = 0;
     if (len == sizeof(sockaddr_in)) {
@@ -127,9 +119,7 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
 void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO();
-    tio->event.Fd = fd;
-    tio->event.Handle = handle;
-    tio->event.Type = TEvent::READ;
+    tio->handle = handle;
 
     auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
@@ -141,9 +131,7 @@ void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO();
-    tio->event.Fd = fd;
-    tio->event.Handle = handle;
-    tio->event.Type = TEvent::WRITE;
+    tio->handle = handle;
 
     auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
@@ -162,7 +150,9 @@ void TIOCp::Cancel([[maybe_unused]] int fd)
 }
 
 int TIOCp::Result() {
-    return Result_;
+    int r = Results_.front();
+    Results_.pop();
+    return r;
 }
 
 long TIOCp::GetTimeoutMs() {
@@ -172,10 +162,32 @@ long TIOCp::GetTimeoutMs() {
 
 void TIOCp::Poll()
 {
-    DWORD size = 0;
-    void* completionKey;
-    TIO* event;
+    Entries_.resize(std::max(Allocator_.count(), 1));
 
+    DWORD fired = 0;
+    auto res = GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, GetTimeoutMs(), FALSE);
+    if (res == FALSE && GetLastError() != WAIT_TIMEOUT) {
+        throw std::system_error(GetLastError(), std::generic_category(), "GetQueuedCompletionStatusEx");
+    }
+
+    assert(Results_.empty());
+
+    for (DWORD i = 0; i < fired; i++) {
+        TIO* event = (TIO*)Entries_[i].lpOverlapped;
+        if (event->addr) {
+            sockaddr_in* remoteAddr = nullptr;
+            sockaddr_in* localAddr = nullptr;
+            int localAddrLen = 0;
+            *event->len = 0;
+            GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
+            memmove(event->addr, remoteAddr, *event->len);
+            Results_.push(event->sock);
+        } else {
+            Results_.push(Entries_[i].dwNumberOfBytesTransferred);
+        }
+    }
+
+/*
     while (GetQueuedCompletionStatus(Port_, &size, (PULONG_PTR)&completionKey, (LPOVERLAPPED*)&event, GetTimeoutMs()) == TRUE) {
         Result_ = size;
         if (event->addr) {
@@ -187,9 +199,10 @@ void TIOCp::Poll()
             GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
             memmove(event->addr, remoteAddr, *event->len);
         }
-        event->event.Handle.resume();
+        event->handle.resume();
         FreeTIO(event);
     }
+*/
 
     ProcessTimers();
 }
