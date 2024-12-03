@@ -51,7 +51,7 @@ void run(bool debug, TAddress address)
 }
 
 void usage(const char* name) {
-    std::cerr << name << " [--port 80] [--addr 127.0.0.1] [--method select|poll|epoll|kqueue] [--debug] [--help]" << std::endl; 
+    std::cerr << name << " [--port 80] [--addr 127.0.0.1] [--method select|poll|epoll|kqueue] [--debug] [--help]" << std::endl;
     std::exit(1);
 }
 
@@ -98,6 +98,11 @@ int main(int argc, char** argv) {
 #ifdef HAVE_KQUEUE
     else if (method == "kqueue") {
         run<TKqueue>(debug, address);
+    }
+#endif
+#ifdef HAVE_IOCP
+    else if (method == "iocp") {
+        run<TIOCp>(debug, address);
     }
 #endif
     else {
