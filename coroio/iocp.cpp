@@ -111,9 +111,6 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "ConnectEx");
     }
-    if (ret == TRUE) {
-        PostQueuedCompletionStatus(Port_, 0, (ULONG_PTR)fd /*key*/, (WSAOVERLAPPED*)tio);
-    }
 }
 
 void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
