@@ -110,6 +110,10 @@ void TUring::Cancel(std::coroutine_handle<> h) {
     io_uring_prep_cancel(sqe, h.address(), 0);
 }
 
+void TUring::Register(int) {
+
+}
+
 int TUring::Wait(timespec ts) {
     struct io_uring_cqe *cqe;
     unsigned head;

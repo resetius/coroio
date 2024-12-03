@@ -70,6 +70,7 @@ template<typename TPoller>
 std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active) {
     Stat s;
     using TFileHandle = typename TPoller::TFileHandle;
+    using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
 #ifdef _WIN32
     vector<TSocket> pipes;
@@ -192,6 +193,11 @@ int main(int argc, char** argv) {
 #ifdef HAVE_KQUEUE
     else if (!strcmp(method, "kqueue")) {
         run_test<TKqueue>(num_pipes, num_writes, num_active);
+    }
+#endif
+#ifdef HAVE_IOCP
+    else if (!strcmp(method, "iocp")) {
+        run_test<TIOCp>(num_pipes, num_writes, num_active);
     }
 #endif
 

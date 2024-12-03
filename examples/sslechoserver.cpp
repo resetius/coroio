@@ -14,6 +14,9 @@ using NNet::TUring;
 #ifdef HAVE_KQUEUE
 using NNet::TKqueue;
 #endif
+#ifdef HAVE_IOCP
+using NNet::TIOCp;
+#endif
 
 template<bool debug, typename TSocket>
 TVoidTask clientHandler(TSocket socket, NNet::TSslContext& ctx, int buffer_size) {
@@ -118,6 +121,11 @@ int main(int argc, char** argv) {
 #ifdef HAVE_KQUEUE
     else if (method == "kqueue") {
         run<TKqueue>(debug, address, buffer_size);
+    }
+#endif
+#ifdef HAVE_IOCP
+    else if (method == "iocp") {
+        run<TIOCp>(debug, address, buffer_size);
     }
 #endif
     else {

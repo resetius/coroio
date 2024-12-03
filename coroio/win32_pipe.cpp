@@ -53,6 +53,12 @@ int socketpair(int domain, int type, int protocol, SOCKET socks[2]) {
         return -1;
     }
 
+    int optval = 1;
+    if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval)) == SOCKET_ERROR) {
+        closesocket(listener);
+        return -1;
+    }
+
     if (bind(listener, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(listener);
         return -1;
@@ -75,6 +81,11 @@ int socketpair(int domain, int type, int protocol, SOCKET socks[2]) {
         return -1;
     }
 
+    if (setsockopt(socks[0], SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval)) == SOCKET_ERROR) {
+        closesocket(listener);
+        return -1;
+    }
+
     if (connect(socks[0], (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(socks[0]);
         closesocket(listener);
@@ -87,6 +98,24 @@ int socketpair(int domain, int type, int protocol, SOCKET socks[2]) {
         closesocket(listener);
         return -1;
     }
+
+    u_long mode = 1;
+    if (ioctlsocket(socks[0], FIONBIO, &mode) != 0) {
+        closesocket(socks[0]);
+        closesocket(socks[1]);
+        closesocket(listener);
+        return -1;
+    }
+    if (ioctlsocket(socks[1], FIONBIO, &mode) != 0) {
+        closesocket(socks[0]);
+        closesocket(socks[1]);
+        closesocket(listener);
+        return -1;
+    }
+
+    struct linger so_linger = {1, 0};
+    setsockopt(socks[0], SOL_SOCKET, SO_LINGER, (char*)&so_linger, sizeof(so_linger));
+    setsockopt(socks[1], SOL_SOCKET, SO_LINGER, (char*)&so_linger, sizeof(so_linger));
 
     closesocket(listener);
     return 0;

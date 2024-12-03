@@ -1182,7 +1182,7 @@ void test_uring_cancel(void** ) {
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
 #elif defined(_WIN32)
-#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
+#define my_unit_poller(f) my_unit_test4(f, TSelect, TPoll, TEPoll, TIOCp)
 #else
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif

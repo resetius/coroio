@@ -36,6 +36,11 @@
 #define HAVE_EPOLL
 #endif
 
+#ifndef HAVE_IOCP
+#define HAVE_IOCP
+#endif
+
+#include "iocp.hpp"
 #include "epoll.hpp"
 #endif
 
@@ -62,7 +67,7 @@ using TDefaultPoller = TKqueue;
 #elif defined(__linux__)
 using TDefaultPoller = TEPoll;
 #elif defined(_WIN32)
-using TDefaultPoller = TSelect;
+using TDefaultPoller = TIOCp;
 #else
 using TDefaultPoller = TPoll;
 #endif

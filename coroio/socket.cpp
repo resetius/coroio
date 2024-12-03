@@ -6,6 +6,12 @@
 
 namespace NNet {
 
+#ifdef _WIN32
+LPFN_CONNECTEX ConnectEx;
+LPFN_ACCEPTEX AcceptEx;
+LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
+#endif
+
 TInitializer::TInitializer() {
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
@@ -15,6 +21,34 @@ TInitializer::TInitializer() {
     if (result != 0) {
         throw std::runtime_error("WSAStartup failed with error: " + std::to_string(result));
     }
+
+    auto sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) {
+        throw std::runtime_error("Cannot initialize dummy socket");
+    }
+    GUID guid = WSAID_CONNECTEX;
+    DWORD dwBytes = 0;
+    auto res = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &ConnectEx, sizeof(ConnectEx), &dwBytes, nullptr, nullptr);
+    if (res != 0) {
+        closesocket(sock);
+        throw std::runtime_error("Cannot query dummy socket");
+    }
+
+    guid = WSAID_ACCEPTEX;
+    res = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &AcceptEx, sizeof(AcceptEx), &dwBytes, nullptr, nullptr);
+    if (res != 0) {
+        closesocket(sock);
+        throw std::runtime_error("Cannot query dummy socket");
+    }
+
+    guid = WSAID_GETACCEPTEXSOCKADDRS;
+    res = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &GetAcceptExSockaddrs, sizeof(GetAcceptExSockaddrs), &dwBytes, nullptr, nullptr);
+    if (res != 0) {
+        closesocket(sock);
+        throw std::runtime_error("Cannot query dummy socket");
+    }
+
+    closesocket(sock);
 #endif
 }
 

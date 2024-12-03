@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <Mswsock.h> // for ConnectEx, AcceptEx
 #include <io.h>
 #else
 #include <arpa/inet.h>
@@ -25,6 +26,12 @@ int socketpair(int domain, int type, int protocol, int socks[2]);
 #endif
 
 namespace NNet {
+
+#ifdef _WIN32
+extern LPFN_CONNECTEX ConnectEx;
+extern LPFN_ACCEPTEX AcceptEx;
+extern LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
+#endif
 
 class TInitializer {
 public:
@@ -348,17 +355,23 @@ public:
     TPollerDrivenSocket(TAddress addr, T& poller)
         : TSocket(std::move(addr), poller)
         , Poller_(&poller)
-    { }
+    {
+        Poller_->Register(Fd_);
+    }
 
     TPollerDrivenSocket(const TAddress& addr, int fd, T& poller)
         : TSocket(addr, fd, poller)
         , Poller_(&poller)
-    { }
+    {
+        Poller_->Register(Fd_);
+    }
 
     TPollerDrivenSocket(int fd, T& poller)
         : TSocket({}, fd, poller)
         , Poller_(&poller)
-    { }
+    {
+        Poller_->Register(Fd_);
+    }
 
     TPollerDrivenSocket() = default;
 
@@ -381,8 +394,8 @@ public:
             T* poller;
             int fd;
 
-            char addr[sizeof(sockaddr_in6)] = {0};
-            socklen_t len = sizeof(sockaddr_in6);
+            char addr[2*(sizeof(sockaddr_in6)+16)] = {0}; // use additional memory for windows
+            socklen_t len = sizeof(addr);
         };
 
         return TAwaitable{Poller_, Fd_};

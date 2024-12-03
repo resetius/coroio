@@ -36,6 +36,7 @@ public:
     void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
     void Cancel(int fd);
     void Cancel(std::coroutine_handle<> h);
+    void Register(int fd);
 
     int Wait(timespec ts = {10,0});
 
