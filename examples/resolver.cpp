@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
         run<TKqueue>(type);
     }
 #endif
-#ifdef HAVE_KQUEUE
+#ifdef HAVE_IOCP
     else if (method == "iocp") {
         run<TIOCp>(type);
     }
