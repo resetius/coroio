@@ -24,7 +24,7 @@ This library leverages C++20 coroutines for asynchronous programming, providing 
    - **`TEPoll`**: Employs `epoll`, available exclusively on Linux systems for high-performance I/O.
    - **`TUring`**: Integrates with `liburing` for advanced I/O operations, specific to Linux.
    - **`TKqueue`**: Uses `kqueue`, available on FreeBSD and macOS.
-   - **`TIOCp`** Uses IO completion ports on Windows.
+   - **`TIOCp`**: Uses IO completion ports on Windows.
    - **`TDefaultPoll`**: Automatically selects the best polling mechanism based on the platform (TEPoll on Linux, TKqueue on macOS/FreeBSD, TIOCp on Windows).
 
 3. **Socket and File Handling**:
