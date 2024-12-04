@@ -42,7 +42,7 @@ The library supports the following operating systems:
 - **Linux**: Fully supported with `epoll` and `liburing` for high-performance I/O operations.
 - **FreeBSD**: Supported via the `kqueue` mechanism.
 - **macOS**: Supported via the `kqueue` mechanism.
-- **Windows**: Supported using the `select` and `poll` mechanisms.
+- **Windows**: Supported using the `iocp` mechanism.
 
 #### Using the Library
 
