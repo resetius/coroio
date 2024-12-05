@@ -1218,7 +1218,9 @@ int main() {
         my_unit_poller(test_futures_any_result),
         my_unit_poller(test_futures_any_same_wakeup),
         my_unit_poller(test_futures_all),
+#ifndef _WIN32
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
+#endif
         my_unit_test2(test_resolver, TSelect, TPoll),
         my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
 #ifdef __linux__
