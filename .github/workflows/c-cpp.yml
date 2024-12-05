@@ -40,3 +40,60 @@ jobs:
       if: always()
       with:
          files: build/*.xml
+         check_name: Unit Test Results (Linux)
+
+  windows-build:
+    permissions:
+      checks: write
+      pull-requests: write
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Checkout submodules
+      run: git submodule update --init --recursive
+    - name: Install Packages using MSYS2
+      run: |
+          choco install msys2 -y          
+    - name: Install Additional Packages
+      run: |
+          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.."   
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+          setx PATH "%PATH%;C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin"
+          refreshenv
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
+          ls -l C:\tools\msys64\mingw64\bin
+    - name: Verify Installation
+      run: |
+          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.."   
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
+          refreshenv
+          gcc --version
+          cmake --version
+          ninja --version
+    - name: Configure with CMake and Build with Ninja
+      run: |
+          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.." 
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
+          refreshenv
+          mkdir build
+          cd build
+          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
+          ninja
+    - name: Run Tests
+      run: |
+          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.." 
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
+          refreshenv
+          cd build
+          ctest -C Debug
+    - name: test-log
+      if: always()
+      run: |
+          type build\Testing\Temporary\LastTest.log
+
