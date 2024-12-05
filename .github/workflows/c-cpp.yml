@@ -55,13 +55,21 @@ jobs:
       run: git submodule update --init --recursive
     - name: Install MinGW and Tools
       run: |
+          choco install mingw -y
+          setx PATH "%PATH%;C:\msys64\mingw64\bin"
+          refreshenv
           choco install msys2 -y
           setx PATH "%PATH%;C:\msys64\usr\bin"
           refreshenv
           pacman -Syu --noconfirm
           pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
-    - name: Set PATH for MinGW
-      run: setx PATH "%PATH%;C:\Program Files\mingw-w64\mingw64\bin"
+    - name: Install Packages using MSYS2
+      run: |
+          choco install msys2 -y
+          setx PATH "%PATH%;C:\msys64\usr\bin"
+          refreshenv
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
     - name: Verify Installation
       run: |
           gcc --version
@@ -77,10 +85,4 @@ jobs:
       run: |
           cd build
           ctest -C Debug
-    - name: Publish Unit Test Results (Windows)
-      uses: EnricoMi/publish-unit-test-result-action@v2
-      if: always()
-      with:
-         files: build/*.xml
-         check_name: Unit Test Results (Windows)
 
