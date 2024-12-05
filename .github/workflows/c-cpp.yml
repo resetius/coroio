@@ -53,20 +53,10 @@ jobs:
     - uses: actions/checkout@v3
     - name: Checkout submodules
       run: git submodule update --init --recursive
-    - name: Install MinGW and Tools
-      run: |
-          choco install mingw -y
-          setx PATH "%PATH%;C:\msys64\mingw64\bin"
-          refreshenv
-          choco install msys2 -y
-          setx PATH "%PATH%;C:\msys64\usr\bin"
-          refreshenv
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
     - name: Install Packages using MSYS2
       run: |
           choco install msys2 -y
-          setx PATH "%PATH%;C:\msys64\usr\bin"
+          setx PATH "%PATH%;C:\tools\msys64\usr\bin"
           refreshenv
           pacman -Syu --noconfirm
           pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
