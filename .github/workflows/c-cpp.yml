@@ -93,6 +93,7 @@ jobs:
           cd build
           ctest -C Debug
     - name: test-log
+      if: always()
       run: |
           type build\Testing\Temporary\LastTest.log
 
