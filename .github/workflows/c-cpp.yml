@@ -93,10 +93,6 @@ jobs:
           cd build
           ctest -C Debug
     - name: test-log
-      if: failure()
       run: |
-          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.." 
-          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
-          cat build/Testing/Temporary/LastTest.log
+          type build\Testing\Temporary\LastTest.log
 
