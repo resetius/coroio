@@ -62,6 +62,8 @@ jobs:
           refreshenv
           pacman -Syu --noconfirm
           pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
+          refreshenv
+          ls -l C:\tools\msys64\mingw64\bin
     - name: Verify Installation
       run: |
           gcc --version
