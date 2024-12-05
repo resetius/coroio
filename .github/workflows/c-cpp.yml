@@ -77,12 +77,16 @@ jobs:
           ninja --version
     - name: Configure with CMake and Build with Ninja
       run: |
+          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
+          refreshenv
           mkdir build
           cd build
           cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
           ninja
     - name: Run Tests
       run: |
+          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
+          refreshenv
           cd build
           ctest -C Debug
 
