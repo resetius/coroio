@@ -84,24 +84,24 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
     TIO* tio = NewTIO();
     tio->handle = handle;
 
-    int bind_rc = 0;
+    int bind_result = 0;
     if (len == sizeof(sockaddr_in)) {
         struct sockaddr_in tmp;
         ZeroMemory(&tmp, sizeof(tmp));
         tmp.sin_family = AF_INET;
         tmp.sin_addr.s_addr = INADDR_ANY;
         tmp.sin_port = 0;
-        bind((SOCKET)fd, (SOCKADDR*) &tmp, sizeof(tmp));
+        bind_result = bind((SOCKET)fd, (SOCKADDR*) &tmp, sizeof(tmp));
     } else {
         sockaddr_in6 tmp;
         ZeroMemory(&tmp, sizeof(tmp));
         tmp.sin6_family = AF_INET6;
         tmp.sin6_addr = in6addr_any;
         tmp.sin6_port = 0;
-        bind((SOCKET)fd, (SOCKADDR*) &tmp, sizeof(tmp));
+        bind_result = bind((SOCKET)fd, (SOCKADDR*) &tmp, sizeof(tmp));
     }
 
-    if (bind_rc != 0) {
+    if (bind_result != 0) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "bind");
     }
