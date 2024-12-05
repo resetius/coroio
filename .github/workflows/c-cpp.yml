@@ -40,3 +40,46 @@ jobs:
       if: always()
       with:
          files: build/*.xml
+         check_name: Unit Test Results (Linux)
+
+  windows-build:
+    permissions:
+      checks: write
+      pull-requests: write
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Checkout submodules
+      run: git submodule update --init --recursive
+    - name: Install MinGW and Tools
+      run: |
+          choco install mingw -y
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install ninja -y
+          choco install cmocka -y
+    - name: Set PATH for MinGW
+      run: setx PATH "%PATH%;C:\Program Files\mingw-w64\mingw64\bin"
+    - name: Verify Installation
+      run: |
+          gcc --version
+          cmake --version
+          ninja --version
+    - name: Configure with CMake and Build with Ninja
+      run: |
+          mkdir build
+          cd build
+          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
+          ninja
+    - name: Run Tests
+      run: |
+          cd build
+          ctest -C Debug
+    - name: Publish Unit Test Results (Windows)
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+         files: build/*.xml
+         check_name: Unit Test Results (Windows)
+
