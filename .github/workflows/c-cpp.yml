@@ -55,10 +55,11 @@ jobs:
       run: git submodule update --init --recursive
     - name: Install MinGW and Tools
       run: |
-          choco install mingw -y
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          choco install ninja -y
-          choco install cmocka -y
+          choco install msys2 -y
+          setx PATH "%PATH%;C:\msys64\usr\bin"
+          refreshenv
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
     - name: Set PATH for MinGW
       run: setx PATH "%PATH%;C:\Program Files\mingw-w64\mingw64\bin"
     - name: Verify Installation
