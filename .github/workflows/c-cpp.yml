@@ -56,7 +56,10 @@ jobs:
     - name: Install Packages using MSYS2
       run: |
           choco install msys2 -y
-          set PATH="%PATH%;C:\tools\msys64\usr\bin"
+          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.."   
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+          setx PATH "%PATH%;C:\tools\msys64\usr\bin"
+          refreshenv
           pacman -Syu --noconfirm
           pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
     - name: Verify Installation
