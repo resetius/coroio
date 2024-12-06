@@ -97,3 +97,26 @@ jobs:
       run: |
           type build\Testing\Temporary\LastTest.log
 
+  macos-build:
+    permissions:
+      checks: write
+      pull-requests: write
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Checkout submodules
+      run: git submodule update --init --recursive
+    - name: Install packages
+      run: brew install cmake ninja cmocka
+    - name: Configure with CMake and Build with Ninja
+      run: |
+          mkdir build
+          cd build
+          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
+          ninja
+    - name: Run Tests
+      run: |
+          cd build
+          ctest -C Debug
