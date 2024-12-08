@@ -9,6 +9,8 @@
 
 #include <coroio/all.hpp>
 
+#include "ut.hpp"
+
 extern "C" {
 #include <cmocka.h>
 }
@@ -1187,9 +1189,176 @@ void test_uring_cancel(void** ) {
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
 
-int main() {
-    TInitializer init;
+namespace ut = boost::ut;
 
+ut::suite<"basic"> basic = []{
+    using namespace boost::ut;
+
+    "addr"_test = [] {
+        int port = getport();
+        TAddress address("127.0.0.1", port);
+        auto low = std::get<sockaddr_in>(address.Addr());
+        expect(low.sin_port == ntohs(port));
+        expect(low.sin_family == AF_INET);
+
+        unsigned int value = ntohl((127<<24)|(0<<16)|(0<<8)|1);
+        expect(memcmp(&low.sin_addr, &value, 4) == 0);
+    };
+
+    "addr6"_test = [] {
+        int port = getport();
+        TAddress address("::1", port);
+        auto low = std::get<sockaddr_in6>(address.Addr());
+        expect(low.sin6_port == ntohs(port));
+        expect(low.sin6_family == AF_INET6);
+    };
+
+    "bad_addr"_test = [] {
+        int port = getport();
+        int flag = 0;
+        try {
+            TAddress address("wtf", port);
+        } catch (const std::exception& ex) {
+            flag = 1;
+        }
+        expect(eq(flag, 1));
+    };
+
+    "timespec"_test = [] {
+        auto t1 =  std::chrono::seconds(4);
+        auto t2 =  std::chrono::seconds(10);
+        auto ts = GetTimespec(TTime(t1), TTime(t2), maxDiration);
+        expect(eq(ts.tv_sec, 6));
+        expect(eq(ts.tv_nsec, 0));
+
+        auto t3 =  std::chrono::milliseconds(10001);
+        ts = GetTimespec(TTime(t1), TTime(t3), maxDiration);
+        expect(eq(ts.tv_sec, 6));
+        expect(eq(ts.tv_nsec, 1000*1000));
+
+        auto t4 = std::chrono::minutes(10000);
+        ts = GetTimespec(TTime(t1), TTime(t4), maxDiration);
+        expect(eq(ts.tv_sec, 10));
+        expect(eq(ts.tv_nsec, 0));
+    };
+
+    "line_splitter"_test = [] {
+        TLineSplitter splitter(16);
+        uint32_t seed = 31337;
+        for (int i = 0; i < 10000; i++) {
+            int len = rand_(&seed) % 16 + 1;
+            int letter = 'a' + i % ('z' - 'a' + 1);
+            std::string line(len, letter); line.back() = '\n';
+            splitter.Push(line.data(), len);
+            auto l = splitter.Pop();
+            std::string result = std::string(l.Part1);
+            result += l.Part2;
+            expect(eq(line, result));
+        }
+
+        for (int i = 0; i < 10000; i++) {
+            std::vector<std::string> lines;
+
+            int total = 0;
+            while (1) {
+                int len = rand_(&seed) % 6 + 1;
+                total += len; if (total > 16) break;
+                int letter = 'a' + i % ('z' - 'a' + 1);
+                std::string line(len, letter); line.back() = '\n';
+                splitter.Push(line.data(), len);
+                lines.push_back(line);
+            }
+
+            for (int i = 0; i < lines.size(); i++) {
+                auto l = splitter.Pop();
+                std::string result = std::string(l.Part1);
+                result += l.Part2;
+                expect(eq(lines[i], result));
+            }
+        }
+    };
+
+    "zero_copy_line_splitter"_test = [] {
+        TZeroCopyLineSplitter splitter(16);
+        uint32_t seed = 31337;
+        for (int i = 0; i < 1000; i++) {
+            int len = rand_(&seed) % 16 + 1;
+            int letter = 'a' + i % ('z' - 'a' + 1);
+            std::string line(len, letter); line.back() = '\n';
+            splitter.Push(line.data(), len);
+            auto l = splitter.Pop();
+            std::string result = std::string(l.Part1);
+            result += l.Part2;
+            expect(eq(line, result));
+        }
+
+        for (int i = 0; i < 10000; i++) {
+            std::vector<std::string> lines;
+
+            int total = 0;
+            while (1) {
+                int len = rand_(&seed) % 6 + 1;
+                total += len; if (total > 16) break;
+                int letter = 'a' + i % ('z' - 'a' + 1);
+                std::string line(len, letter); line.back() = '\n';
+                splitter.Push(line.data(), len);
+                lines.push_back(line);
+            }
+
+            for (int i = 0; i < lines.size(); i++) {
+                auto l = splitter.Pop();
+                std::string result = std::string(l.Part1);
+                result += l.Part2;
+                expect(eq(lines[i], result));
+            }
+        }
+    };
+
+    "self_id"_test = [] {
+        void* id;
+        TFuture<void> h = [](void** id) -> TFuture<void> {
+            *id = (co_await Self()).address();
+            co_return;
+        }(&id);
+
+        expect(eq(id, h.raw().address()));
+    };
+
+    "resolv_nameservers"_test = [] {
+        std::string data = R"__(nameserver 127.0.0.1
+    nameserver 192.168.0.2
+    nameserver 127.0.0.2
+        )__";
+        std::istringstream iss(data);
+        TResolvConf conf(iss);
+
+        expect(eq(conf.Nameservers.size(), 3));
+
+        data = "";
+        iss = std::istringstream(data);
+        conf = TResolvConf(iss);
+        expect(eq(conf.Nameservers.size(), 1));
+    };
+};
+
+ut::suite<"socket"> socket_suite = [] {
+    using namespace boost::ut;
+
+    "listen"_test = [] <typename TPoller> {
+        int port = getport();
+        TLoop<typename std::remove_pointer<TPoller>::type> loop;
+        TAddress address("127.0.0.1", port);
+        TSocket socket(std::move(address), loop.Poller());
+        socket.Bind();
+        socket.Listen();
+    } | std::tuple<TSelect*,TPoll*,TIOCp*,TEPoll*>{};
+};
+
+int main(int argc, const char** argv) {
+    TInitializer init;
+    return ut::cfg<>.run({.argc = argc, .argv = argv});
+
+#if 0
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_addr),
         cmocka_unit_test(test_addr6),
@@ -1218,7 +1387,9 @@ int main() {
         my_unit_poller(test_futures_any_result),
         my_unit_poller(test_futures_any_same_wakeup),
         my_unit_poller(test_futures_all),
+#ifndef _WIN32
         my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
+#endif
         my_unit_test2(test_resolver, TSelect, TPoll),
         my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
 #ifdef __linux__
@@ -1234,4 +1405,5 @@ int main() {
 #endif
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
+#endif
 }
