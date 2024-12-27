@@ -12,6 +12,5 @@ macro(ut name source)
 endmacro()
 
 if (CMOCKA_FOUND)
-enable_testing()
 ut(tests tests.cpp)
 endif ()

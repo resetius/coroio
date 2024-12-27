@@ -4,6 +4,7 @@ include(${CMAKE_BINARY_DIR}/local.cmake)
 endif ()
 
 project(netlib)
+enable_testing()
 
 add_subdirectory(coroio)
 add_subdirectory(examples)
