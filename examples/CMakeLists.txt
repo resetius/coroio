@@ -1,0 +1,13 @@
+macro(target name source)
+  add_executable(${name} ${source})
+  target_link_libraries(${name} coroio)
+endmacro()
+
+target(timers timers.cpp)
+target(echotest echotest.cpp)
+target(echoserver echoserver.cpp)
+target(echoclient echoclient.cpp)
+target(sslechoclient sslechoclient.cpp)
+target(sslechoserver sslechoserver.cpp)
+target(resolver resolver.cpp)
+target(bench bench.cpp)
