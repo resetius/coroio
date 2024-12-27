@@ -409,160 +409,6 @@ void test_connection_refused_on_read(void**) {
 }
 
 template<typename TPoller>
-void test_read_write_lines(void**) {
-    using TLoop = TLoop<TPoller>;
-    using TSocket = typename TPoller::TSocket;
-    uint32_t seed = 31337;
-
-    std::vector<std::string> lines;
-    for (int i = 0; i < 10; i++) {
-        int len = rand_(&seed) % 16 + 1;
-        int letter = 'a' + i % ('z' - 'a' + 1);
-        std::string line(len, letter); line.back() = '\n';
-        lines.emplace_back(std::move(line));
-    }
-
-    int port = getport();
-    TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
-    socket.Bind();
-    socket.Listen();
-
-    TFuture<void> h1 = [](auto& poller, auto& lines, int port) -> TFuture<void>
-    {
-        TSocket client(NNet::TAddress{"127.0.0.1", port}, poller);
-        co_await client.Connect();
-        for (auto& line : lines) {
-            co_await TByteWriter(client).Write(line.data(), line.size());
-        }
-        co_return;
-    }(loop.Poller(), lines, port);
-
-    std::vector<std::string> received;
-    TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
-    {
-        auto client = std::move(co_await server.Accept());
-        auto reader = TLineReader<TSocket>(client, 16);
-        TLine line;
-        do {
-            line = co_await reader.Read();
-            if (line) {
-                std::string s; s = line.Part1; s += line.Part2;
-                received.emplace_back(std::move(s));
-            }
-        } while (line);
-        co_return;
-    }(socket, received);
-
-    while (!(h1.done() && h2.done())) {
-        loop.Step();
-    }
-
-    assert_int_equal(lines.size(), received.size());
-    for (int i = 0; i < lines.size(); i++) {
-        assert_string_equal(lines[i].data(), received[i].data());
-    }
-}
-
-void test_line_splitter(void**) {
-    TLineSplitter splitter(16);
-    uint32_t seed = 31337;
-    for (int i = 0; i < 10000; i++) {
-        int len = rand_(&seed) % 16 + 1;
-        int letter = 'a' + i % ('z' - 'a' + 1);
-        std::string line(len, letter); line.back() = '\n';
-        splitter.Push(line.data(), len);
-        auto l = splitter.Pop();
-        std::string result = std::string(l.Part1);
-        result += l.Part2;
-        assert_string_equal(line.data(), result.data());
-    }
-
-    for (int i = 0; i < 10000; i++) {
-        std::vector<std::string> lines;
-
-        int total = 0;
-        while (1) {
-            int len = rand_(&seed) % 6 + 1;
-            total += len; if (total > 16) break;
-            int letter = 'a' + i % ('z' - 'a' + 1);
-            std::string line(len, letter); line.back() = '\n';
-            splitter.Push(line.data(), len);
-            lines.push_back(line);
-        }
-
-        for (int i = 0; i < lines.size(); i++) {
-            auto l = splitter.Pop();
-            std::string result = std::string(l.Part1);
-            result += l.Part2;
-            assert_string_equal(lines[i].data(), result.data());
-        }
-    }
-}
-
-void test_zero_copy_line_splitter(void**) {
-    TZeroCopyLineSplitter splitter(16);
-    uint32_t seed = 31337;
-    for (int i = 0; i < 1000; i++) {
-        int len = rand_(&seed) % 16 + 1;
-        int letter = 'a' + i % ('z' - 'a' + 1);
-        std::string line(len, letter); line.back() = '\n';
-        splitter.Push(line.data(), len);
-        auto l = splitter.Pop();
-        std::string result = std::string(l.Part1);
-        result += l.Part2;
-        assert_string_equal(line.data(), result.data());
-    }
-
-    for (int i = 0; i < 10000; i++) {
-        std::vector<std::string> lines;
-
-        int total = 0;
-        while (1) {
-            int len = rand_(&seed) % 6 + 1;
-            total += len; if (total > 16) break;
-            int letter = 'a' + i % ('z' - 'a' + 1);
-            std::string line(len, letter); line.back() = '\n';
-            splitter.Push(line.data(), len);
-            lines.push_back(line);
-        }
-
-        for (int i = 0; i < lines.size(); i++) {
-            auto l = splitter.Pop();
-            std::string result = std::string(l.Part1);
-            result += l.Part2;
-            assert_string_equal(lines[i].data(), result.data());
-        }
-    }
-}
-
-void test_self_id(void**) {
-    void* id;
-    TFuture<void> h = [](void** id) -> TFuture<void> {
-        *id = (co_await Self()).address();
-        co_return;
-    }(&id);
-
-    assert_ptr_equal(id, h.raw().address());
-}
-
-void test_resolv_nameservers(void**) {
-    std::string data = R"__(nameserver 127.0.0.1
-nameserver 192.168.0.2
-nameserver 127.0.0.2
-    )__";
-    std::istringstream iss(data);
-    TResolvConf conf(iss);
-
-    assert_int_equal(conf.Nameservers.size(), 3);
-
-    data = "";
-    iss = std::istringstream(data);
-    conf = TResolvConf(iss);
-    assert_int_equal(conf.Nameservers.size(), 1);
-}
-
-template<typename TPoller>
 void test_resolver(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -1386,7 +1232,64 @@ ut::suite<"socket"> socket_suite = [] {
         expect(data.data == received.data);
     };
 
-    Pollers::Generate("read_write_struct", test_read_write_full);
+    Pollers::Generate("read_write_struct", test_read_write_struct);
+
+    auto test_read_write_lines = [&] <typename TPoller> {
+        using TLoop = TLoop<TPoller>;
+        using TSocket = typename TPoller::TSocket;
+        uint32_t seed = 31337;
+
+        std::vector<std::string> lines;
+        for (int i = 0; i < 10; i++) {
+            int len = rand_(&seed) % 16 + 1;
+            int letter = 'a' + i % ('z' - 'a' + 1);
+            std::string line(len, letter); line.back() = '\n';
+            lines.emplace_back(std::move(line));
+        }
+
+        int port = getport();
+        TLoop loop;
+        TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
+        socket.Bind();
+        socket.Listen();
+
+        TFuture<void> h1 = [](auto& poller, auto& lines, int port) -> TFuture<void>
+        {
+            TSocket client(NNet::TAddress{"127.0.0.1", port}, poller);
+            co_await client.Connect();
+            for (auto& line : lines) {
+                co_await TByteWriter(client).Write(line.data(), line.size());
+            }
+            co_return;
+        }(loop.Poller(), lines, port);
+
+        std::vector<std::string> received;
+        TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
+        {
+            auto client = std::move(co_await server.Accept());
+            auto reader = TLineReader<TSocket>(client, 16);
+            TLine line;
+            do {
+                line = co_await reader.Read();
+                if (line) {
+                    std::string s; s = line.Part1; s += line.Part2;
+                    received.emplace_back(std::move(s));
+                }
+            } while (line);
+            co_return;
+        }(socket, received);
+
+        while (!(h1.done() && h2.done())) {
+            loop.Step();
+        }
+
+        assert_int_equal(lines.size(), received.size());
+        for (int i = 0; i < lines.size(); i++) {
+            assert_string_equal(lines[i].data(), received[i].data());
+        }
+    };
+
+    Pollers::Generate("read_write_lines", test_read_write_lines);
 };
 
 int main(int argc, const char** argv) {
