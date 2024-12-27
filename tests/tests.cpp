@@ -103,16 +103,6 @@ void test_bad_addr(void**) {
 }
 
 template<typename TPoller>
-void test_listen(void**) {
-    int port = getport();
-    TLoop<TPoller> loop;
-    TAddress address("127.0.0.1", port);
-    TSocket socket(std::move(address), loop.Poller());
-    socket.Bind();
-    socket.Listen();
-}
-
-template<typename TPoller>
 void test_accept(void**) {
     int port = getport();
     using TLoop = TLoop<TPoller>;
@@ -416,151 +406,6 @@ void test_connection_refused_on_read(void**) {
 
     // std::errc::timed_out for windows
     assert_true(err == std::errc::timed_out || err.value() == ECONNREFUSED);
-}
-
-template<typename TPoller>
-void test_timeout(void**) {
-    using TLoop = TLoop<TPoller>;
-    using TSocket = typename TPoller::TSocket;
-    TLoop loop;
-    auto now = std::chrono::steady_clock::now();
-    auto timeout = std::chrono::milliseconds(100);
-    TTime next;
-    TFuture<void> h = [](TPollerBase& poller, TTime* next, std::chrono::milliseconds timeout) -> TFuture<void>
-    {
-        co_await poller.Sleep(timeout);
-        *next = std::chrono::steady_clock::now();
-        co_return;
-    } (loop.Poller(), &next, timeout);
-
-    while (!h.done()) {
-        loop.Step();
-    }
-
-    assert_true(next >= now + timeout);
-}
-
-template<typename TPoller>
-void test_timeout2(void**) {
-    using TLoop = TLoop<TPoller>;
-    using TSocket = typename TPoller::TSocket;
-    TLoop loop;
-    auto now = std::chrono::steady_clock::now();
-    auto timeout1 = std::chrono::milliseconds(100);
-    auto timeout2 = std::chrono::milliseconds(200);
-    int val1, val2, val;
-    val1 = val2 = val = 0;
-    TFuture<void> h1 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TFuture<void>
-    {
-        co_await poller.Sleep(timeout);
-        (*val)++;
-        *val1 = *val;
-        co_return;
-    } (loop.Poller(), timeout1, &val1, &val);
-
-    TFuture<void> h2 = [](TPollerBase& poller, std::chrono::milliseconds timeout, int* val1, int* val) -> TFuture<void>
-    {
-        co_await poller.Sleep(timeout);
-        (*val)++;
-        *val1 = *val;
-        co_return;
-    } (loop.Poller(), timeout2, &val2, &val);
-
-    while (!h1.done() || !h2.done()) {
-        loop.Step();
-    }
-
-    assert_true(val1 == 1);
-    assert_true(val2 == 2);
-    assert_true(val == 2);
-}
-
-template<typename TPoller>
-void test_read_write_full(void**) {
-    using TLoop = TLoop<TPoller>;
-    using TSocket = typename TPoller::TSocket;
-
-    int port = getport();
-    std::vector<char> data(1024*1024);
-    int cur = 0;
-    for (auto& ch : data) {
-        ch = cur + 'a';
-        cur = (cur + 1) % ('z' - 'a' + 1);
-    }
-
-    TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
-    socket.Bind();
-    socket.Listen();
-
-    TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
-
-    TFuture<void> h1 = [](TSocket& client, const std::vector<char>& data) -> TFuture<void>
-    {
-        co_await client.Connect();
-        co_await TByteWriter(client).Write(data.data(), data.size());
-        co_return;
-    }(client, data);
-
-    std::vector<char> received(1024*1024);
-    TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
-    {
-        auto client = std::move(co_await server.Accept());
-        co_await TByteReader(client).Read(received.data(), received.size());
-        co_return;
-    }(socket, received);
-
-    while (!(h1.done() && h2.done())) {
-        loop.Step();
-    }
-
-    assert_memory_equal(data.data(), received.data(), data.size());
-}
-
-template<typename TPoller>
-void test_read_write_struct(void**) {
-    using TLoop = TLoop<TPoller>;
-    using TSocket = typename TPoller::TSocket;
-
-    struct Test {
-        std::array<char, 1024> data;
-    };
-    Test data;
-
-    int cur = 0;
-    for (auto& ch : data.data) {
-        ch = cur + 'a';
-        cur = (cur + 1) % ('z' - 'a' + 1);
-    }
-
-    int port = getport();
-    TLoop loop;
-    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
-    socket.Bind();
-    socket.Listen();
-
-    TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
-
-    TFuture<void> h1 = [](TSocket& client, auto& data) -> TFuture<void>
-    {
-        co_await client.Connect();
-        co_await TByteWriter(client).Write(&data, data.data.size());
-        co_return;
-    }(client, data);
-
-    Test received;
-    TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
-    {
-        auto client = std::move(co_await server.Accept());
-        received = co_await TStructReader<Test, TSocket>(client).Read();
-        co_return;
-    }(socket, received);
-
-    while (!(h1.done() && h2.done())) {
-        loop.Step();
-    }
-
-    assert_memory_equal(data.data.data(), received.data.data(), data.data.size());
 }
 
 template<typename TPoller>
@@ -1495,6 +1340,53 @@ ut::suite<"socket"> socket_suite = [] {
     };
 
     Pollers::Generate("read_write_full", test_read_write_full);
+
+    auto test_read_write_struct = [&] <typename TPoller> {
+        using TLoop = TLoop<TPoller>;
+        using TSocket = typename TPoller::TSocket;
+
+        struct Test {
+            std::array<char, 1024> data;
+        };
+        Test data;
+
+        int cur = 0;
+        for (auto& ch : data.data) {
+            ch = cur + 'a';
+            cur = (cur + 1) % ('z' - 'a' + 1);
+        }
+
+        int port = getport();
+        TLoop loop;
+        TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
+        socket.Bind();
+        socket.Listen();
+
+        TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
+
+        TFuture<void> h1 = [](TSocket& client, auto& data) -> TFuture<void>
+        {
+            co_await client.Connect();
+            co_await TByteWriter(client).Write(&data, data.data.size());
+            co_return;
+        }(client, data);
+
+        Test received;
+        TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
+        {
+            auto client = std::move(co_await server.Accept());
+            received = co_await TStructReader<Test, TSocket>(client).Read();
+            co_return;
+        }(socket, received);
+
+        while (!(h1.done() && h2.done())) {
+            loop.Step();
+        }
+
+        expect(data.data == received.data);
+    };
+
+    Pollers::Generate("read_write_struct", test_read_write_full);
 };
 
 int main(int argc, const char** argv) {
