@@ -96,6 +96,12 @@ jobs:
       if: always()
       run: |
           type build\Testing\Temporary\LastTest.log
+    - name: Publish Unit Test Results
+      uses: EnricoMi/publish-unit-test-result-action/windows@v2
+      if: always()
+      with:
+         files: build\tests\*.xml
+         check_name: Unit Test Results (Windows)
 
   macos-build:
     permissions:
@@ -120,3 +126,9 @@ jobs:
       run: |
           cd build
           ctest -C Debug
+    - name: Publish Unit Test Results
+      uses: EnricoMi/publish-unit-test-result-action/macos@v2
+      if: always()
+      with:
+         files: build/tests/*.xml
+         check_name: Unit Test Results (MacOS)
