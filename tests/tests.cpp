@@ -549,8 +549,12 @@ line9
         auto reader = TByteReader(client);
         auto line1 = co_await reader.ReadUntil("\n");
         auto line2 = co_await reader.ReadUntil("\n");
+        char byte;
+        co_await reader.Read(&byte, 1);
+        auto line3 = co_await reader.ReadUntil("\n");
         received.emplace_back(std::move(line1));
         received.emplace_back(std::move(line2));
+        received.emplace_back(std::move(line3));
         co_return;
     }(socket, received);
 
@@ -558,9 +562,10 @@ line9
         loop.Step();
     }
 
-    assert_true(received.size() == 2);
+    assert_true(received.size() == 3);
     assert_true(received[0] == "line1\n");
     assert_true(received[1] == "line2\n");
+    assert_true(received[2] == "ine3\n");
 }
 
 template<typename TPoller>
