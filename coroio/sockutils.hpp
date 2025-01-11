@@ -25,8 +25,17 @@ struct TByteReader {
         : Socket(socket)
     { }
 
-    TValueTask<void> Read(void* data, size_t size) {
+    TFuture<void> Read(void* data, size_t size) {
         char* p = static_cast<char*>(data);
+
+        if (!Buffer.empty()) {
+            size_t toCopy = std::min(size, Buffer.size());
+            std::memcpy(p, Buffer.data(), toCopy);
+            p += toCopy;
+            size -= toCopy;
+            Buffer.erase(0, toCopy);
+        }
+
         while (size != 0) {
             auto readSize = co_await Socket.ReadSome(p, size);
             if (readSize == 0) {
@@ -41,8 +50,40 @@ struct TByteReader {
         co_return;
     }
 
+    TFuture<std::string> ReadUntil(const std::string& delimiter)
+    {
+        std::string result;
+        char tempBuffer[1024];
+
+        while (true) {
+            auto pos = std::search(Buffer.begin(), Buffer.end(), delimiter.begin(), delimiter.end());
+            if (pos != Buffer.end()) {
+                size_t delimiterOffset = std::distance(Buffer.begin(), pos);
+                result.append(Buffer.substr(0, delimiterOffset + delimiter.size()));
+                Buffer.erase(0, delimiterOffset + delimiter.size());
+                co_return result;
+            }
+
+            result.append(Buffer);
+            Buffer.clear();
+
+            auto readSize = co_await Socket.ReadSome(tempBuffer, sizeof(tempBuffer));
+            if (readSize == 0) {
+                throw std::runtime_error("Connection closed");
+            }
+            if (readSize < 0) {
+                continue; // retry
+            }
+
+            Buffer.append(tempBuffer, readSize);
+        }
+
+        co_return result;
+    }
+
 private:
     TSocket& Socket;
+    std::string Buffer;
 };
 
 template<typename TSocket>

@@ -516,6 +516,54 @@ void test_read_write_full(void**) {
 }
 
 template<typename TPoller>
+void test_read_until(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+
+    int port = getport();
+    std::string data = R"__(line1
+line2
+line3
+line4
+line9
+)__";
+
+    TLoop loop;
+    TSocket socket(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
+    socket.Bind();
+    socket.Listen();
+
+    TSocket client(NNet::TAddress{"127.0.0.1", port}, loop.Poller());
+
+    TFuture<void> h1 = [](TSocket& client, const auto& data) -> TFuture<void>
+    {
+        co_await client.Connect();
+        co_await TByteWriter(client).Write(data.data(), data.size());
+        co_return;
+    }(client, data);
+
+    std::vector<std::string> received;
+    TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
+    {
+        auto client = std::move(co_await server.Accept());
+        auto reader = TByteReader(client);
+        auto line1 = co_await reader.ReadUntil("\n");
+        auto line2 = co_await reader.ReadUntil("\n");
+        received.emplace_back(std::move(line1));
+        received.emplace_back(std::move(line2));
+        co_return;
+    }(socket, received);
+
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
+
+    assert_true(received.size() == 2);
+    assert_true(received[0] == "line1\n");
+    assert_true(received[1] == "line2\n");
+}
+
+template<typename TPoller>
 void test_read_write_struct(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -1211,6 +1259,7 @@ int main() {
         my_unit_poller(test_connection_refused_on_read),
         my_unit_poller(test_read_write_same_socket),
         my_unit_poller(test_read_write_full),
+        my_unit_poller(test_read_until),
         my_unit_poller(test_read_write_struct),
         my_unit_poller(test_read_write_lines),
         my_unit_poller(test_future_chaining),
