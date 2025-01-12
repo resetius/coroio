@@ -16,6 +16,7 @@ set(SOURCES
   resolver.cpp
   ssl.cpp
   iocp.cpp
+  ws.cpp
   win32_pipe.cpp
 )
 
