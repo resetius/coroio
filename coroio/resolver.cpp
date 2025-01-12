@@ -135,11 +135,13 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssi
         if (addrLen == 4) {
             sockaddr_in addr;
             addr.sin_port = 0,
+            addr.sin_family = AF_INET;
             addr.sin_addr = *(in_addr*)(record+1);
             addresses.emplace_back(TAddress{addr});
         } else if (addrLen == 16) {
             sockaddr_in6 addr;
             addr.sin6_port = 0,
+            addr.sin6_family = AF_INET6;
             addr.sin6_addr = *(in6_addr*)(record+1);
             addresses.emplace_back(TAddress{addr});
         }
@@ -200,6 +202,10 @@ TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaul
     Receiver = ReceiverTask();
     Timeouts = TimeoutsTask();
 }
+
+template<typename TPoller>
+TResolver<TPoller>::~TResolver()
+{ }
 
 template<typename TPoller>
 TFuture<void> TResolver<TPoller>::SenderTask() {
