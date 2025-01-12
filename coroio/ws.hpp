@@ -2,7 +2,16 @@
 
 #include "sockutils.hpp"
 
+#if defined(__linux__)
+#include <endian.h>
+#define htonll(x) htobe64(x)
+#define ntohll(x) be64toh(x)
+#elif defined(__APPLE__)
 #include <arpa/inet.h>
+#elif defined(_WIN32)
+#include <WinSock2.h>
+#endif
+
 #include <openssl/evp.h>
 #include <random>
 
@@ -37,19 +46,19 @@ public:
         std::string request =
             "GET " + path + " HTTP/1.1\r\n"
             "Host: " + host + "\r\n"
-            "User-Agent: curl/8.7.1\r\n"
+            "User-Agent: coroio\r\n"
             "Accept: */*\r\n"
             "Connection: Upgrade\r\n"
             "Upgrade: websocket\r\n"
             "Sec-WebSocket-Key: " + key + "\r\n"
             "Sec-WebSocket-Version: 13\r\n\r\n";
 
-        std::cerr << request << "\n";
+        std::cerr << request << std::endl;
 
         co_await Writer.Write(request.data(), request.size());
 
         auto response = co_await Reader.ReadUntil("\r\n\r\n");
-        std::cerr << response << "\n";
+        std::cerr << response << std::endl;
 
         if (response.find("101 Switching Protocols") == std::string::npos) {
             throw std::runtime_error("Failed to establish WebSocket connection");
