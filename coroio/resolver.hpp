@@ -32,6 +32,7 @@ public:
     TResolver(TPoller& poller, EDNSType defaultType = EDNSType::A);
     TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType = EDNSType::A);
     TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType = EDNSType::A);
+    ~TResolver();
 
     TValueTask<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::DEFAULT);
 
@@ -42,14 +43,14 @@ private:
 
     void ResumeSender();
 
-    TSocket Socket;
-    TPoller& Poller;
-    EDNSType DefaultType;
-
     TFuture<void> Sender;
     TFuture<void> Receiver;
     TFuture<void> Timeouts;
     std::coroutine_handle<> SenderSuspended;
+
+    TSocket Socket;
+    TPoller& Poller;
+    EDNSType DefaultType;
 
     struct TResolveRequest {
         std::string Name;

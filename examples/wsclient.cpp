@@ -7,39 +7,33 @@ using namespace NNet;
 template<typename TPoller>
 TFuture<void> client(TPoller& poller, const std::string& uri)
 {
-    std::string host = "ws.kraken.com";
-    int port = 443;
-
-
-//    std::vector<TAddress> addresses;
-//    {
-//        TResolver<TPollerBase> resolver(poller);
-//        co_await resolver.Resolve(host);
-//    }
-
-//    TAddress address = addresses.front().WithPort(port);
-
-    TAddress address = TAddress("104.17.187.205", 443);
-    std::cerr << "Addr: " << address.ToString() << "\n";
-    typename TPoller::TSocket socket(address, poller);
-    TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
-    TSslSocket sslSocket(std::move(socket), ctx);
-
-    co_await sslSocket.Connect();
-
-    TWebSocket ws(sslSocket);
-
-    co_await ws.Connect(host, "/v2");
-
-    auto message = co_await ws.ReceiveText();
-    std::cerr << "Message: " << message << "\n";
-
-    co_await ws.SendText(R"__({"method": "subscribe","params":{"channel": "ticker","symbol": ["BTC/USD"]}})__");
-    std::cerr << "Send Ok\n";
-
     try {
+        std::string host = "ws.kraken.com";
+        int port = 443;
+
+        TResolver<TPollerBase> resolver(poller);
+        auto addresses = co_await resolver.Resolve(host);
+
+        TAddress address = addresses.front().WithPort(port);
+
+        std::cerr << "Addr: " << address.ToString() << "\n";
+        typename TPoller::TSocket socket(address, poller);
+        TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
+        TSslSocket sslSocket(std::move(socket), ctx);
+        sslSocket.SslSetTlsExtHostName(host);
+
+        co_await sslSocket.Connect();
+
+        TWebSocket ws(sslSocket);
+
+        co_await ws.Connect(host, "/v2");
+
+        auto message = co_await ws.ReceiveText();
+        std::cerr << "Message: " << message << "\n";
+
+        co_await ws.SendText(R"__({"method": "subscribe","params":{"channel": "ticker","symbol": ["BTC/USD"]}})__");
+
         while (true) {
-            std::cerr << "Wait ?\n";
             auto message = co_await ws.ReceiveText();
             std::cerr << "Message: " << message << "\n";
         }

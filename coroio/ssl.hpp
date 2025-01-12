@@ -84,6 +84,10 @@ public:
         if (Handshake) { Handshake.destroy(); }
     }
 
+    void SslSetTlsExtHostName(const std::string& host) {
+        SSL_set_tlsext_host_name(Ssl, host.c_str());
+    }
+
     TValueTask<TSslSocket<THandle>> Accept() {
         auto underlying = std::move(co_await Socket.Accept());
         auto socket = TSslSocket(std::move(underlying), *Ctx);
