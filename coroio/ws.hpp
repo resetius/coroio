@@ -65,7 +65,11 @@ public:
     TFuture<std::string> ReceiveText() {
         auto [opcode, payload] = co_await ReceiveFrame();
         if (opcode != 0x1) {
-            throw std::runtime_error("Unexpected opcode, expected text frame");
+            throw std::runtime_error(
+                "Unexpected opcode: " +
+                std::to_string(opcode) +
+                " , expected text frame, got: '" +
+                payload + "'");
         }
         co_return payload;
     }
@@ -81,19 +85,30 @@ private:
 
         frame.push_back(0x80 | opcode);
 
+        uint8_t maskingKey[4];
+        std::random_device rd; // TODO
+        for (int i = 0; i < 4; ++i) {
+            maskingKey[i] = static_cast<uint8_t>(rd());
+        }
+
         if (payload.size() <= 125) {
-            frame.push_back(static_cast<uint8_t>(payload.size()));
+            frame.push_back(0x80 | static_cast<uint8_t>(payload.size()));
         } else if (payload.size() <= 0xFFFF) {
-            frame.push_back(126);
+            frame.push_back(0x80 | 126);
             uint16_t length = htons(static_cast<uint16_t>(payload.size()));
             frame.insert(frame.end(), reinterpret_cast<uint8_t*>(&length), reinterpret_cast<uint8_t*>(&length) + 2);
         } else {
-            frame.push_back(127);
+            frame.push_back(0x80 | 127);
             uint64_t length = htonll(payload.size());
             frame.insert(frame.end(), reinterpret_cast<uint8_t*>(&length), reinterpret_cast<uint8_t*>(&length) + 8);
         }
 
-        frame.insert(frame.end(), payload.begin(), payload.end());
+        frame.insert(frame.end(), std::begin(maskingKey), std::end(maskingKey));
+        std::vector<uint8_t> maskedPayload(payload.begin(), payload.end());
+        for (size_t i = 0; i < maskedPayload.size(); ++i) {
+            maskedPayload[i] ^= maskingKey[i % 4];
+        }
+        frame.insert(frame.end(), maskedPayload.begin(), maskedPayload.end());
 
         co_await Writer.Write(frame.data(), frame.size());
         co_return;
