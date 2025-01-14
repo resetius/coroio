@@ -1275,8 +1275,8 @@ int main() {
 #ifndef _WIN32
         my_unit_poller(test_read_write_full_ssl),
 #endif
-        my_unit_poller(test_resolver, TSelect, TPoll),
-        my_unit_poller(test_resolve_bad_name, TSelect, TPoll),
+        my_unit_poller(test_resolver),
+        my_unit_poller(test_resolve_bad_name),
 #ifdef __linux__
         my_unit_test2(test_remote_disconnect, TPoll, TEPoll),
         cmocka_unit_test(test_uring_create),
