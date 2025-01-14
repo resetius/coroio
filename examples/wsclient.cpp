@@ -19,6 +19,29 @@ TFuture<void> reader(TWebSocket& ws) {
     co_return;
 }
 
+template<typename TSocket, typename TPoller>
+TFuture<void> client(TSocket&& socket, TPoller& poller, std::string host, std::string path)
+{
+    constexpr int maxLineSize = 4096;
+    co_await socket.Connect();
+
+    TWebSocket ws(socket);
+
+    co_await ws.Connect(host, path);
+    auto r = reader(ws);
+
+    TFileHandle input{0, poller}; // stdin
+    TLineReader lineReader(input, maxLineSize);
+    while (auto line = co_await lineReader.Read()) {
+        std::string str = std::string(line.Part1);
+        str += line.Part2;
+        co_await ws.SendText(std::string_view(str));
+    }
+
+    co_await r;
+    co_return;
+}
+
 template<typename TPoller>
 TFuture<void> client(TPoller& poller, const std::string& uri, const std::string& query)
 {
@@ -43,23 +66,16 @@ TFuture<void> client(TPoller& poller, const std::string& uri, const std::string&
         //TAddress address = TAddress{"127.0.0.1", 8080}; // proxy for test
         std::cerr << "Addr: " << address.ToString() << "\n";
         typename TPoller::TSocket socket(address, poller);
-        TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
-        TSslSocket sslSocket(std::move(socket), ctx);
-        sslSocket.SslSetTlsExtHostName(host);
 
-        co_await sslSocket.Connect();
+        if (port == 443) {
+            TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
+            TSslSocket sslSocket(std::move(socket), ctx);
+            sslSocket.SslSetTlsExtHostName(host);
 
-        TWebSocket ws(sslSocket);
-
-        co_await ws.Connect(host, path);
-        auto message = co_await ws.ReceiveText();
-        std::cerr << "Message: " << message << "\n";
-        co_await ws.SendText(query);
-        while (true) {
-            auto message = co_await ws.ReceiveText();
-            std::cerr << "Message: " << message << "\n";
+            co_await client(std::move(sslSocket), poller, std::move(host), std::move(path));
+        } else {
+            co_await client(std::move(socket), poller, std::move(host), std::move(path));
         }
-        //auto r = reader(ws);
     } catch (const std::exception& ex) {
         std::cerr << "Exception: " << ex.what() << "\n";
     }
@@ -75,8 +91,8 @@ void run(const std::string& uri, const std::string& message)
 
 int main(int argc, char** argv) {
     TInitializer init;
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <uri> <message>\n";
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <uri>\n";
         return 1;
     }
     std::string uri = argv[1];

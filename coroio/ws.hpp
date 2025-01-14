@@ -19,6 +19,7 @@ namespace NNet
 {
 
 std::string GenerateWebSocketKey(std::random_device& rd);
+void CheckSecWebSocketAccept(const std::string& allServerHeaders, const std::string& clientKeyBase64);
 
 template<typename TSocket>
 class TWebSocket {
@@ -44,6 +45,8 @@ public:
         co_await Writer.Write(request.data(), request.size());
 
         auto response = co_await Reader.ReadUntil("\r\n\r\n");
+
+        CheckSecWebSocketAccept(response, key);
 
         if (response.find("101 Switching Protocols") == std::string::npos) {
             throw std::runtime_error("Failed to establish WebSocket connection");
