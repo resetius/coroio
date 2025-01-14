@@ -43,7 +43,7 @@ TFuture<void> client(TSocket&& socket, TPoller& poller, std::string host, std::s
 }
 
 template<typename TPoller>
-TFuture<void> client(TPoller& poller, const std::string& uri, const std::string& query)
+TFuture<void> client(TPoller& poller, const std::string& uri)
 {
     try {
         std::regex wsRegex(R"(^(wss?|ws)://([^:/?#]+)(?::(\d+))?([^?#]*)(\?[^#]*)?)");
@@ -82,10 +82,10 @@ TFuture<void> client(TPoller& poller, const std::string& uri, const std::string&
 }
 
 template<typename TPoller>
-void run(const std::string& uri, const std::string& message)
+void run(const std::string& uri)
 {
     TLoop<TPoller> loop;
-    auto h = client(loop.Poller(), uri, message);
+    auto h = client(loop.Poller(), uri);
     loop.Loop();
 }
 
@@ -96,6 +96,5 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string uri = argv[1];
-    std::string message = argv[2];
-    run<TDefaultPoller>(uri, message);
+    run<TDefaultPoller>(uri);
 }
