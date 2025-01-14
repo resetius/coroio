@@ -110,9 +110,14 @@ public:
     }
 
     void Wakeup(TEvent&& change) {
+        auto index = Changes_.size();
         change.Handle.resume();
-        if (Changes_.empty() || !Changes_.back().Match(change)) {
-            if (change.Fd >= 0) {
+        if (change.Fd >= 0) {
+            bool matched = false;
+            for (; index < Changes_.size() && !matched; index++) {
+                matched = Changes_[index].Match(change);
+            }
+            if (!matched) {
                 change.Handle = {};
                 Changes_.emplace_back(std::move(change));
             }
