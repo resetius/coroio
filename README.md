@@ -1,7 +1,6 @@
----
-layout: default
-title: "COROIO"
----
+# COROIO
+
+<img src="/bench/logo.png?raw=true" width="400"/>
 
 ### Guide to Using the Library
 
