@@ -109,6 +109,24 @@ public:
         return Sleep(TTime{});
     }
 
+
+   /**
+     * Wakes up the coroutine associated with the given TEvent `change`, then checks
+     * whether that coroutine has added a new wait on the same file descriptor (Fd).
+     * We first store the current size of the `Changes_` vector and call `change.Handle.resume()`.
+     *
+     * If after resuming, the coroutine does NOT add (or match) a wait entry for `change.Fd`,
+     * we assume that this descriptor is not in use yet and remove it from the poller
+     * by resetting `change.Handle` and appending `change` to `Changes_`.
+     *
+     * In most cases, `Changes_` grows by exactly one entry after resuming a coroutine
+     * (it suspends again on a descriptor), but there are scenarios where it can grow
+     * by more than one. For example, one coroutine might launch another coroutine
+     * without waiting; that second coroutine suspends on ReadSome/WriteSome, returns
+     * control to the first coroutine, which then also suspends on ReadSome/WriteSome.
+     * In that chain of calls, multiple new waits can be added before returning here,
+     * so `Changes_` can increase by 2 (or potentially more) in a single wake-up cycle.
+     */
     void Wakeup(TEvent&& change) {
         auto index = Changes_.size();
         change.Handle.resume();
