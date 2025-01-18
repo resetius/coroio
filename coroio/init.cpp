@@ -11,6 +11,9 @@
 #include <signal.h>
 #endif
 
+#include <stdexcept>
+#include <string>
+
 namespace NNet {
 
 #ifdef _WIN32
