@@ -417,13 +417,116 @@ private:
     std::string_view View;
 };
 
+/**
+ * @class TZeroCopyLineSplitter
+ * @brief Splits incoming data into lines using a fixed-size circular buffer,
+ *        enabling zero-copy writes via @ref Acquire() and @ref Commit().
+ *
+ * This class maintains a ring buffer of maximum length (@p maxLen) where new data
+ * can be placed without extra copying. To add data, a typical workflow would be:
+ *   1. Call @ref Acquire() to get a @c std::span<char> in the internal buffer.
+ *   2. Write directly into that span (e.g., using your socket's @c read or @c ReadSome).
+ *   3. Call @ref Commit() with the number of bytes actually written.
+ *
+ * Lines can then be extracted using @ref Pop(), which returns a @c TLine holding
+ * up to two string-view segments if the line crosses the buffer boundary.
+ *
+ * ### Zero-Copy Example (Reading from a Socket)
+ * @code{.cpp}
+ * // Example function that reads lines from a socket into TZeroCopyLineSplitter
+ * void ReadLinesFromSocket(TSocket& socket) {
+ *     TZeroCopyLineSplitter splitter(1024); // ring buffer up to 1024 bytes
+ *     while (true) {
+ *         // Acquire a chunk of the buffer (say 256 bytes)
+ *         auto span = splitter.Acquire(256);
+ *         if (span.empty()) {
+ *             // Not enough space left - handle as needed (e.g., flush or error)
+ *         }
+ *
+ *         // Read directly into the splitter's internal buffer
+ *         ssize_t bytesRead = socket.ReadSome(span.data(), span.size());
+ *         if (bytesRead <= 0) {
+ *             // 0 => socket closed, negative => error
+ *             break;
+ *         }
+ *
+ *         // Commit the data we actually wrote
+ *         splitter.Commit(bytesRead);
+ *
+ *         // Now try popping lines
+ *         while (true) {
+ *             TLine line = splitter.Pop();
+ *             if (line.Part1.empty() && line.Part2.empty()) {
+ *                 // No complete line available at the moment
+ *                 break;
+ *             }
+ *             // Process the line (Part1 + Part2)...
+ *         }
+ *     }
+ * }
+ * @endcode
+ */
 struct TZeroCopyLineSplitter {
 public:
+    /**
+     * @brief Constructs a zero-copy line splitter with a fixed ring buffer capacity.
+     * @param maxLen The maximum number of bytes the buffer can hold.
+     */
     TZeroCopyLineSplitter(int maxLen);
-
+    /**
+     * @brief Extracts and removes the next complete line from the buffer, if available.
+     *
+     * A line is typically delimited by a newline character (implementation-specific).
+     * If the line crosses the circular boundary, the returned @c TLine will contain
+     * two segments (@c Part1 and @c Part2).
+     *
+     * @return A @c TLine object with up to two @c std::string_view segments referencing
+     *         the internal ring buffer. If there is no complete line available,
+     *         behavior is implementation-defined (it may return an empty @c TLine
+     *         or throw an exception).
+     *
+     * @warning The returned string views become invalid once additional data is
+     *          acquired, committed, or popped. Keep this in mind if you need to
+     *          store the line contents for later use.
+     */
     TLine Pop();
+    /**
+     * @brief Reserves space in the circular buffer for writing data directly
+     *        (e.g., from a socket read) without extra copying.
+     *
+     * This method returns a contiguous block of available space as a @c std::span<char>.
+     * If the ring buffer wraps around, you might only get the block up to the end;
+     * you can call @ref Acquire() again for any remaining space, depending on your logic.
+     *
+     * @param size The desired number of bytes to acquire.
+     * @return A @c std::span<char> pointing to the ring buffer region where data can be written.
+     *         Its size might be less than requested if there's less contiguous space available.
+     *
+     * @note You must call @ref Commit() after writing into this span, specifying how many
+     *       bytes were actually written. Otherwise, the new data won't be recognized
+     *       by the splitter.
+     */
     std::span<char> Acquire(size_t size);
+    /**
+     * @brief Finalizes the amount of data written into the span returned by @ref Acquire().
+     *
+     * @param size The number of bytes that were actually written into the acquired buffer.
+     *
+     * After calling @c Commit(), this new data is considered part of the buffer and
+     * can be used to form lines via @ref Pop().
+     */
     void Commit(size_t size);
+    /**
+     * @brief (Optional) Copies data from an external buffer into the circular buffer.
+     *
+     * While the main purpose of this class is zero-copy insertion via @ref Acquire()
+     * and @ref Commit(), this method offers a fallback for situations where you
+     * already have data in a separate buffer and wish to write it into the splitter
+     * in one call.
+     *
+     * @param p   Pointer to the data to copy from.
+     * @param len Number of bytes to copy.
+     */
     void Push(const char* p, size_t len);
 
 private:
