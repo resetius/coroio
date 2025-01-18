@@ -35,6 +35,29 @@ struct TVoidSuspendedPromise
     void unhandled_exception() {}
 };
 
+/**
+ * @class Self
+ * @brief A minimal example of a coroutine "awaitable" object.
+ *
+ * This structure stores a coroutine handle and demonstrates how a coroutine
+ * can be suspended and resumed.
+ *
+ * ### Example Usage
+ * @code{.cpp}
+ * // A simple coroutine that uses 'Self' as an awaitable:
+ * std::coroutine_handle<> exampleCoroutine() {
+ *     // co_await our custom awaitable
+ *     auto handle = co_await Self{};
+ *     // 'handle' is a std::coroutine_handle to this coroutine.
+ *     // You can perform actions like handle.destroy(), handle.resume(), etc.
+ *     ...
+ * }
+ * @endcode
+ *
+ * @note Internally, it captures the coroutine handle in its await_suspend step.
+ *
+ * @cond INTERNAL
+ */
 struct Self {
     bool await_ready() {
         return false;
@@ -51,5 +74,6 @@ struct Self {
 
     std::coroutine_handle<> H;
 };
+/** @endcond */
 
 } // namespace NNet
