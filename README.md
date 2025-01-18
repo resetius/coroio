@@ -64,7 +64,7 @@ The library supports the following operating systems:
 
 ```cpp
 // Example of creating a socket and reading/writing data
-TSocket socket{/* initialize with address and poller */};
+TSocket socket{/* initialize with poller */};
 // Writing data
 socket.WriteSome(data, dataSize);
 // Reading data
@@ -97,12 +97,12 @@ TFuture<void> client(TPoller& poller, TAddress addr)
 
     try {
         TFileHandle input{0, poller}; // stdin
-        TSocket socket{std::move(addr), poller};
+        TSocket socket{poller, addr.Domain()};
         TLineReader lineReader(input, maxLineSize);
         TByteWriter byteWriter(socket);
         TByteReader byteReader(socket);
 
-        co_await socket.Connect();
+        co_await socket.Connect(addr);
         while (auto line = co_await lineReader.Read()) {
             co_await byteWriter.Write(line);
             co_await byteReader.Read(in.data(), line.Size());
