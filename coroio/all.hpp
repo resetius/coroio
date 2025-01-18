@@ -12,6 +12,7 @@
 #include <assert.h>
 
 #include "init.hpp"
+#include "address.hpp"
 #include "poller.hpp"
 
 #include "select.hpp"

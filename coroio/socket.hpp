@@ -18,28 +18,9 @@
 #include <variant>
 
 #include "poller.hpp"
+#include "address.hpp"
 
 namespace NNet {
-
-class TAddress {
-public:
-    TAddress(const std::string& addr, int port);
-    TAddress(sockaddr_in addr);
-    TAddress(sockaddr_in6 addr);
-    TAddress(sockaddr* addr, socklen_t len);
-    TAddress() = default;
-
-    const std::variant<sockaddr_in, sockaddr_in6>& Addr() const;
-    std::pair<const sockaddr*, int> RawAddr() const;
-    bool operator == (const TAddress& other) const;
-    int Domain() const;
-    TAddress WithPort(int port) const;
-
-    std::string ToString() const;
-
-private:
-    std::variant<sockaddr_in, sockaddr_in6> Addr_ = {};
-};
 
 class TSocketOps {
 public:

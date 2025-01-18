@@ -6,6 +6,7 @@ endif ()
 pkg_check_modules(OPENSSL openssl)
 
 set(SOURCES
+  address.cpp
   init.cpp
   socket.cpp
   sockutils.cpp
