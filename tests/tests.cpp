@@ -1192,14 +1192,16 @@ void test_remote_disconnect(void**) {
     using TSocket = typename TPoller::TSocket;
     int port = getport();
     TLoop loop;
-    TSocket socket(TAddress{"127.0.0.1", port}, loop.Poller());
-    socket.Bind();
+    TAddress saddr{"127.0.0.1", port};
+    TSocket socket(loop.Poller(), saddr.Domain());
+    socket.Bind(saddr);
     socket.Listen();
 
     TFuture<void> h1 = [](TPoller& poller, bool *changed, int port) -> TFuture<void>
     {
-        auto clientSocket = TSocket(TAddress{"127.0.0.1", port}, poller);
-        co_await clientSocket.Connect();
+        TAddress addr{"127.0.0.1", port};
+        auto clientSocket = TSocket(poller, addr.Domain());
+        co_await clientSocket.Connect(addr);
         co_await clientSocket.Monitor();
         *changed = true;
         co_return;
