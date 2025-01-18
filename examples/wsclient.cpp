@@ -4,7 +4,41 @@
 
 #include <regex>
 
+#ifndef _WIN32
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <ifaddrs.h>
+#endif
+
 using namespace NNet;
+
+#ifndef _WIN32
+TAddress GetLinkAddress() {
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == -1) {
+        throw std::runtime_error("getifaddrs failed");
+    }
+
+    for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr)
+            continue;
+
+        if (ifa->ifa_addr->sa_family == AF_INET6) {
+            auto* addr6 = reinterpret_cast<struct sockaddr_in6*>(ifa->ifa_addr);
+
+            if (IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr)
+                ||IN6_IS_ADDR_LOOPBACK(&addr6->sin6_addr))
+            {
+                continue;
+            }
+
+            return TAddress(*addr6);
+        }
+    }
+
+    throw std::runtime_error("No link-local address found");
+}
+#endif
 
 template<typename TWebSocket>
 TFuture<void> reader(TWebSocket& ws) {
@@ -43,7 +77,7 @@ TFuture<void> client(TSocket&& socket, TAddress& address, TPoller& poller, std::
 }
 
 template<typename TPoller>
-TFuture<void> client(TPoller& poller, const std::string& uri)
+TFuture<void> client(TPoller& poller, const std::string& uri, bool ipv6)
 {
     try {
         std::regex wsRegex(R"(^(wss?|ws)://([^:/?#]+)(?::(\d+))?([^?#]*)(\?[^#]*)?)");
@@ -60,12 +94,21 @@ TFuture<void> client(TPoller& poller, const std::string& uri)
         std::string path = match[4].str();
 
         TResolver<TPollerBase> resolver(poller);
-        auto addresses = co_await resolver.Resolve(host);
+        auto addresses = co_await resolver.Resolve(host,
+            ipv6 ? EDNSType::AAAA : EDNSType::A
+        );
 
         TAddress address = addresses.front().WithPort(port);
         //TAddress address = TAddress{"127.0.0.1", 8080}; // proxy for test
         std::cerr << "Addr: " << address.ToString() << "\n";
         typename TPoller::TSocket socket(poller, address.Domain());
+
+        if (ipv6) {
+#ifndef _WIN32
+            TAddress local = GetLinkAddress();
+            socket.Bind(local);
+#endif
+        }
 
         if (port == 443) {
             TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
@@ -82,19 +125,33 @@ TFuture<void> client(TPoller& poller, const std::string& uri)
 }
 
 template<typename TPoller>
-void run(const std::string& uri)
+void run(const std::string& uri, bool ipv6)
 {
     TLoop<TPoller> loop;
-    auto h = client(loop.Poller(), uri);
+    auto h = client(loop.Poller(), uri, ipv6);
     loop.Loop();
+}
+
+void usage(const char* name) {
+    std::cerr << name << "--uri <uri> [--6]\n";
+    std::exit(1);
 }
 
 int main(int argc, char** argv) {
     TInitializer init;
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <uri>\n";
-        return 1;
+    std::string uri;
+    bool ipv6 = false;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--help")) {
+            usage(argv[0]);
+        } else if (!strcmp(argv[i], "--uri") && i < argc-1) {
+            uri = argv[++i];
+        } else if (!strcmp(argv[i], "--6")) {
+            ipv6 = true;
+        }
     }
-    std::string uri = argv[1];
-    run<TDefaultPoller>(uri);
+    if (uri.empty()) {
+        usage(argv[0]);
+    }
+    run<TDefaultPoller>(uri, ipv6);
 }
