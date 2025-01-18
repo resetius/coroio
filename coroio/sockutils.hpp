@@ -330,11 +330,82 @@ private:
     TSocket& Socket;
 };
 
+/**
+ * @class TLineSplitter
+ * @brief Splits incoming data into lines using a circular buffer of fixed capacity.
+ *
+ * This class maintains a ring buffer of maximum length (@p maxLen), allowing you
+ * to push new data in and then pop complete lines without additional copying.
+ * When a line wraps around the circular boundary, it is represented in two segments.
+ * A corresponding @c TLine object holds these segments as string views (@c Part1 and @c Part2).
+ *
+ * ### Important Notes
+ * - The maximum capacity of the buffer is given by @p maxLen. Pushing more data than
+ *   the available space may cause old data to be overwritten or an implementation-defined behavior.
+ * - The returned @c TLine references the internal buffer via string views.
+ *   Any subsequent push operations (or further pops) may invalidate these views.
+ *
+ * ### Example Usage
+ * @code{.cpp}
+ * // Suppose TLine is defined as:
+ * // struct TLine {
+ * //     std::string_view Part1;
+ * //     std::string_view Part2; // empty if the line doesn't wrap around
+ * // };
+ *
+ * int main() {
+ *     TLineSplitter splitter(1024); // up to 1024 bytes of data stored
+ *
+ *     // Push some data containing two lines
+ *     const char* data = "Hello\nWorld\n";
+ *     splitter.Push(data, std::strlen(data));
+ *
+ *     // Pop the first line -> "Hello"
+ *     TLine line1 = splitter.Pop();
+ *     // line1.Part1: "Hello"
+ *     // line1.Part2: "" (empty, not wrapped)
+ *
+ *     // Pop the second line -> "World"
+ *     TLine line2 = splitter.Pop();
+ *     // line2.Part1: "World"
+ *     // line2.Part2: "" (empty, not wrapped)
+ *
+ *     return 0;
+ * }
+ * @endcode
+ */
 struct TLineSplitter {
 public:
+    /**
+     * @brief Constructs a line splitter with a fixed ring buffer capacity.
+     * @param maxLen The maximum number of bytes the circular buffer can hold.
+     */
     TLineSplitter(int maxLen);
-
+    /**
+     * @brief Retrieves and removes the next complete line from the buffer.
+     *
+     * A line is typically delimited by a newline character (implementation-specific).
+     * If the line crosses the circular boundary, @c TLine will contain two parts:
+     *   - @c Part1 referencing the tail end of the buffer,
+     *   - @c Part2 referencing the beginning portion.
+     *
+     * @return A @c TLine object with string views that reference the extracted line.
+     *         If there is no complete line available, behavior may be undefined
+     *         or implementation-dependent (e.g., returns an empty line or throws).
+     *
+     * @warning The returned @c TLine's string views are valid only until the
+     *          next call to @ref Push() or further modifications to the buffer.
+     */
     TLine Pop();
+    /**
+     * @brief Appends new data to the circular buffer.
+     *
+     * The data is copied into the ring buffer without extra allocations. If the
+     * buffer does not have enough free space, the runtime_exception is thrown.
+     *
+     * @param buf  Pointer to the raw bytes to insert.
+     * @param size Number of bytes to insert from @p buf.
+     */
     void Push(const char* buf, size_t size);
 
 private:
