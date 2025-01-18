@@ -292,7 +292,7 @@ void TResolver<TPoller>::ResumeSender() {
 }
 
 template<typename TPoller>
-TValueTask<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname, EDNSType type) {
+TFuture<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname, EDNSType type) {
     auto handle = co_await Self();
     if (type == EDNSType::DEFAULT) {
         type = DefaultType;

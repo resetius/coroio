@@ -210,7 +210,7 @@ struct TByteWriter {
      *
      * @throws std::runtime_error If the connection is closed before @p size bytes are fully written.
      */
-    TValueTask<void> Write(const void* data, size_t size) {
+    TFuture<void> Write(const void* data, size_t size) {
         const char* p = static_cast<const char*>(data);
         while (size != 0) {
             auto readSize = co_await Socket.WriteSome(p, size);
@@ -237,7 +237,7 @@ struct TByteWriter {
      *
      * @throws std::runtime_error If the connection is closed while writing.
      */
-    TValueTask<void> Write(const TLine& line) {
+    TFuture<void> Write(const TLine& line) {
         co_await Write(line.Part1.data(), line.Part1.size());
         co_await Write(line.Part2.data(), line.Part2.size());
         co_return;
@@ -308,7 +308,7 @@ struct TStructReader {
      * @throws std::runtime_error If the connection is closed before the
      *                            structure is fully read.
      */
-    TValueTask<T> Read() {
+    TFuture<T> Read() {
         T res;
         size_t size = sizeof(T);
         char* p = reinterpret_cast<char*>(&res);
@@ -600,7 +600,7 @@ struct TLineReader {
      *
      * @return A TValueTask<TLine> that completes once a full line is available.
      */
-    TValueTask<TLine> Read() {
+    TFuture<TLine> Read() {
         auto line = Splitter.Pop();
         while (!line) {
             auto buf = Splitter.Acquire(ChunkSize);

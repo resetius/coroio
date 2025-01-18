@@ -34,7 +34,7 @@ public:
     TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType = EDNSType::A);
     ~TResolver();
 
-    TValueTask<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::DEFAULT);
+    TFuture<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::DEFAULT);
 
 private:
     TFuture<void> SenderTask();
