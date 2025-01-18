@@ -2,12 +2,6 @@
 
 namespace NNet {
 
-#ifdef _WIN32
-LPFN_CONNECTEX ConnectEx;
-LPFN_ACCEPTEX AcceptEx;
-LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
-#endif
-
 TAddress::TAddress(const std::string& addr, int port)
 {
     sockaddr_in addr4 = {};
