@@ -9,31 +9,126 @@
 
 namespace NNet {
 
+/**
+ * @class TResolvConf
+ * @brief Reads and stores DNS configuration from a file or an input stream.
+ *
+ * This class loads a list of nameservers from a DNS configuration file (by default,
+ * `/etc/resolv.conf`) or from any other input stream. The nameservers are stored
+ * as a vector of @c TAddress objects.
+ */
 class TResolvConf {
 public:
+    /**
+     * @brief Constructs a TResolvConf and loads DNS configuration from a file.
+     *
+     * @param fn Path to the DNS configuration file. Default is "/etc/resolv.conf".
+     */
     TResolvConf(const std::string& fn = "/etc/resolv.conf");
+    /**
+     * @brief Constructs a TResolvConf from an input stream.
+     *
+     * This constructor allows loading the DNS configuration from any standard
+     * input stream.
+     *
+     * @param input Reference to an input stream containing DNS configuration data.
+     */
     TResolvConf(std::istream& input);
-
+    /**
+     * @brief A vector of nameserver addresses.
+     *
+     * These addresses are extracted from the configuration source.
+     */
     std::vector<TAddress> Nameservers;
 
 private:
     void Load(std::istream& input);
 };
 
+/**
+ * @enum EDNSType
+ * @brief Defines the supported DNS record types for resolution requests.
+ */
 enum class EDNSType {
-    DEFAULT = 0,
-    A = 1,
-    AAAA = 28,
+    DEFAULT = 0, /**< Use default resolution type; typically this will be the same as A type. */
+    A = 1, /**< IPv4 address record. */
+    AAAA = 28, /**< IPv6 address record. */
 };
 
+/**
+ * @class TResolver
+ * @brief Resolves hostnames into IP addresses using a custom poller.
+ *
+ * The TResolver class provides DNS resolution functionality by sending DNS
+ * queries to a nameserver. It supports different DNS record types as specified by
+ * EDNSType. Internally, it uses a polling mechanism (provided by the template parameter)
+ * for asynchronous operations.
+ *
+ * @tparam TPoller The type of the poller used to manage asynchronous operations.
+ *
+ * ### Example Usage
+ * @code{.cpp}
+ * // Assume TSelect is a poller type with methods Poll() and WakeupReadyHandles()
+ * TSelect poller;
+ *
+ * // Create a resolver using the default nameserver specified in /etc/resolv.conf
+ * TResolver<TSelect> resolver(poller);
+ *
+ * // Asynchronously resolve a hostname (IPv4 resolution by default)
+ * TFuture<std::vector<TAddress>> futureAddresses = resolver.Resolve("example.com");
+ * // Later (in an asynchronous context) use:
+ * // auto addresses = co_await futureAddresses;
+ * @endcode
+ */
 template<typename TPoller>
 class TResolver {
 public:
+    /**
+     * @brief Constructs a TResolver using the default resolv configuration.
+     *
+     * The resolver uses DNS nameservers from the default configuration file or
+     * as determined by the system.
+     *
+     * @param poller Reference to a poller used for asynchronous operations.
+     * @param defaultType The default DNS record type to use if none is specified in a request.
+     */
     TResolver(TPoller& poller, EDNSType defaultType = EDNSType::A);
+    /**
+     * @brief Constructs a TResolver with a specified DNS configuration.
+     *
+     * This constructor initializes the resolver with nameservers from a given
+     * TResolvConf object.
+     *
+     * @param conf A TResolvConf object containing DNS configuration.
+     * @param poller Reference to a poller for asynchronous operations.
+     * @param defaultType The default DNS record type to use for resolution.
+     */
     TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType = EDNSType::A);
+    /**
+     * @brief Constructs a TResolver using a specific DNS address.
+     *
+     * This variant allows specifying a single DNS nameserver for resolution.
+     *
+     * @param dnsAddr The address of the DNS server.
+     * @param poller Reference to a poller used for asynchronous operations.
+     * @param defaultType The default DNS record type for resolution.
+     */
     TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType = EDNSType::A);
     ~TResolver();
 
+    /**
+     * @brief Resolves a hostname to a list of addresses.
+     *
+     * Sends a DNS query for the specified hostname. If the request type is set
+     * to EDNSType::DEFAULT, the default DNS record type (specified in the
+     * constructor) is used.
+     *
+     * @param hostname The name to be resolved.
+     * @param type The DNS record type to query. If EDNSType::DEFAULT is specified,
+     *             the default type provided to the constructor is used.
+     *
+     * @return A TFuture containing a vector of TAddress objects with the resolved addresses.
+     */
     TFuture<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::DEFAULT);
 
 private:
