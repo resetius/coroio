@@ -11,6 +11,7 @@
 
 #include <assert.h>
 
+#include "init.hpp"
 #include "poller.hpp"
 
 #include "select.hpp"
@@ -60,6 +61,12 @@
 #include "sockutils.hpp"
 #include "ssl.hpp"
 #include "resolver.hpp"
+
+#ifdef _WIN32
+int pipe(int pipes[2]);
+int socketpair(int domain, int type, int protocol, SOCKET socks[2]);
+int socketpair(int domain, int type, int protocol, int socks[2]);
+#endif
 
 namespace NNet {
 #if defined(__APPLE__) || defined(__FreeBSD__)

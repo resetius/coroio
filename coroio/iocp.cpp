@@ -1,7 +1,13 @@
 #ifdef _WIN32
 #include "iocp.hpp"
 
+#include <Mswsock.h> // for ConnectEx, AcceptEx
+
 namespace NNet {
+
+extern LPFN_CONNECTEX ConnectEx;
+extern LPFN_ACCEPTEX AcceptEx;
+extern LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
 
 TIOCp::TIOCp()
     : Port_(CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0))

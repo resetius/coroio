@@ -3,7 +3,6 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <Mswsock.h> // for ConnectEx, AcceptEx
 #include <io.h>
 #else
 #include <arpa/inet.h>
@@ -20,27 +19,7 @@
 
 #include "poller.hpp"
 
-#ifdef _WIN32
-int pipe(int pipes[2]);
-int socketpair(int domain, int type, int protocol, SOCKET socks[2]);
-int socketpair(int domain, int type, int protocol, int socks[2]);
-#endif
-
 namespace NNet {
-
-#ifdef _WIN32
-extern LPFN_CONNECTEX ConnectEx;
-extern LPFN_ACCEPTEX AcceptEx;
-extern LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
-#endif
-
-class TInitializer {
-public:
-    TInitializer();
-#ifdef _WIN32
-    ~TInitializer();
-#endif
-};
 
 class TAddress {
 public:
