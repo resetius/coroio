@@ -53,8 +53,8 @@ TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
     }
 
     NNet::TSslContext ctx = NNet::TSslContext::Server("server.crt", "server.key", sslDebugLogFunc);
-    typename TPoller::TSocket socket(std::move(address), poller);
-    socket.Bind();
+    typename TPoller::TSocket socket(poller, address.Domain());
+    socket.Bind(address);
     socket.Listen();
 
     while (true) {

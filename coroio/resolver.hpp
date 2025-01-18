@@ -48,6 +48,7 @@ private:
     TFuture<void> Timeouts;
     std::coroutine_handle<> SenderSuspended;
 
+    TAddress DnsAddr;
     TSocket Socket;
     TPoller& Poller;
     EDNSType DefaultType;

@@ -41,10 +41,10 @@ TVoidTask client_handler(TSocket socket, int buffer_size) {
 template<bool debug, typename TPoller>
 TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
 {
-    typename TPoller::TSocket socket(std::move(address), poller);
-    socket.Bind();
+    typename TPoller::TSocket socket(poller, address.Domain());
+    socket.Bind(address);
     socket.Listen();
-    std::cerr << "Listening on: " << socket.Addr().ToString() << std::endl;
+    std::cerr << "Listening on: " << socket.LocalAddr()->ToString() << std::endl;
 
     while (true) {
         auto client = co_await socket.Accept();

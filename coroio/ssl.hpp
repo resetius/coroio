@@ -12,6 +12,7 @@
 #include "corochain.hpp"
 #include "sockutils.hpp"
 #include "promises.hpp"
+#include "socket.hpp"
 
 namespace NNet {
 
@@ -101,9 +102,9 @@ public:
         co_return co_await DoHandshake();
     }
 
-    TValueTask<void> Connect(TTime deadline = TTime::max()) {
+    TValueTask<void> Connect(const TAddress& address, TTime deadline = TTime::max()) {
         assert(!Handshake);
-        co_await Socket.Connect(deadline);
+        co_await Socket.Connect(address, deadline);
         SSL_set_connect_state(Ssl);
         co_return co_await DoHandshake();
     }

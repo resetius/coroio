@@ -193,7 +193,8 @@ TResolver<TPoller>::TResolver(const TResolvConf& conf, TPoller& poller, EDNSType
 
 template<typename TPoller>
 TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType)
-    : Socket(std::move(dnsAddr), poller, SOCK_DGRAM)
+    : DnsAddr(std::move(dnsAddr))
+    , Socket(poller, DnsAddr.Domain(), SOCK_DGRAM)
     , Poller(poller)
     , DefaultType(defaultType)
 {
@@ -209,7 +210,7 @@ TResolver<TPoller>::~TResolver()
 
 template<typename TPoller>
 TFuture<void> TResolver<TPoller>::SenderTask() {
-    co_await Socket.Connect();
+    co_await Socket.Connect(DnsAddr);
     char buf[512];
     while (true) {
         while (AddResolveQueue.empty()) {

@@ -27,8 +27,9 @@ TVoidTask client_handler(TSocket socket, TLoop* loop) {
 
 TVoidTask server(TLoop* loop)
 {
-    TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Poller());
-    socket.Bind();
+    TAddress addr{"127.0.0.1", 8888};
+    TSocket socket(loop->Poller(), addr.Domain());
+    socket.Bind(addr);
     socket.Listen();
 
     try {
@@ -50,8 +51,9 @@ TVoidTask client(TLoop* loop, int clientId)
     ssize_t size = 0;
 
     try {
-        TSocket socket(TAddress{"127.0.0.1", 8888}, loop->Poller());
-        co_await socket.Connect();
+        TAddress addr{"127.0.0.1", 8888};
+        TSocket socket(loop->Poller(), addr.Domain());
+        co_await socket.Connect(addr);
 
         do {
             snprintf(buffer+6, sizeof(buffer)-6, "%03d/%03d", messageNo++, clientId);

@@ -14,13 +14,13 @@ TFuture<void> client(TPoller& poller, TSslContext& ctx, TAddress addr)
 
     try {
         TFileHandle input{0, poller}; // stdin
-        TSocket socket{std::move(addr), poller};
+        TSocket socket{poller, addr.Domain()};
         TSslSocket sslSocket(std::move(socket), ctx);
         TLineReader lineReader(input, maxLineSize);
         TByteWriter byteWriter(sslSocket);
         TByteReader byteReader(sslSocket);
 
-        co_await sslSocket.Connect();
+        co_await sslSocket.Connect(addr);
         while (auto line = co_await lineReader.Read()) {
             co_await byteWriter.Write(line);
             co_await byteReader.Read(in.data(), line.Size());
