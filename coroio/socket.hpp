@@ -438,7 +438,7 @@ public:
             TTime deadline;
             unsigned timerId = 0;
         };
-        return TAwaitable{Poller_, Fd_, RemoteAddr().RawAddr(), deadline};
+        return TAwaitable{Poller_, Fd_, RemoteAddr()->RawAddr(), deadline};
     }
 
     auto ReadSome(void* buf, size_t size) {
