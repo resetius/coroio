@@ -16,7 +16,6 @@
 
 #include <string>
 #include <variant>
-#include <stdexcept>
 
 namespace NNet {
 

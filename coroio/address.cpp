@@ -1,5 +1,8 @@
 #include "address.hpp"
 
+#include <string.h>
+#include <stdexcept>
+
 namespace NNet {
 
 TAddress::TAddress(const std::string& addr, int port)
