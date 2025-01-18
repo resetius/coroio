@@ -537,15 +537,69 @@ private:
     std::string Data;
     std::string_view View;
 };
-
+/**
+ * @class TLineReader
+ * @brief Reads a complete line from a socket using a zero-copy line splitter.
+ *
+ * This class encapsulates a socket and a zero-copy line splitter to provide
+ * efficient line-based reading. Data is read from the socket in chunks and fed
+ * into a circular buffer maintained by the splitter. The splitter then extracts
+ * complete lines as soon as they become available.
+ *
+ * The maximum line size can be specified via the constructor (default is 4096 bytes);
+ * a chunk size (default to half of the maximum line size) is used when acquiring space
+ * from the splitter for new data. Each call to @ref Read() returns a complete line
+ * (of type @c TLine). A @c TLine typically contains string views @c Part1 and @c Part2,
+ * which together represent the line (useful when a line wraps around the circular buffer).
+ *
+ * @tparam TSocket The socket type used for reading. TSocket must provide a method:
+ *         <tt>TValueTask<ssize_t> ReadSome(void* buffer, size_t size)</tt>
+ *         that reads data asynchronously.
+ *
+ * ### Example Usage
+ * @code{.cpp}
+ * // Example function that processes lines read from the socket:
+ * TValueTask<void> processLines(TSocket& socket) {
+ *     TLineReader<TSocket> lineReader(socket);
+ *     while (true) {
+ *         TLine line = co_await lineReader.Read();
+ *         if (!line) {
+ *             // No complete line is available (or end-of-stream reached)
+ *             break;
+ *         }
+ *         // Process the line here (line.Part1 and line.Part2 if the line wraps)
+ *     }
+ *     co_return;
+ * }
+ * @endcode
+ */
 template<typename TSocket>
 struct TLineReader {
+    /**
+     * @brief Constructs a line reader with the given socket and maximum line size.
+     *
+     * The maximum line size (default 4096) determines the capacity of the underlying
+     * zero-copy line splitter. The chunk size is set to half the maximum line size.
+     *
+     * @param socket The socket used for reading data.
+     * @param maxLineSize Maximum allowed size for a line. Default is 4096 bytes.
+     */
     TLineReader(TSocket& socket, int maxLineSize = 4096)
         : Socket(socket)
         , Splitter(maxLineSize)
         , ChunkSize(maxLineSize / 2)
     { }
-
+    /**
+     * @brief Reads and returns the next complete line from the socket.
+     *
+     * This method repeatedly attempts to pop a complete line from the splitter.
+     * If no complete line is available, it acquires a chunk of the splitter’s internal
+     * buffer and reads data from the socket into that space. After committing the
+     * newly read data, it retries extracting a line. The method returns a @c TLine
+     * (which may contain two parts, if the line wraps around the circular buffer).
+     *
+     * @return A TValueTask<TLine> that completes once a full line is available.
+     */
     TValueTask<TLine> Read() {
         auto line = Splitter.Pop();
         while (!line) {
