@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #endif
 
+#include <optional>
 #include <variant>
 
 #include "poller.hpp"
