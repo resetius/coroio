@@ -4,7 +4,7 @@ namespace NNet {
 
 #ifdef _WIN32
     TSelect::TSelect()
-        : DummySocket_({}, *this)
+        : DummySocket_(*this, PF_INET)
     {
         FD_ZERO(&ReadFds_);
         FD_ZERO(&WriteFds_);

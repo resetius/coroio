@@ -14,13 +14,13 @@ TFuture<void> client(TPoller& poller, TAddress addr)
 
     try {
         TFileHandle input{0, poller}; // stdin
-        TSocket socket{std::move(addr), poller};
+        TSocket socket{poller, addr.Domain()};
         TLineReader lineReader(input, maxLineSize);
         TByteWriter byteWriter(socket);
         TByteReader byteReader(socket);
 
         // Windows unable to detect 'connection refused' without setting timeout
-        co_await socket.Connect(TClock::now()+std::chrono::milliseconds(1000));
+        co_await socket.Connect(addr, TClock::now()+std::chrono::milliseconds(1000));
         while (auto line = co_await lineReader.Read()) {
             co_await byteWriter.Write(line);
             co_await byteReader.Read(in.data(), line.Size());

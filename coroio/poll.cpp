@@ -30,7 +30,7 @@ namespace NNet {
 
 #ifdef _WIN32
 TPoll::TPoll()
-    : DummySocket_({}, *this)
+    : DummySocket_(*this, PF_INET)
 {
     int fd = DummySocket_.Fd();
     MaxFd_ = std::max<int>(MaxFd_, fd);

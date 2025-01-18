@@ -20,10 +20,10 @@ TFuture<void> reader(TWebSocket& ws) {
 }
 
 template<typename TSocket, typename TPoller>
-TFuture<void> client(TSocket&& socket, TPoller& poller, std::string host, std::string path)
+TFuture<void> client(TSocket&& socket, TAddress& address, TPoller& poller, std::string host, std::string path)
 {
     constexpr int maxLineSize = 4096;
-    co_await socket.Connect();
+    co_await socket.Connect(address);
 
     TWebSocket ws(socket);
 
@@ -65,16 +65,16 @@ TFuture<void> client(TPoller& poller, const std::string& uri)
         TAddress address = addresses.front().WithPort(port);
         //TAddress address = TAddress{"127.0.0.1", 8080}; // proxy for test
         std::cerr << "Addr: " << address.ToString() << "\n";
-        typename TPoller::TSocket socket(address, poller);
+        typename TPoller::TSocket socket(poller, address.Domain());
 
         if (port == 443) {
             TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
             TSslSocket sslSocket(std::move(socket), ctx);
             sslSocket.SslSetTlsExtHostName(host);
 
-            co_await client(std::move(sslSocket), poller, std::move(host), std::move(path));
+            co_await client(std::move(sslSocket), address, poller, std::move(host), std::move(path));
         } else {
-            co_await client(std::move(socket), poller, std::move(host), std::move(path));
+            co_await client(std::move(socket), address, poller, std::move(host), std::move(path));
         }
     } catch (const std::exception& ex) {
         std::cerr << "Exception: " << ex.what() << "\n";

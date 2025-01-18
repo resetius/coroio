@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #endif
 
+#include <optional>
 #include <variant>
 
 #include "poller.hpp"
@@ -267,14 +268,17 @@ public:
 
     TSocket() = default;
 
-    TSocket(TAddress&& addr, TPollerBase& poller, int type = SOCK_STREAM);
+    TSocket(TPollerBase& poller, int domain, int type = SOCK_STREAM);
     TSocket(const TAddress& addr, int fd, TPollerBase& poller);
-    TSocket(const TAddress& addr, TPollerBase& poller, int type = SOCK_STREAM);
 
     TSocket(TSocket&& other);
     TSocket& operator=(TSocket&& other);
 
-    auto Connect(TTime deadline = TTime::max()) {
+    auto Connect(const TAddress& addr, TTime deadline = TTime::max()) {
+        if (RemoteAddr_.has_value()) {
+            throw std::runtime_error("Already connected");
+        }
+        RemoteAddr_ = addr;
         struct TAwaitable {
             bool await_ready() {
                 int ret = connect(fd, addr.first, addr.second);
@@ -309,7 +313,7 @@ public:
             TTime deadline;
             unsigned timerId = 0;
         };
-        return TAwaitable{Poller_, Fd_, Addr_.RawAddr(), deadline};
+        return TAwaitable{Poller_, Fd_, RemoteAddr_->RawAddr(), deadline};
     }
 
     auto Accept() {
@@ -337,13 +341,15 @@ public:
         return TAwaitable{Poller_, Fd_};
     }
 
-    void Bind();
+    void Bind(const TAddress& addr);
     void Listen(int backlog = 128);
-    const TAddress& Addr() const;
+    const std::optional<TAddress>& RemoteAddr() const;
+    const std::optional<TAddress>& LocalAddr() const;
     int Fd() const;
 
 protected:
-    TAddress Addr_;
+    std::optional<TAddress> LocalAddr_;
+    std::optional<TAddress> RemoteAddr_;
 };
 
 template<typename T>
@@ -352,8 +358,8 @@ class TPollerDrivenSocket: public TSocket
 public:
     using TPoller = T;
 
-    TPollerDrivenSocket(TAddress addr, T& poller)
-        : TSocket(std::move(addr), poller)
+    TPollerDrivenSocket(T& poller, int domain, int type = SOCK_STREAM)
+        : TSocket(poller, domain, type)
         , Poller_(&poller)
     {
         Poller_->Register(Fd_);
@@ -401,7 +407,11 @@ public:
         return TAwaitable{Poller_, Fd_};
     }
 
-    auto Connect(TTime deadline = TTime::max()) {
+    auto Connect(const TAddress& addr, TTime deadline = TTime::max()) {
+        if (RemoteAddr_.has_value()) {
+            throw std::runtime_error("Already connected");
+        }
+        RemoteAddr_ = addr;
         struct TAwaitable {
             bool await_ready() const { return false; }
 
@@ -429,7 +439,7 @@ public:
             TTime deadline;
             unsigned timerId = 0;
         };
-        return TAwaitable{Poller_, Fd_, Addr().RawAddr(), deadline};
+        return TAwaitable{Poller_, Fd_, RemoteAddr()->RawAddr(), deadline};
     }
 
     auto ReadSome(void* buf, size_t size) {

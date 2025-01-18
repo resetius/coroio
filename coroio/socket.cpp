@@ -201,19 +201,13 @@ int TSocketOps::Setup(int s) {
     return s;
 }
 
-TSocket::TSocket(TAddress&& addr, TPollerBase& poller, int type)
-    : TSocketBase(poller, addr.Domain(), type)
-    , Addr_(std::move(addr))
+TSocket::TSocket(TPollerBase& poller, int domain, int type)
+    : TSocketBase(poller, domain, type)
 { }
 
 TSocket::TSocket(const TAddress& addr, int fd, TPollerBase& poller)
     : TSocketBase(fd, poller)
-    , Addr_(addr)
-{ }
-
-TSocket::TSocket(const TAddress& addr, TPollerBase& poller, int type)
-    : TSocketBase(poller, addr.Domain(), type)
-    , Addr_(addr)
+    , RemoteAddr_(addr)
 { }
 
 TSocket::TSocket(TSocket&& other)
@@ -225,21 +219,26 @@ TSocket& TSocket::operator=(TSocket&& other) {
     if (this != &other) {
         Close();
         Poller_ = other.Poller_;
-        Addr_ = other.Addr_;
+        RemoteAddr_ = other.RemoteAddr_;
+        LocalAddr_ = other.LocalAddr_;
         Fd_ = other.Fd_;
         other.Fd_ = -1;
     }
     return *this;
 }
 
-void TSocket::Bind() {
-    auto [addr, len] = Addr_.RawAddr();
+void TSocket::Bind(const TAddress& addr) {
+    if (LocalAddr_.has_value()) {
+        throw std::runtime_error("Already bound");
+    }
+    LocalAddr_ = addr;
+    auto [rawaddr, len] = LocalAddr_->RawAddr();
     int optval = 1;
     socklen_t optlen = sizeof(optval);
     if (setsockopt(Fd_, SOL_SOCKET, SO_REUSEADDR, (char*) &optval, optlen) < 0) {
         throw std::system_error(errno, std::generic_category(), "setsockopt");
     }
-    if (bind(Fd_, addr, len) < 0) {
+    if (bind(Fd_, rawaddr, len) < 0) {
         throw std::system_error(errno, std::generic_category(), "bind");
     }
 }
@@ -250,8 +249,12 @@ void TSocket::Listen(int backlog) {
     }
 }
 
-const TAddress& TSocket::Addr() const {
-    return Addr_;
+const std::optional<TAddress>& TSocket::LocalAddr() const {
+    return LocalAddr_;
+}
+
+const std::optional<TAddress>& TSocket::RemoteAddr() const {
+    return RemoteAddr_;
 }
 
 int TSocket::Fd() const {
