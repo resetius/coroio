@@ -79,7 +79,7 @@ private:
     std::string Payload;
     std::vector<uint8_t> Frame;
 
-    TValueTask<void> SendFrame(uint8_t opcode, std::string_view payload) {
+    TFuture<void> SendFrame(uint8_t opcode, std::string_view payload) {
         Frame.clear();
         Frame.push_back(0x80 | opcode);
 
@@ -110,7 +110,7 @@ private:
         co_return;
     }
 
-    TValueTask<std::pair<uint8_t, std::string_view>> ReceiveFrame() {
+    TFuture<std::pair<uint8_t, std::string_view>> ReceiveFrame() {
         uint8_t header[2];
         co_await Reader.Read(header, sizeof(header));
 

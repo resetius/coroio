@@ -13,18 +13,18 @@ namespace NNet {
 
 template<typename T> struct TFinalAwaiter;
 
-template<typename T> struct TValueTask;
+template<typename T> struct TFuture;
 
 template<typename T>
-struct TValuePromiseBase {
+struct TPromiseBase {
     std::suspend_never initial_suspend() { return {}; }
     TFinalAwaiter<T> final_suspend() noexcept;
     std::coroutine_handle<> Caller = std::noop_coroutine();
 };
 
 template<typename T>
-struct TValuePromise: public TValuePromiseBase<T> {
-    TValueTask<T> get_return_object();
+struct TPromise: public TPromiseBase<T> {
+    TFuture<T> get_return_object();
 
     void return_value(const T& t) {
         ErrorOr = t;
@@ -42,25 +42,25 @@ struct TValuePromise: public TValuePromiseBase<T> {
 };
 
 template<typename T>
-struct TValueTaskBase {
-    TValueTaskBase() = default;
-    TValueTaskBase(TValuePromise<T>& promise)
+struct TFutureBase {
+    TFutureBase() = default;
+    TFutureBase(TPromise<T>& promise)
         : Coro(Coro.from_promise(promise))
     { }
-    TValueTaskBase(TValueTaskBase&& other)
+    TFutureBase(TFutureBase&& other)
     {
         *this = std::move(other);
     }
-    TValueTaskBase(const TValueTaskBase&) = delete;
-    TValueTaskBase& operator=(const TValueTaskBase&) = delete;
-    TValueTaskBase& operator=(TValueTaskBase&& other) {
+    TFutureBase(const TFutureBase&) = delete;
+    TFutureBase& operator=(const TFutureBase&) = delete;
+    TFutureBase& operator=(TFutureBase&& other) {
         if (this != &other) {
             std::swap(Coro, other.Coro);
         }
         return *this;
     }
 
-    ~TValueTaskBase() { if (Coro) { Coro.destroy(); } }
+    ~TFutureBase() { if (Coro) { Coro.destroy(); } }
 
     bool await_ready() const {
         return Coro.promise().ErrorOr != std::nullopt;
@@ -78,16 +78,16 @@ struct TValueTaskBase {
         Coro.promise().Caller = caller;
     }
 
-    using promise_type = TValuePromise<T>;
+    using promise_type = TPromise<T>;
 
 protected:
-    std::coroutine_handle<TValuePromise<T>> Coro = nullptr;
+    std::coroutine_handle<TPromise<T>> Coro = nullptr;
 };
 
-template<> struct TValueTask<void>;
+template<> struct TFuture<void>;
 
 template<typename T>
-struct TValueTask : public TValueTaskBase<T> {
+struct TFuture : public TFutureBase<T> {
     T await_resume() {
         auto& errorOr = *this->Coro.promise().ErrorOr;
         if (auto* res = std::get_if<T>(&errorOr)) {
@@ -98,18 +98,18 @@ struct TValueTask : public TValueTaskBase<T> {
     }
 
     template<typename Func>
-    auto Apply(Func func) -> TValueTask<decltype(func(std::declval<T>()))> {
+    auto Apply(Func func) -> TFuture<decltype(func(std::declval<T>()))> {
         auto prev = std::move(*this);
         auto ret = co_await prev;
         co_return func(ret);
     }
 
-    TValueTask<void> Ignore();
+    TFuture<void> Ignore();
 };
 
 template<>
-struct TValuePromise<void>: public TValuePromiseBase<void> {
-    TValueTask<void> get_return_object();
+struct TPromise<void>: public TPromiseBase<void> {
+    TFuture<void> get_return_object();
 
     void return_void() {
         ErrorOr = nullptr;
@@ -123,7 +123,7 @@ struct TValuePromise<void>: public TValuePromiseBase<void> {
 };
 
 template<>
-struct TValueTask<void> : public TValueTaskBase<void> {
+struct TFuture<void> : public TFutureBase<void> {
     void await_resume() {
         auto& errorOr = *this->Coro.promise().ErrorOr;
         if (errorOr) {
@@ -132,7 +132,7 @@ struct TValueTask<void> : public TValueTaskBase<void> {
     }
 
     template<typename Func>
-    auto Accept(Func func) -> TValueTask<void> {
+    auto Accept(Func func) -> TFuture<void> {
         auto prev = std::move(*this);
         co_await prev;
         co_return func();
@@ -140,7 +140,7 @@ struct TValueTask<void> : public TValueTaskBase<void> {
 };
 
 template<typename T>
-inline TValueTask<void> TValueTask<T>::Ignore() {
+inline TFuture<void> TFuture<T>::Ignore() {
     auto prev = std::move(*this);
     co_await prev;
     co_return;
@@ -149,22 +149,19 @@ inline TValueTask<void> TValueTask<T>::Ignore() {
 template<typename T>
 struct TFinalAwaiter {
     bool await_ready() noexcept { return false; }
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<TValuePromise<T>> h) noexcept {
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<TPromise<T>> h) noexcept {
         return h.promise().Caller;
     }
     void await_resume() noexcept { }
 };
 
-inline TValueTask<void> TValuePromise<void>::get_return_object() { return { TValueTask<void>{*this} }; }
+inline TFuture<void> TPromise<void>::get_return_object() { return { TFuture<void>{*this} }; }
 template<typename T>
-TValueTask<T> TValuePromise<T>::get_return_object() { return { TValueTask<T>{*this} }; }
+TFuture<T> TPromise<T>::get_return_object() { return { TFuture<T>{*this} }; }
 
 
 template<typename T>
-TFinalAwaiter<T> TValuePromiseBase<T>::final_suspend() noexcept { return {}; }
-
-template<typename T>
-using TFuture = TValueTask<T>;
+TFinalAwaiter<T> TPromiseBase<T>::final_suspend() noexcept { return {}; }
 
 template<typename T>
 TFuture<std::vector<T>> All(std::vector<TFuture<T>>&& futures) {

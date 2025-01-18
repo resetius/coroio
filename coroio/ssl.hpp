@@ -89,27 +89,27 @@ public:
         SSL_set_tlsext_host_name(Ssl, host.c_str());
     }
 
-    TValueTask<TSslSocket<THandle>> Accept() {
+    TFuture<TSslSocket<THandle>> Accept() {
         auto underlying = std::move(co_await Socket.Accept());
         auto socket = TSslSocket(std::move(underlying), *Ctx);
         SSL_set_accept_state(socket.Ssl);
         co_return std::move(socket);
     }
 
-    TValueTask<void> AcceptHandshake() {
+    TFuture<void> AcceptHandshake() {
         assert(!Handshake);
         SSL_set_accept_state(Ssl);
         co_return co_await DoHandshake();
     }
 
-    TValueTask<void> Connect(const TAddress& address, TTime deadline = TTime::max()) {
+    TFuture<void> Connect(const TAddress& address, TTime deadline = TTime::max()) {
         assert(!Handshake);
         co_await Socket.Connect(address, deadline);
         SSL_set_connect_state(Ssl);
         co_return co_await DoHandshake();
     }
 
-    TValueTask<ssize_t> ReadSome(void* data, size_t size) {
+    TFuture<ssize_t> ReadSome(void* data, size_t size) {
         co_await WaitHandshake();
 
         int n = SSL_read(Ssl, data, size);
@@ -127,7 +127,7 @@ public:
         co_return n;
     }
 
-    TValueTask<ssize_t> WriteSome(const void* data, size_t size) {
+    TFuture<ssize_t> WriteSome(const void* data, size_t size) {
         co_await WaitHandshake();
 
         auto r = size;
@@ -155,7 +155,7 @@ public:
     }
 
 private:
-    TValueTask<void> DoIO() {
+    TFuture<void> DoIO() {
         char buf[1024];
         int n;
         while ((n = BIO_read(Wbio, buf, sizeof(buf))) > 0) {
@@ -184,7 +184,7 @@ private:
         co_return;
     }
 
-    TValueTask<void> DoHandshake() {
+    TFuture<void> DoHandshake() {
         int r;
         LogState();
         while ((r = SSL_do_handshake(Ssl)) != 1) {
