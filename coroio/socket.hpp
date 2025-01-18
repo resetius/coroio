@@ -357,8 +357,8 @@ class TPollerDrivenSocket: public TSocket
 public:
     using TPoller = T;
 
-    TPollerDrivenSocket(TAddress addr, T& poller)
-        : TSocket(std::move(addr), poller)
+    TPollerDrivenSocket(T& poller, int domain, int type = SOCK_STREAM)
+        : TSocket(poller, domain, type)
         , Poller_(&poller)
     {
         Poller_->Register(Fd_);
