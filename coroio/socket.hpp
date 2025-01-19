@@ -74,7 +74,7 @@ protected:
 };
 
 /**
- * @class TSocketBase<TSockOps>
+ * @class TSocketBase
  * @brief Template base class implementing asynchronous socket I/O operations.
  *
  * This class extends the internal @ref TSocketBase<void> by implementing asynchronous

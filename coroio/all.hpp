@@ -79,4 +79,69 @@ using TDefaultPoller = TIOCp;
 #else
 using TDefaultPoller = TPoll;
 #endif
+
+/**
+ * @mainpage Asynchronous I/O & Networking Library
+ *
+ * @section intro_sec Introduction
+ *
+ * This library provides advanced asynchronous I/O and networking capabilities using
+ * coroutine-based APIs and poller-driven execution. It supports high-performance operations
+ * for both network sockets and file handles.
+ *
+ * @section features_sec Key Features
+ *
+ * The library’s core functionality is exposed through a few high-level classes:
+ * - @ref TSocket and @ref TPollerDrivenSocket for asynchronous networking.
+ * - @ref TFileHandle and @ref TPollerDrivenFileHandle for asynchronous file I/O.
+ * - @ref TLineReader for efficient, line-based input.
+ * - @ref TByteReader and @ref TByteWriter for byte-level I/O.
+ * - @ref TResolver and @ref TResolvConf for DNS resolution.
+ *
+ * @section example_sec Example: Echo Client
+ *
+ * The following example demonstrates a simple echo client. The client reads lines from standard input,
+ * sends them to an echo server, and then prints the response.
+ *
+ * @code{.cpp}
+ * template<bool debug, typename TPoller>
+ * TFuture<void> client(TPoller& poller, TAddress addr)
+ * {
+ *     static constexpr int maxLineSize = 4096;
+ *     using TSocket = typename TPoller::TSocket;
+ *     using TFileHandle = typename TPoller::TFileHandle;
+ *     std::vector<char> in(maxLineSize);
+ *
+ *     try {
+ *         TFileHandle input{0, poller}; // stdin
+ *         TSocket socket{poller, addr.Domain()};
+ *         TLineReader lineReader(input, maxLineSize);
+ *         TByteWriter byteWriter(socket);
+ *         TByteReader byteReader(socket);
+ *
+ *         co_await socket.Connect(addr, TClock::now() + std::chrono::milliseconds(1000));
+ *         while (auto line = co_await lineReader.Read()) {
+ *             co_await byteWriter.Write(line);
+ *             co_await byteReader.Read(in.data(), line.Size());
+ *             if constexpr (debug) {
+ *                 std::cout << "Received: " << std::string_view(in.data(), line.Size()) << "\n";
+ *             }
+ *         }
+ *     } catch (const std::exception& ex) {
+ *         std::cout << "Exception: " << ex.what() << "\n";
+ *     }
+ *
+ *     co_return;
+ * }
+ * @endcode
+ *
+ * @section further_sec Further Information
+ *
+ * For more details on each component, please refer to the following classes:
+ * - @ref TSocket and @ref TPollerDrivenSocket
+ * - @ref TFileHandle and @ref TPollerDrivenFileHandle
+ * - @ref TLineReader, @ref TByteReader, and @ref TByteWriter
+ * - @ref TResolver and @ref TResolvConf
+ */
+
 } // namespace NNet
