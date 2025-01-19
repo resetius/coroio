@@ -21,15 +21,68 @@ namespace NNet
 std::string GenerateWebSocketKey(std::random_device& rd);
 void CheckSecWebSocketAccept(const std::string& allServerHeaders, const std::string& clientKeyBase64);
 
+/**
+ * @class TWebSocket
+ * @brief Implements a WebSocket protocol layer on top of a given socket.
+ *
+ * The TWebSocket class wraps an underlying socket (of type @c TSocket) to implement
+ * the WebSocket handshake, sending, and receiving of text frames. It uses asynchronous
+ * operations (via TFuture) for I/O, and it internally maintains a reader and writer.
+ *
+ * ### Overview
+ *  - @ref Connect() initiates the WebSocket handshake.
+ *  - @ref SendText() sends a text frame.
+ *  - @ref ReceiveText() receives a text frame.
+ *
+ * @tparam TSocket The underlying socket type used for network communication.
+ *
+ * ### Example: Minimal WebSocket Client
+ * @code{.cpp}
+ * #include <iostream>
+ * #include <coroio/ws.h>
+ *
+ * template<typename TSocket>
+ * TFuture<void> WebSocketClientExample(TSocket& socket) {
+ *     TWebSocket<TSocket> ws(socket);
+ *
+ *     co_await ws.Connect("echo.websocket.org", "/.ws");
+ *
+ *     std::string message = "Hello, WebSocket!";
+ *     co_await ws.SendText(message);
+ *
+ *     std::string_view reply = co_await ws.ReceiveText();
+ *     std::cout << "Received: " << reply << std::endl;
+ *
+ *     co_return;
+ * }
+ * @endcode
+ */
 template<typename TSocket>
 class TWebSocket {
 public:
+    /**
+     * @brief Constructs a WebSocket instance wrapping the provided socket.
+     *
+     * @param socket The underlying socket that will be used for the WebSocket connection.
+     */
     explicit TWebSocket(TSocket& socket)
         : Socket(socket)
         , Reader(socket)
         , Writer(socket)
     { }
 
+    /**
+     * @brief Initiates the WebSocket handshake.
+     *
+     * Constructs and sends an HTTP GET request with the proper headers including a generated
+     * WebSocket key, then waits for the server's response. The response is verified to contain
+     * the "101 Switching Protocols" status and a valid Sec-WebSocket-Accept header.
+     *
+     * @param host The target host name.
+     * @param path The resource path.
+     * @return A TFuture that completes when the handshake is successful.
+     * @throws std::runtime_error if the handshake fails.
+     */
     TFuture<void> Connect(const std::string& host, const std::string& path) {
         auto key = GenerateWebSocketKey(Rd);
         std::string request =
@@ -55,10 +108,24 @@ public:
         co_return;
     }
 
+    /**
+     * @brief Sends a text message as a WebSocket frame.
+     *
+     * @param message The text message to send.
+     * @return A TFuture that completes when the message has been sent.
+     */
     TFuture<void> SendText(std::string_view message) {
         co_await SendFrame(0x1, message);
     }
 
+    /**
+     * @brief Receives a text message from the WebSocket.
+     *
+     * Waits for an incoming frame, validates that it is a text frame, and returns its payload.
+     *
+     * @return A TFuture that yields a string_view containing the text message.
+     * @throws std::runtime_error if a non-text frame is received.
+     */
     TFuture<std::string_view> ReceiveText() {
         auto [opcode, payload] = co_await ReceiveFrame();
         if (opcode != 0x1) {
