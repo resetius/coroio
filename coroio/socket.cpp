@@ -2,17 +2,17 @@
 
 namespace NNet {
 
-TSocketOps::TSocketOps(TPollerBase& poller, int domain, int type)
+TSocketBase<void>::TSocketBase(TPollerBase& poller, int domain, int type)
     : Poller_(&poller)
     , Fd_(Create(domain, type))
 { }
 
-TSocketOps::TSocketOps(int fd, TPollerBase& poller)
+TSocketBase<void>::TSocketBase(int fd, TPollerBase& poller)
     : Poller_(&poller)
     , Fd_(Setup(fd))
 { }
 
-int TSocketOps::Create(int domain, int type) {
+int TSocketBase<void>::Create(int domain, int type) {
     auto s = socket(domain, type, 0);
     if (s == static_cast<decltype(s)>(-1)) {
         throw std::system_error(errno, std::generic_category(), "socket");
@@ -20,7 +20,7 @@ int TSocketOps::Create(int domain, int type) {
     return Setup(s);
 }
 
-int TSocketOps::Setup(int s) {
+int TSocketBase<void>::Setup(int s) {
     int value;
     socklen_t len = sizeof(value);
     [[maybe_unused]] bool isSocket = false;
