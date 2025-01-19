@@ -98,6 +98,15 @@ using TDefaultPoller = TPoll;
  * - @ref TByteReader and @ref TByteWriter for byte-level I/O.
  * - @ref TResolver and @ref TResolvConf for DNS resolution.
  *
+ * In addition to these, the library supports multiple polling mechanisms for asynchronous operations:
+ *
+ * - @ref TSelect - Poller using the select() system call.
+ * - @ref TPoll - Poller using the poll() system call.
+ * - @ref TEPoll - Linux-specific poller using epoll.
+ * - @ref TKqueue - Poller for macOS/FreeBSD using kqueue.
+ * - @ref TIOCp - Poller for Windows using IOCP.
+ * - @ref TUring - Linux-specific poller using io_uring.
+ *
  * @section example_sec Example: Echo Client
  *
  * The following example demonstrates a simple echo client. The client reads lines from standard input,
@@ -142,6 +151,14 @@ using TDefaultPoller = TPoll;
  * - @ref TFileHandle and @ref TPollerDrivenFileHandle
  * - @ref TLineReader, @ref TByteReader, and @ref TByteWriter
  * - @ref TResolver and @ref TResolvConf
+ *
+ * For the available pollers, see:
+ * - @ref TSelect
+ * - @ref TPoll
+ * - @ref TEPoll
+ * - @ref TKqueue
+ * - @ref TIOCp
+ * - @ref TUring
  */
 
 } // namespace NNet
