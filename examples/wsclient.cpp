@@ -133,7 +133,7 @@ void run(const std::string& uri, bool ipv6)
 }
 
 void usage(const char* name) {
-    std::cerr << name << "--uri <uri> [--6]\n";
+    std::cerr << name << " --uri <uri> [--6]\n";
     std::exit(1);
 }
 
