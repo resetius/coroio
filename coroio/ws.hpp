@@ -39,7 +39,7 @@ void CheckSecWebSocketAccept(const std::string& allServerHeaders, const std::str
  * ### Example: Minimal WebSocket Client
  * @code{.cpp}
  * #include <iostream>
- * #include <coroio/ws.h>
+ * #include <coroio/ws.hpp>
  *
  * template<typename TSocket>
  * TFuture<void> WebSocketClientExample(TSocket& socket) {
