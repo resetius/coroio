@@ -328,7 +328,7 @@ protected:
         LastTimersProcessTime_ = now;
     }
 
-    int MaxFd_ = -1; ///< Highest file descriptor in use.
+    int MaxFd_ = 0; ///< Highest file descriptor in use.
     std::vector<TEvent> Changes_; ///< Pending changes (registered events).
     std::vector<TEvent> ReadyEvents_; ///< Events ready to wake up their coroutines.
     unsigned TimerId_ = 0; ///< Counter for generating unique timer IDs.

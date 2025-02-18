@@ -61,8 +61,8 @@ void TKqueue::Poll()
     int nfds;
     if ((nfds = kevent(
                 Fd_,
-                &ChangeList_[0], ChangeList_.size(),
-                &OutEvents_[0], OutEvents_.size(),
+                ChangeList_.data(), ChangeList_.size(),
+                OutEvents_.data(), OutEvents_.size(),
                 &ts)) < 0)
     {
         throw std::system_error(errno, std::generic_category(), "kevent");

@@ -9,6 +9,11 @@
 #define ntohll(x) be64toh(x)
 #elif defined(__APPLE__)
 #include <arpa/inet.h>
+#elif defined(__FreeBSD__)
+#include <arpa/inet.h>
+#include <sys/endian.h>
+#define htonll(x) htobe64(x)
+#define ntohll(x) be64toh(x)
 #elif defined(_WIN32)
 #include <WinSock2.h>
 #endif

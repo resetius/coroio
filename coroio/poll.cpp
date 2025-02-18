@@ -2,7 +2,7 @@
 
 namespace {
 
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__APPLE__)
 int ppoll(struct pollfd* fds, nfds_t nfds, const struct timespec* ts, const sigset_t* /*sigmask*/) {
     int timeout = 0;
     if (ts) {
@@ -107,7 +107,7 @@ void TPoll::Poll()
     }
 
     Reset();
-    if (ppoll(&Fds_[0], Fds_.size(), &ts, nullptr) < 0) {
+    if (ppoll(Fds_.data(), Fds_.size(), &ts, nullptr) < 0) {
         throw std::system_error(errno, std::generic_category(), "poll");
     }
 
