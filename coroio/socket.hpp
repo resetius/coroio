@@ -458,7 +458,7 @@ public:
             }
             TSocket await_resume() {
                 char clientaddr[sizeof(sockaddr_in6)];
-                socklen_t len = sizeof(sockaddr_in6);
+                socklen_t len = static_cast<socklen_t>(sizeof(sockaddr_in6));
 
                 int clientfd = accept(fd, reinterpret_cast<sockaddr*>(&clientaddr[0]), &len);
                 if (clientfd < 0) {
@@ -586,7 +586,7 @@ public:
             int fd;
 
             char addr[2*(sizeof(sockaddr_in6)+16)] = {0}; // use additional memory for windows
-            socklen_t len = sizeof(addr);
+            socklen_t len = static_cast<socklen_t>(sizeof(addr));
         };
 
         return TAwaitable{Poller_, Fd_};
@@ -656,8 +656,8 @@ public:
                 poller->Recv(fd, buf, size, h);
             }
 
-            ssize_t await_resume() {
-                int ret = poller->Result();
+            auto await_resume() {
+                auto ret = poller->Result();
                 if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category());
                 }
@@ -691,8 +691,8 @@ public:
                 poller->Send(fd, buf, size, h);
             }
 
-            ssize_t await_resume() {
-                int ret = poller->Result();
+            auto await_resume() {
+                auto ret = poller->Result();
                 if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category());
                 }
@@ -773,8 +773,8 @@ public:
                 poller->Read(fd, buf, size, h);
             }
 
-            ssize_t await_resume() {
-                int ret = poller->Result();
+            auto await_resume() {
+                auto ret = poller->Result();
                 if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category());
                 }
@@ -808,8 +808,8 @@ public:
                 poller->Write(fd, buf, size, h);
             }
 
-            ssize_t await_resume() {
-                int ret = poller->Result();
+            auto await_resume() {
+                auto ret = poller->Result();
                 if (ret < 0) {
                     throw std::system_error(-ret, std::generic_category());
                 }

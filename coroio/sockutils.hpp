@@ -4,6 +4,14 @@
 #include <span>
 #include "corochain.hpp"
 
+#ifdef min
+#undef min
+#endif
+
+#ifdef max
+#undef max
+#endif
+
 namespace NNet {
 
 struct TLine {
