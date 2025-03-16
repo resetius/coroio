@@ -2,7 +2,7 @@
 
 #include <assert.h>
 #include <span>
-#include <algoruthm>
+#include <algorithm>
 #include "corochain.hpp"
 
 #ifdef min
