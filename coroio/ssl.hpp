@@ -1,5 +1,8 @@
 #pragma once
 
+#if __has_include(<openssl/bio.h>)
+#define HAVE_OPENSSL
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -401,3 +404,6 @@ private:
 };
 
 } // namespace NNet
+
+#endif
+

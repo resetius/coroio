@@ -18,6 +18,8 @@ using NNet::TKqueue;
 using NNet::TIOCp;
 #endif
 
+#ifdef HAVE_OPENSSL
+
 template<bool debug, typename TSocket>
 TVoidTask clientHandler(TSocket socket, NNet::TSslContext& ctx, int buffer_size) {
     std::vector<char> buffer(buffer_size); ssize_t size = 0;
@@ -79,6 +81,8 @@ void run(bool debug, TAddress address, int buffer_size)
     loop.Loop();
 }
 
+#endif
+
 int main(int argc, char** argv) {
     NNet::TInitializer init;
     int port = 0;
@@ -102,6 +106,7 @@ int main(int argc, char** argv) {
     TAddress address{"0.0.0.0", port};
     std::cerr << "Method: " << method << "\n";
 
+#ifdef HAVE_OPENSSL
     if (method == "select") {
         run<TSelect>(debug, address, buffer_size);
     }
@@ -131,6 +136,9 @@ int main(int argc, char** argv) {
     else {
         std::cerr << "Unknown method\n";
     }
+#else
+    std::cerr << "coroio compiled without openssl support\n";
+#endif
     return 0;
 }
 

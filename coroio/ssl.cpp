@@ -1,4 +1,6 @@
 #include "ssl.hpp"
+
+#ifdef HAVE_OPENSSL
 #include <stdexcept>
 #include <assert.h>
 
@@ -72,3 +74,5 @@ TSslContext TSslContext::ServerFromMem(const void* certMem, const void* keyMem, 
 }
 
 } // namespace NNet
+
+#endif
