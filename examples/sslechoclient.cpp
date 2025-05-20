@@ -4,6 +4,8 @@
 
 using namespace NNet;
 
+#ifdef HAVE_OPENSSL
+
 template<bool debug, typename TPoller>
 TFuture<void> client(TPoller& poller, TSslContext& ctx, TAddress addr)
 {
@@ -51,6 +53,7 @@ void run(bool debug, TAddress address)
         loop.Step();
     }
 }
+#endif
 
 int main(int argc, char** argv) {
     TInitializer init;
@@ -72,6 +75,7 @@ int main(int argc, char** argv) {
     TAddress address{addr, port};
     std::cerr << "Method: " << method << "\n";
 
+#ifdef HAVE_OPENSSL
     if (method == "select") {
         run<TSelect>(debug, address);
     }
@@ -101,6 +105,9 @@ int main(int argc, char** argv) {
     else {
         std::cerr << "Unknown method\n";
     }
+#else
+    std::cerr << "coroio compiled without openssl support\n";
+#endif
 
     return 0;
 }

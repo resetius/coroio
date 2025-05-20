@@ -110,13 +110,16 @@ TFuture<void> client(TPoller& poller, const std::string& uri, bool ipv6)
 #endif
         }
 
+#ifdef HAVE_OPENSSL
         if (port == 443) {
             TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
             TSslSocket sslSocket(std::move(socket), ctx);
             sslSocket.SslSetTlsExtHostName(host);
 
             co_await client(std::move(sslSocket), address, poller, std::move(host), std::move(path));
-        } else {
+        } else 
+#endif
+        {
             co_await client(std::move(socket), address, poller, std::move(host), std::move(path));
         }
     } catch (const std::exception& ex) {

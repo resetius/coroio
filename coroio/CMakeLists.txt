@@ -3,7 +3,7 @@ find_package(PkgConfig REQUIRED)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 pkg_check_modules(URING REQUIRED liburing)
 endif ()
-pkg_check_modules(OPENSSL openssl)
+pkg_check_modules(OPENSSL REQUIRED openssl)
 
 set(SOURCES
   address.cpp
