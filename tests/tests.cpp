@@ -1279,14 +1279,29 @@ void test_base64(void**) {
     std::string data = "test string";
     std::string encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
     assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmc=");
+    assert_int_equal(encoded.size(), 16);
 
     data = "test string1";
     encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
     assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmcx");
+    assert_int_equal(encoded.size(), 16);
 
     data = "test string12";
     encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
     assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmcxMg==");
+    assert_int_equal(encoded.size(), 20);
+}
+
+void test_sha1(void**) {
+    std::string digest;
+    std::string data = "test string";
+    digest.resize(40);
+    NNet::NUtils::SHA1Digest((const unsigned char*)data.data(), data.size(), (unsigned char*)digest.data());
+    assert_string_equal(digest.data(), "661295c9cbf9d6b2f6428414504a8deed3020641");
+
+    data = "test string1";
+    NNet::NUtils::SHA1Digest((const unsigned char*)data.data(), data.size(), (unsigned char*)digest.data());
+    assert_string_equal(digest.data(), "3567ba6828093bdf2a25c425bc3b6c21f7bfdc53");
 }
 
 #define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
@@ -1352,6 +1367,7 @@ int main(int argc, char* argv[]) {
     } while (0);
 
     ADD_TEST(cmocka_unit_test, test_base64);
+    ADD_TEST(cmocka_unit_test, test_sha1);
     ADD_TEST(cmocka_unit_test, test_addr);
     ADD_TEST(cmocka_unit_test, test_addr6);
     ADD_TEST(cmocka_unit_test, test_bad_addr);
