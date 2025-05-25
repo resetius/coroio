@@ -1,7 +1,11 @@
 #include "ws.hpp"
+#include "utils.hpp"
 
+#if __has_include(<openssl/evp.h>)
 #include <openssl/evp.h>
 #include <openssl/sha.h>
+#define HAVE_OPENSSL
+#endif
 
 #include <sstream>
 #include <stdexcept>
@@ -11,6 +15,7 @@ namespace NNet
 
 namespace {
 
+#ifdef HAVE_OPENSSL
 std::string Base64Encode(const unsigned char* data, size_t dataLen) {
     std::string out;
     out.resize(4 * ((dataLen + 2) / 3));
@@ -27,6 +32,11 @@ std::string Base64Encode(const unsigned char* data, size_t dataLen) {
     out.resize(outLen);
     return out;
 }
+#else
+std::string Base64Encode(const unsigned char* data, size_t dataLen) {
+    return NUtils::Base64Encode(data, dataLen);
+}
+#endif
 
 std::string FindSecWebSocketAccept(const std::string& response) {
     std::string lower = response;
@@ -71,6 +81,8 @@ std::string CalculateSecWebSocketAccept(const std::string& clientKeyBase64) {
 
 } // namespace
 
+namespace NDetail {
+
 std::string GenerateWebSocketKey(std::random_device& rd) {
     std::vector<uint8_t> randomBytes(16);
     std::generate(randomBytes.begin(), randomBytes.end(), std::ref(rd));
@@ -94,5 +106,7 @@ void CheckSecWebSocketAccept(const std::string& allServerHeaders, const std::str
         throw std::invalid_argument(oss.str());
     }
 }
+
+} // namespace NDetail
 
 } // namespace NNet

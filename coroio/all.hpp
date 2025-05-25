@@ -11,6 +11,7 @@
 
 #include <assert.h>
 
+#include "utils.hpp"
 #include "init.hpp"
 #include "address.hpp"
 #include "poller.hpp"
