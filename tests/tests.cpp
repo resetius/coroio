@@ -1279,6 +1279,14 @@ void test_base64(void**) {
     std::string data = "test string";
     std::string encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
     assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmc=");
+
+    data = "test string1";
+    encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
+    assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmcx");
+
+    data = "test string12";
+    encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
+    assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmcxMg==");
 }
 
 #define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
