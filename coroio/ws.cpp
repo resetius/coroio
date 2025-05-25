@@ -73,10 +73,14 @@ std::string CalculateSecWebSocketAccept(const std::string& clientKeyBase64) {
     static const std::string magicGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     std::string toSha = clientKeyBase64 + magicGUID;
 
-    unsigned char sha[SHA_DIGEST_LENGTH];
+    unsigned char sha[41];
+#ifdef HAVE_OPENSSL
     SHA1(reinterpret_cast<const unsigned char*>(toSha.data()), toSha.size(), sha);
+#else
+    NUtils::SHA1Digest(reinterpret_cast<const unsigned char*>(toSha.data()), toSha.size(), sha);
+#endif
 
-    return Base64Encode(sha, SHA_DIGEST_LENGTH);
+    return Base64Encode(sha, 40);
 }
 
 } // namespace
