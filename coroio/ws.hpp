@@ -23,8 +23,12 @@
 namespace NNet
 {
 
+namespace NDetail {
+
 std::string GenerateWebSocketKey(std::random_device& rd);
 void CheckSecWebSocketAccept(const std::string& allServerHeaders, const std::string& clientKeyBase64);
+
+} // namespace detail
 
 /**
  * @class TWebSocket
@@ -89,7 +93,7 @@ public:
      * @throws std::runtime_error if the handshake fails.
      */
     TFuture<void> Connect(const std::string& host, const std::string& path) {
-        auto key = GenerateWebSocketKey(Rd);
+        auto key = NDetail::GenerateWebSocketKey(Rd);
         std::string request =
             "GET " + path + " HTTP/1.1\r\n"
             "Host: " + host + "\r\n"
@@ -104,7 +108,7 @@ public:
 
         auto response = co_await Reader.ReadUntil("\r\n\r\n");
 
-        CheckSecWebSocketAccept(response, key);
+        NDetail::CheckSecWebSocketAccept(response, key);
 
         if (response.find("101 Switching Protocols") == std::string::npos) {
             throw std::runtime_error("Failed to establish WebSocket connection");

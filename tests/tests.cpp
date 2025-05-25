@@ -9,6 +9,8 @@
 
 #include <coroio/all.hpp>
 
+#include <unordered_set>
+
 extern "C" {
 #include <cmocka.h>
 }
@@ -28,6 +30,38 @@ static uint32_t rand_(uint32_t* seed) {
 int getport() {
     static int port = 8000;
     return port++;
+}
+
+bool match(const std::string& filter, const std::string& str) {
+    size_t fi = 0, si = 0, star = std::string::npos, match = 0;
+    while (si < str.size()) {
+        if (fi < filter.size() && (filter[fi] == '?' || filter[fi] == str[si])) {
+            fi++; si++;
+        } else if (fi < filter.size() && filter[fi] == '*') {
+            star = fi++;
+            match = si;
+        } else if (star != std::string::npos) {
+            fi = star + 1;
+            si = ++match;
+        } else {
+            return false;
+        }
+    }
+    while (fi < filter.size() && filter[fi] == '*') fi++;
+    return fi == filter.size();
+}
+
+bool match_any(const std::unordered_set<std::string>& filters, const std::string& str) {
+    if (filters.empty()) {
+        return true;
+    }
+
+    for (const auto& filter : filters) {
+        if (match(filter, str)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -1241,6 +1275,12 @@ void test_uring_cancel(void** ) {
 
 #endif
 
+void test_base64(void**) {
+    std::string data = "test string";
+    std::string encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
+    assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmc=");
+}
+
 #define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
 #define my_unit_test2(f, a, b) \
     { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
@@ -1265,54 +1305,90 @@ void test_uring_cancel(void** ) {
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
 
-int main() {
+int main(int argc, char* argv[]) {
     TInitializer init;
 
-    const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_addr),
-        cmocka_unit_test(test_addr6),
-        cmocka_unit_test(test_bad_addr),
-        cmocka_unit_test(test_timespec),
-        cmocka_unit_test(test_line_splitter),
-        cmocka_unit_test(test_zero_copy_line_splitter),
-        cmocka_unit_test(test_self_id),
-        cmocka_unit_test(test_resolv_nameservers),
-        my_unit_poller(test_listen),
-        my_unit_poller(test_timeout),
-        my_unit_poller(test_timeout2),
-        my_unit_poller(test_accept),
-        my_unit_poller(test_write_after_connect),
-        my_unit_poller(test_write_after_accept),
-        my_unit_poller(test_connection_timeout),
-        my_unit_poller(test_remove_connection_timeout),
-        my_unit_poller(test_connection_refused_on_write),
-        my_unit_poller(test_connection_refused_on_read),
-        my_unit_poller(test_read_write_same_socket),
-        my_unit_poller(test_read_write_full),
-        my_unit_poller(test_read_until),
-        my_unit_poller(test_read_write_struct),
-        my_unit_poller(test_read_write_lines),
-        my_unit_poller(test_future_chaining),
-        my_unit_poller(test_futures_any),
-        my_unit_poller(test_futures_any_result),
-        my_unit_poller(test_futures_any_same_wakeup),
-        my_unit_poller(test_futures_all),
+    std::vector<CMUnitTest> tests;
+    std::unordered_set<std::string> filters;
+    tests.reserve(500);
+
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--filter")) {
+            if (i + 1 < argc) {
+                std::string filter(argv[++i]);
+                size_t pos = 0;
+                while (pos != std::string::npos) {
+                    size_t next = filter.find(',', pos);
+                    std::string sub = filter.substr(pos, next - pos);
+                    if (!sub.empty()) {
+                        filters.insert(sub);
+                    }
+                    pos = next == std::string::npos
+                        ? next
+                        : next + 1;
+                }
+            }
+        }
+    }
+
+#define ADD_TEST(f, n, ...) \
+    do { \
+        const struct CMUnitTest tmp[] = { \
+            f(n, ##__VA_ARGS__) \
+        }; \
+        for (int i = 0; i < sizeof(tmp) / sizeof(tmp[0]); i++) { \
+            if (match_any(filters, tmp[i].name)) { \
+                tests.emplace_back(tmp[i]); \
+            } \
+        } \
+    } while (0);
+
+    ADD_TEST(cmocka_unit_test, test_base64);
+    ADD_TEST(cmocka_unit_test, test_addr);
+    ADD_TEST(cmocka_unit_test, test_addr6);
+    ADD_TEST(cmocka_unit_test, test_bad_addr);
+    ADD_TEST(cmocka_unit_test, test_timespec);
+    ADD_TEST(cmocka_unit_test, test_line_splitter);
+    ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter);
+    ADD_TEST(cmocka_unit_test, test_self_id);
+    ADD_TEST(cmocka_unit_test, test_resolv_nameservers);
+    ADD_TEST(my_unit_poller, test_listen);
+    ADD_TEST(my_unit_poller, test_timeout);
+    ADD_TEST(my_unit_poller, test_timeout2);
+    ADD_TEST(my_unit_poller, test_accept);
+    ADD_TEST(my_unit_poller, test_write_after_connect);
+    ADD_TEST(my_unit_poller, test_write_after_accept);
+    ADD_TEST(my_unit_poller, test_connection_timeout);
+    ADD_TEST(my_unit_poller, test_remove_connection_timeout);
+    ADD_TEST(my_unit_poller, test_connection_refused_on_write);
+    ADD_TEST(my_unit_poller, test_connection_refused_on_read);
+    ADD_TEST(my_unit_poller, test_read_write_same_socket);
+    ADD_TEST(my_unit_poller, test_read_write_full);
+    ADD_TEST(my_unit_poller, test_read_until);
+    ADD_TEST(my_unit_poller, test_read_write_struct);
+    ADD_TEST(my_unit_poller, test_read_write_lines);
+    ADD_TEST(my_unit_poller, test_future_chaining);
+    ADD_TEST(my_unit_poller, test_futures_any);
+    ADD_TEST(my_unit_poller, test_futures_any_result);
+    ADD_TEST(my_unit_poller, test_futures_any_same_wakeup);
+    ADD_TEST(my_unit_poller, test_futures_all);
 #ifndef _WIN32
-        my_unit_test2(test_read_write_full_ssl, TSelect, TPoll),
+    ADD_TEST(my_unit_test2, test_read_write_full_ssl, TSelect, TPoll);
 #endif
-        my_unit_test2(test_resolver, TSelect, TPoll),
-        my_unit_test2(test_resolve_bad_name, TSelect, TPoll),
+    ADD_TEST(my_unit_test2, test_resolver, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_resolve_bad_name, TSelect, TPoll);
 #ifdef __linux__
-        my_unit_test2(test_remote_disconnect, TPoll, TEPoll),
-        cmocka_unit_test(test_uring_create),
-        cmocka_unit_test(test_uring_write),
-        cmocka_unit_test(test_uring_read),
-        cmocka_unit_test(test_uring_read_more_than_write),
-        cmocka_unit_test(test_uring_write_resume),
-        cmocka_unit_test(test_uring_read_resume),
-        cmocka_unit_test(test_uring_no_sqe),
-        // cmocka_unit_test(test_uring_cancel), // temporary disable
+    ADD_TEST(my_unit_test2, test_remote_disconnect, TPoll, TEPoll);
+    ADD_TEST(cmocka_unit_test, test_uring_create);
+    ADD_TEST(cmocka_unit_test, test_uring_write);
+    ADD_TEST(cmocka_unit_test, test_uring_read);
+    ADD_TEST(cmocka_unit_test, test_uring_read_more_than_write);
+    ADD_TEST(cmocka_unit_test, test_uring_write_resume);
+    ADD_TEST(cmocka_unit_test, test_uring_read_resume);
+    ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
+    // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
 #endif
-    };
-    return cmocka_run_group_tests(tests, NULL, NULL);
+
+    return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);
+#undef ADD_TEST
 }

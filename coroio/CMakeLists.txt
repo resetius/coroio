@@ -20,6 +20,7 @@ set(SOURCES
   iocp.cpp
   ws.cpp
   win32_pipe.cpp
+  utils.cpp
 )
 
 if (WIN32)
