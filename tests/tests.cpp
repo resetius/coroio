@@ -875,6 +875,7 @@ void test_resolve_bad_name(void**) {
     assert_true(!!ex);
 }
 
+#ifdef HAVE_OPENSSL
 template<typename TPoller>
 void test_read_write_full_ssl(void**) {
     using TLoop = TLoop<TPoller>;
@@ -923,6 +924,7 @@ void test_read_write_full_ssl(void**) {
 
     assert_memory_equal(data.data(), received.data(), data.size());
 }
+#endif // HAVE_OPENSSL
 
 template<typename TPoller>
 void test_future_chaining(void**) {
@@ -1397,7 +1399,9 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_futures_any_same_wakeup);
     ADD_TEST(my_unit_poller, test_futures_all);
 #ifndef _WIN32
+#ifdef HAVE_OPENSSL
     ADD_TEST(my_unit_test2, test_read_write_full_ssl, TSelect, TPoll);
+#endif
 #endif
     ADD_TEST(my_unit_test2, test_resolver, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_resolve_bad_name, TSelect, TPoll);
