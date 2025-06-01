@@ -1104,6 +1104,7 @@ struct TTestSuspendPromise
 
 } // namespace
 
+#ifdef HAVE_URING
 void test_uring_create(void**) {
     TUring uring(256);
 }
@@ -1204,6 +1205,7 @@ void test_uring_no_sqe(void** ) {
         assert_int_equal(1, uring.Wait());
     }
 }
+#endif
 
 template<typename TPoller>
 void test_remote_disconnect(void**) {
@@ -1304,7 +1306,11 @@ void test_sha1(void**) {
     { #f "(" #d ")", f<d>, NULL, NULL, NULL }
 
 #ifdef __linux__
+#ifdef HAVE_URING
 #define my_unit_poller(f) my_unit_test4(f, TSelect, TPoll, TEPoll, TUring)
+#else
+#define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TEPoll)
+#endif
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define my_unit_poller(f) my_unit_test3(f, TSelect, TPoll, TKqueue)
 #elif defined(_WIN32)
@@ -1390,6 +1396,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_resolve_bad_name, TSelect, TPoll);
 #ifdef __linux__
     ADD_TEST(my_unit_test2, test_remote_disconnect, TPoll, TEPoll);
+#ifdef HAVE_URING
     ADD_TEST(cmocka_unit_test, test_uring_create);
     ADD_TEST(cmocka_unit_test, test_uring_write);
     ADD_TEST(cmocka_unit_test, test_uring_read);
@@ -1398,6 +1405,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_read_resume);
     ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
     // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
+#endif
 #endif
 
     return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);

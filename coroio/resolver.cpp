@@ -343,7 +343,7 @@ TFuture<TAddress> THostPort::Resolve(TResolver<T>& resolver) {
 }
 
 template class TResolver<TPollerBase>;
-#ifdef __linux__
+#ifdef HAVE_URING
 template class TResolver<TUring>;
 #endif
 
