@@ -68,22 +68,6 @@ bool match_any(const std::unordered_set<std::string>& filters, const std::string
 
 using namespace NNet;
 
-#ifdef __linux__
-#define DISABLE_URING1 \
-    if (uring.Kernel() < std::make_tuple(6, 0, 0)) { \
-        std::cerr << "Temporary disable " << __FUNCTION__ << " for " << uring.KernelStr() << "\n"; \
-        return; \
-    } \
-
-#define DISABLE_URING \
-    if constexpr(std::is_same_v<TPoller, TUring>) { \
-        TUring& uring = static_cast<TUring&>(loop.Poller()); \
-        DISABLE_URING1 \
-    }
-#else
-#define DISABLE_URING
-#endif
-
 static constexpr std::chrono::milliseconds maxDiration(10000);
 
 void test_timespec(void**) {
@@ -1260,7 +1244,6 @@ void test_remote_disconnect(void**) {
 /* temporary disable
 void test_uring_cancel(void** ) {
     TUring uring(16);
-    DISABLE_URING1
 
     char rbuf[1] = {'k'};
     int p[2]; assert_int_equal(0, pipe(p));

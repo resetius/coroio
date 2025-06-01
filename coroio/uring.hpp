@@ -8,7 +8,6 @@
 #include <assert.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
-#include <sys/utsname.h>
 
 #include <system_error>
 #include <iostream>
@@ -57,9 +56,6 @@ namespace NNet {
  * int result = uringPoller.Result();
  * @endcode
  *
- * Additional methods for testing:
- *  - @ref Kernel() returns a tuple of kernel-provided statistics.
- *  - @ref KernelStr() returns a descriptive string with kernel statistics.
  */
 class TUring: public TPollerBase {
 public:
@@ -171,19 +167,6 @@ public:
     /// Submits queued I/O requests to the kernel.
     void Submit();
 
-    /**
-     * @brief For testing: retrieves kernel version.
-     *
-     * @return A tuple of integers representing kernel version.
-     */
-    std::tuple<int, int, int> Kernel() const;
-    /**
-     * @brief For testing: retrieves a string describing kernel.
-     *
-     * @return A descriptive string with kernel version.
-     */
-    const std::string& KernelStr() const;
-
 private:
     /**
      * @brief Obtains an available submission queue entry (SQE) for io_uring.
@@ -206,8 +189,6 @@ private:
     struct io_uring Ring_; ///< The io_uring structure.
     std::queue<int> Results_; ///< Queue of results for completed operations.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
-    std::tuple<int, int, int> Kernel_; ///< Tuple with kernel version.
-    std::string KernelStr_; ///< Kernel version as a formatted string.
 };
 
 } // namespace NNet

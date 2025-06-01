@@ -19,22 +19,6 @@ TUring::TUring(int queueSize)
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
 
-    utsname buffer;
-    if (uname(&buffer) != 0) {
-        throw std::system_error(errno, std::generic_category(), "uname");
-    }
-    int ver[3];
-    const char* sep = ".";
-    char* p = buffer.release;
-    KernelStr_ = buffer.release;
-
-    int i = 0;
-    for (p = strtok(p, sep); p && i < 3; p = strtok(nullptr, sep)) {
-        ver[i++] = atoi(p);
-    }
-
-    Kernel_ = std::make_tuple(ver[0], ver[1], ver[2]);
-
 //        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
 //            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
 //        }
@@ -187,14 +171,6 @@ void TUring::Submit() {
     if ((err = io_uring_submit(&Ring_) < 0)) {
         throw std::system_error(-err, std::generic_category(), "io_uring_submit");
     }
-}
-
-std::tuple<int, int, int> TUring::Kernel() const {
-    return Kernel_;
-}
-
-const std::string& TUring::KernelStr() const {
-    return KernelStr_;
 }
 
 } // namespace NNet
