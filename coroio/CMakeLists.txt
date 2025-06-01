@@ -1,8 +1,6 @@
 find_package(PkgConfig REQUIRED)
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-pkg_check_modules(URING REQUIRED liburing)
-endif ()
+pkg_check_modules(URING liburing)
 pkg_check_modules(OPENSSL openssl)
 
 set(SOURCES

@@ -25,10 +25,6 @@
 #define HAVE_EPOLL
 #endif
 
-#ifndef HAVE_URING
-#define HAVE_URING
-#endif
-
 #include "epoll.hpp"
 #include "uring.hpp"
 #endif

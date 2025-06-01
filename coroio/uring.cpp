@@ -1,6 +1,8 @@
 #ifdef __linux__
 #include "uring.hpp"
 
+#ifdef HAVE_URING
+
 namespace NNet {
 
 TUring::TUring(int queueSize)
@@ -174,5 +176,7 @@ void TUring::Submit() {
 }
 
 } // namespace NNet
+
+#endif // HAVE_URING
 
 #endif // __linux__

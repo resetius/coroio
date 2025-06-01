@@ -1,5 +1,8 @@
 #pragma once
 
+#if __has_include(<liburing.h>) 
+#define HAVE_URING
+
 #include "base.hpp"
 #include "socket.hpp"
 #include "poller.hpp"
@@ -192,3 +195,5 @@ private:
 };
 
 } // namespace NNet
+
+#endif
