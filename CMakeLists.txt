@@ -1,3 +1,4 @@
+# test-1
 cmake_minimum_required(VERSION 3.22)
 if (EXISTS ${CMAKE_BINARY_DIR}/local.cmake)
 include(${CMAKE_BINARY_DIR}/local.cmake)
