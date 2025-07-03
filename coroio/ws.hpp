@@ -16,6 +16,25 @@
 #define ntohll(x) be64toh(x)
 #elif defined(_WIN32)
 #include <WinSock2.h>
+#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0A00)
+inline uint64_t htonll(uint64_t value) {
+#if BYTE_ORDER == LITTLE_ENDIAN || defined(_M_IX86) || defined(_M_X64)
+    return ((uint64_t)htonl(static_cast<uint32_t>(value & 0xFFFFFFFF)) << 32) |
+            htonl(static_cast<uint32_t>(value >> 32));
+#else
+    return value;
+#endif
+}
+
+inline uint64_t ntohll(uint64_t value) {
+#if BYTE_ORDER == LITTLE_ENDIAN || defined(_M_IX86) || defined(_M_X64)
+    return ((uint64_t)ntohl(static_cast<uint32_t>(value & 0xFFFFFFFF)) << 32) |
+            ntohl(static_cast<uint32_t>(value >> 32));
+#else
+    return value;
+#endif
+}
+#endif // _WIN32_WINNT < 0x0A00
 #endif
 
 #include <random>
