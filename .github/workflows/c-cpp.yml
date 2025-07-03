@@ -53,45 +53,37 @@ jobs:
     - uses: actions/checkout@v3
     - name: Checkout submodules
       run: git submodule update --init --recursive
+    - name: Remove system mingw64
+      run: |
+          if (Test-Path C:\mingw64) { Rename-Item C:\mingw64 mingw64_disabled }
     - name: Install Packages using MSYS2
       run: |
           choco install msys2 -y          
+    - name: Add MSYS2 mingw64 to PATH
+      run: |
+          echo "C:\tools\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\tools\msys64\usr\bin"     | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - name: Install Additional Packages
       run: |
-          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.."   
-          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-          setx PATH "%PATH%;C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin"
-          refreshenv
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka
+          pacman -Syu --noconfirm          
+          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
           ls -l C:\tools\msys64\mingw64\bin
     - name: Verify Installation
       run: |
-          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.."   
-          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
-          refreshenv
           gcc --version
           cmake --version
           ninja --version
     - name: Configure with CMake and Build with Ninja
       run: |
-          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.." 
-          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
-          refreshenv
           mkdir build
           cd build
           cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
           ninja
     - name: Run Tests
       run: |
-          $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.." 
-          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-          setx PATH "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;%PATH%"
-          refreshenv
           cd build
-          ctest -C Debug
+          ldd tests/ut_tests.exe
+          ctest -C Debug --output-on-failure
     - name: test-log
       if: always()
       run: |
