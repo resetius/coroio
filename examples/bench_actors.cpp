@@ -31,18 +31,24 @@ public:
             StartTime_ = std::chrono::steady_clock::now();
         }
 
-        if (Idx_ == 0) {
-            PrintProgress();
-
-            if (--Remain_ == 0) {
-                ShutdownRing();
-            }
+        if (Idx_ == 0 && Remain_ == 0) [[unlikely]] {
+            co_return;
         }
 
         auto next = std::make_unique<TNext>();
         next->From = SelfActorId;
         next->To   = Ring_[(Idx_ + 1)%N_];
         ActorSystem->Send(std::move(next));
+
+        if (Idx_ == 0) {
+            --Remain_;
+            PrintProgress();
+
+            if (Remain_ == 0) {
+                ShutdownRing();
+            }
+        }
+
         co_return;
     }
 
