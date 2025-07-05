@@ -138,15 +138,15 @@ int main(int argc, char** argv) {
         // Unsupported yet
     }
 
-    auto fetcher = [&]() -> TFuture<void> {
-        while (true) { co_await sys.WaitExecute(); }
-    }();
-    auto gc = [&]() -> TFuture<void> {
+    auto fetcher = [](TActorSystem* sys) -> TFuture<void> {
+        while (true) { co_await sys->WaitExecute(); }
+    }(&sys);
+    auto gc = [](TActorSystem* sys) -> TFuture<void> {
         while (true) {
-            co_await sys.Sleep(std::chrono::milliseconds(100));
-            sys.GcIterationSync();
+            co_await sys->Sleep(std::chrono::milliseconds(100));
+            sys->GcIterationSync();
         }
-    }();
+    }(&sys);
 
     sys.MaybeNotify();
     while (sys.ActorsSize() > 0) {
