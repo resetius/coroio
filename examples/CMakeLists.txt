@@ -1,6 +1,6 @@
 macro(target name source)
   add_executable(${name} ${source})
-  target_link_libraries(${name} coroio)
+  target_link_libraries(${name} coroio_actors)
 endmacro()
 
 target(timers timers.cpp)
@@ -12,3 +12,4 @@ target(sslechoserver sslechoserver.cpp)
 target(resolver resolver.cpp)
 target(bench bench.cpp)
 target(wsclient wsclient.cpp)
+target(bench_actors bench_actors.cpp)
