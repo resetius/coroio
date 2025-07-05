@@ -19,6 +19,10 @@ void TActorSystem::Send(TMessage::TPtr message) {
         std::cerr << "Cannot find mailbox for " << to << "\n";
         return;
     }
+    if (CleanupActors.contains(to)) {
+        std::cerr << "Actor " << to << " is in cleanup state, cannot send message\n";
+        return;
+    }
     auto* mailbox = &maybeMailbox->second;
     mailbox->push(std::move(message));
     if (!Pending.contains(to) &&
@@ -47,7 +51,7 @@ TFuture<void> TActorSystem::WaitExecute() {
         while (!queue->empty()) {
             auto message = std::move(queue->front()); queue->pop();
             if (message->MessageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
-                CleanupActors.emplace_back(actorId);
+                CleanupActors.emplace(actorId);
                 break;
             }
             auto future = actor->Receive(std::move(message)).Accept([this, actorId=actorId](){

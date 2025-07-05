@@ -134,7 +134,7 @@ private:
     std::unordered_map<uint64_t, IActor::TPtr> Actors;
     std::unordered_map<uint64_t, TFuture<void>> Pending;
     std::vector<TFuture<void>> CleanupMessages;
-    std::vector<uint64_t> CleanupActors;
+    std::unordered_set<uint64_t> CleanupActors;
     uint64_t NextActorId_ = 1;
     uint64_t NodeId_ = 1;
     THandle ExecuteAwait_{};
