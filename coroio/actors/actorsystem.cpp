@@ -4,48 +4,81 @@ namespace NNet {
 namespace NActors {
 
 TActorId TActorSystem::Register(IActor::TPtr actor) {
-    auto id = NextActorId_++;
-    TActorId actorId{NodeId_, id};
-    [[maybe_unused]] auto& mailbox = Mailboxes[id];
-    actor->Attach(this, actorId);
-    Actors[id] = std::move(actor);
+    AliveActors++;
+    uint64_t id = 0;
+    if (!FreeActorIds.empty()) {
+        id = FreeActorIds.top();
+        FreeActorIds.pop();
+    } else {
+        id = NextActorId_++;
+    }
+    auto cookie = NextCookie_++;
+    TActorId actorId{NodeId_, id, cookie};
+    actor->Attach(this, actorId); // TODO: remove me
+
+    TActorInternalState state = TActorInternalState {
+        .Cookie = cookie,
+        .Mailbox = std::make_unique<std::queue<TMessage::TPtr>>(),
+        .Actor = std::move(actor)
+    };
+
+    if (id >= Actors.size()) {
+        Actors.resize(id + 1);
+    }
+    Actors[id] = std::move(state);
+
     return actorId;
 }
 
 void TActorSystem::Send(TMessage::TPtr message) {
     auto to = message->To.ActorId();
-    auto maybeMailbox = Mailboxes.find(to);
-    if (maybeMailbox == Mailboxes.end()) {
-        std::cerr << "Cannot find mailbox for " << to << "\n";
+    if (to == 0 || to >= Actors.size()) {
+        std::cerr << "Cannot send message to actor with id: " << to << "\n";
         return;
     }
-    auto* mailbox = &maybeMailbox->second;
+    auto& state = Actors[to];
+    if (message->To.Cookie() != state.Cookie) {
+        std::cerr << "Message cookie mismatch for actor with id: " << to << "\n";
+        return;
+    }
+    auto& mailbox = state.Mailbox;
+    if (!mailbox) {
+        return;
+    }
     mailbox->push(std::move(message));
-    if (!Pending.contains(to) &&
-        !ReadyActors.contains(to))
-    {
-        ReadyActors.insert(to);
-        ReadyQueues.push({to, mailbox});
+    if (!state.Flags.IsReady && !state.Pending.raw()) {
+        state.Flags.IsReady = 1;
+        ReadyActors.push({to});
     }
 }
 
 TFuture<void> TActorSystem::WaitExecute() {
-    if (ReadyQueues.empty()) {
+    if (ReadyActors.empty()) {
         ExecuteAwait_ = co_await Self();
         co_await std::suspend_always();
         ExecuteAwait_ = {};
     }
 
-    while (!ReadyQueues.empty()) {
-        auto [actorId, queue] = ReadyQueues.front();
-        ReadyQueues.pop();
-        auto maybeActor = Actors.find(actorId);
-        if (maybeActor == Actors.end()) {
+    while (!ReadyActors.empty()) {
+        auto actorId = ReadyActors.front();
+        ReadyActors.pop();
+        if (actorId >= Actors.size()) {
+            std::cerr << "Actor with id: " << actorId << " does not exist\n";
             continue;
         }
-        auto& actor = maybeActor->second;
-        while (!queue->empty()) {
-            auto message = std::move(queue->front()); queue->pop();
+        auto& state = Actors[actorId];
+        auto& actor = state.Actor;
+        if (!actor) {
+            std::cerr << "Actor with id: " << actorId << " is not registered\n";
+            continue;
+        }
+        auto& mailbox = state.Mailbox;
+        if (!mailbox) {
+            std::cerr << "Mailbox for actor with id: " << actorId << " is not initialized\n";
+            continue;
+        }
+        while (!mailbox->empty()) {
+            auto message = std::move(mailbox->front()); mailbox->pop();
             if (message->MessageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
                 CleanupActors.emplace_back(actorId);
                 break;
@@ -53,31 +86,30 @@ TFuture<void> TActorSystem::WaitExecute() {
             auto future = actor->Receive(std::move(message)).Accept([this, actorId=actorId](){
                 // if we were in pending
                 // we need to try restart ActorSystem loop
-                auto maybeSelfFuture = Pending.find(actorId);
-                if (maybeSelfFuture != Pending.end()) {
-                    CleanupMessages.emplace_back(std::move(maybeSelfFuture->second)); // we cannot delete coroutine from itself, need to do "gc"
-                    Pending.erase(maybeSelfFuture);
-                    ReadyActors.erase(actorId);
+                auto& pending = Actors[actorId].Pending;
+                if (pending.raw()) {
+                    CleanupMessages.emplace_back(std::move(pending)); // we cannot delete coroutine from itself, need to do "gc"
+                    pending = {};
+                    Actors[actorId].Flags.IsReady = 0;
 
                     // if Sent to actorId was called, we need to check if it has any messages in mailbox
-                    auto maybeMailbox = Mailboxes.find(actorId);
-                    if (maybeMailbox != Mailboxes.end() && !maybeMailbox->second.empty()) {
-                        auto* mailbox = &maybeMailbox->second;
-                        ReadyActors.insert(actorId);
-                        ReadyQueues.push({actorId, mailbox});
+                    auto& mailbox = Actors[actorId].Mailbox;
+                    if (!mailbox->empty()) {
+                        Actors[actorId].Flags.IsReady = 1;
+                        ReadyActors.push({actorId});
                     }
 
                     MaybeNotify();
                 }
             });
             if (!future.done()) {
-                Pending[actorId] = std::move(future);
+                Actors[actorId].Pending = std::move(future);
                 break;
             }
         }
 
-        if (queue->empty()) {
-            ReadyActors.erase(actorId);
+        if (mailbox->empty()) {
+            Actors[actorId].Flags.IsReady = 0;
         }
     }
     co_return;

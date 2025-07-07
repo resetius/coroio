@@ -11,9 +11,9 @@ class TActorSystem;
 class TActorId {
 public:
     TActorId() = default;
-    
+
     operator bool() const {
-        return (NodeId_ == 0) & (ActorId_ == 0);
+        return !((NodeId_ == 0) & (ActorId_ == 0) & (Cookie_ == 0));
     }
 
     uint64_t NodeId() const {
@@ -24,19 +24,28 @@ public:
         return ActorId_;
     }
 
+    uint64_t Cookie() const {
+        return Cookie_;
+    }
+
     std::string ToString() const {
-        return "ActorId:" + std::to_string(NodeId_) + ":" + std::to_string(ActorId_);
+        return "ActorId:"
+                + std::to_string(NodeId_) + ":"
+                + std::to_string(ActorId_) + ":"
+                + std::to_string(Cookie_);
     }
 
 private:
     friend class TActorSystem;
-    TActorId(uint64_t nodeId, uint64_t actorId)
+    TActorId(uint64_t nodeId, uint64_t actorId, uint64_t cookie)
         : NodeId_(nodeId)
         , ActorId_(actorId)
+        , Cookie_(cookie)
     { }
 
     uint64_t NodeId_ = 0;
     uint64_t ActorId_ = 0;
+    uint64_t Cookie_ = 0;
 };
 
 class TMessage

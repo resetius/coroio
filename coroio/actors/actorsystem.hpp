@@ -42,6 +42,17 @@ private:
     std::shared_ptr<TAskState<T>> State;
 };
 
+struct TActorInternalState
+{
+    uint64_t Cookie = 0;
+    std::unique_ptr<std::queue<TMessage::TPtr>> Mailbox;
+    TFuture<void> Pending;
+    IActor::TPtr Actor;
+
+    struct TFlags {
+        uint64_t IsReady : 1 = 0;
+    } Flags = {};
+};
 
 class TActorSystem
 {
@@ -115,27 +126,30 @@ public:
     TFuture<void> WaitExecute();
 
     size_t ActorsSize() const {
-        return Actors.size();
+        return AliveActors;
     }
 
 private:
     void ShutdownActor(uint64_t actorId) {
-        ReadyActors.erase(actorId);
-        Mailboxes.erase(actorId);
-        Actors.erase(actorId);
-        Pending.erase(actorId);
+        if (actorId < Actors.size()) {
+            AliveActors--;
+            Actors[actorId] = {};
+            FreeActorIds.push(actorId);
+        }
     }
 
     TPollerBase* Poller;
 
-    std::unordered_set<uint64_t> ReadyActors;
-    std::queue<std::pair<uint64_t, std::queue<TMessage::TPtr>*>> ReadyQueues;
-    std::unordered_map<uint64_t, std::queue<TMessage::TPtr>> Mailboxes;
-    std::unordered_map<uint64_t, IActor::TPtr> Actors;
-    std::unordered_map<uint64_t, TFuture<void>> Pending;
+    std::queue<uint64_t> ReadyActors;
+    std::vector<TActorInternalState> Actors;
+    int AliveActors = 0;
+
     std::vector<TFuture<void>> CleanupMessages;
     std::vector<uint64_t> CleanupActors;
+    std::stack<uint64_t> FreeActorIds;
+
     uint64_t NextActorId_ = 1;
+    uint64_t NextCookie_ = 1;
     uint64_t NodeId_ = 1;
     THandle ExecuteAwait_{};
 };
