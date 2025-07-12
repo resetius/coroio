@@ -58,6 +58,38 @@ public:
     TActorId To;
 };
 
+class TActorContext
+{
+public:
+    using TPtr = std::unique_ptr<TActorContext>;
+
+    TActorId Sender() const {
+        return Sender_;
+    }
+    TActorId Self() const {
+        return Self_;
+    }
+    void Send(TActorId to, TMessage::TPtr message);
+    void Forward(TActorId to, TMessage::TPtr message);
+    TFuture<void> PipeTo(uint64_t to, TFuture<TMessage::TPtr> future);
+    TFuture<void> Sleep(TTime until);
+    template<typename Rep, typename Period>
+    TFuture<void> Sleep(std::chrono::duration<Rep,Period> duration);
+    template<typename T>
+    TFuture<std::unique_ptr<T>> Ask(TActorId recepient, TMessage::TPtr message);
+
+    TActorContext(TActorId sender, TActorId self, TActorSystem* actorSystem)
+        : Sender_(sender)
+        , Self_(self)
+        , ActorSystem(actorSystem)
+    { }
+
+private:
+    TActorId Sender_;
+    TActorId Self_;
+    TActorSystem* ActorSystem = nullptr;
+};
+
 class IActor {
 public:
     using TPtr = std::unique_ptr<IActor>;
@@ -66,18 +98,7 @@ public:
     IActor() = default;
     virtual ~IActor() = default;
 
-    virtual TFuture<void> Receive(TMessage::TPtr message) = 0;
-
-private:
-    void Attach(TActorSystem* actorSystem, TActorId actorId) {
-        SelfActorId = actorId;
-        ActorSystem = actorSystem;
-    }
-
-protected:
-    // TODO: store only shortId
-    TActorId SelfActorId;
-    TActorSystem* ActorSystem = nullptr;
+    virtual TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) = 0;
 };
 
 } // namespace NActors
