@@ -34,18 +34,14 @@ public:
 
 class TPingActor : public IActor {
 public:
-    TFuture<void> Receive(TMessage::TPtr message) {
-        std::cerr << "Received Pong message from: " << message->From.ToString() << ", message: " << counter++ << "\n";
+    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override {
+        std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
         auto reply = std::make_unique<TPingMessage>();
-        reply->From = SelfActorId;
-        reply->To = message->From;
-        co_await ActorSystem->Sleep(std::chrono::milliseconds(1000));
-        ActorSystem->Send(std::move(reply));
+        co_await ctx->Sleep(std::chrono::milliseconds(1000));
+        ctx->Send(ctx->Sender(), std::move(reply));
         if (counter == 4) {
             auto command = std::make_unique<TPoisonPill>();
-            command->From = SelfActorId;
-            command->To = SelfActorId;
-            ActorSystem->Send(std::move(command));
+            ctx->Send(ctx->Self(), std::move(command));
         }
         co_return;
     }
@@ -55,17 +51,13 @@ public:
 
 class TPongActor : public IActor {
 public:
-    TFuture<void> Receive(TMessage::TPtr message) {
+    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
         std::cerr << "Received Ping message from: " << message->From.ToString() << ", message: " << counter++ << "\n";
         auto reply = std::make_unique<TPongMessage>();
-        reply->From = SelfActorId;
-        reply->To = message->From;
-        ActorSystem->Send(std::move(reply));
+        ctx->Send(ctx->Sender(), std::move(reply));
         if (counter == 5) {
             auto command = std::make_unique<TPoisonPill>();
-            command->From = SelfActorId;
-            command->To = SelfActorId;
-            ActorSystem->Send(std::move(command));
+            ctx->Send(ctx->Self(), std::move(command));
         }
         co_return;
     }
@@ -74,19 +66,15 @@ public:
 };
 
 class TAskerActor : public IActor {
-    TFuture<void> Receive(TMessage::TPtr message) {
+    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
         std::cerr << "Asker Received message from: " << message->From.ToString() << "\n";
         auto question = std::make_unique<TPingMessage>();
-        question->From = SelfActorId;
-        question->To = message->From;
         std::cerr << "Ask\n";
-        auto result = co_await ActorSystem->Ask<TPongMessage>(std::move(question));
-        std::cerr << "Reply received from " << result->From.ToString() << ", message: " << result->MessageId << "\n";
+        auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), std::move(question));
+        std::cerr << "Reply received from " << ctx->Sender().ToString() << ", message: " << result->MessageId << "\n";
 
         auto command = std::make_unique<TPoisonPill>();
-        command->From = SelfActorId;
-        command->To = SelfActorId;
-        ActorSystem->Send(std::move(command));
+        ctx->Send(ctx->Self(), std::move(command));
         std::cerr << "PoisonPill sent\n";
 
         co_return;
@@ -94,18 +82,14 @@ class TAskerActor : public IActor {
 };
 
 class TResponderActor : public IActor {
-    TFuture<void> Receive(TMessage::TPtr message) {
-        std::cerr << "Responder Received message from: " << message->From.ToString() << "\n";
-        co_await ActorSystem->Sleep(std::chrono::milliseconds(1000));
+    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
+        std::cerr << "Responder Received message from: " << ctx->Sender().ToString() << "\n";
+        co_await ctx->Sleep(std::chrono::milliseconds(1000));
         auto reply = std::make_unique<TPongMessage>();
-        reply->From = SelfActorId;
-        reply->To = message->From;
-        ActorSystem->Send(std::move(reply));
+        ctx->Send(ctx->Sender(), std::move(reply));
 
         auto command = std::make_unique<TPoisonPill>();
-        command->From = SelfActorId;
-        command->To = SelfActorId;
-        ActorSystem->Send(std::move(command));
+        ctx->Send(ctx->Self(), std::move(command));
         std::cerr << "PoisonPill sent\n";
 
         co_return;
@@ -138,9 +122,7 @@ void test_ping_pong(void**) {
 
     {
         auto ping = std::make_unique<TPingMessage>();
-        ping->From = pingActorId;
-        ping->To = pongActorId;
-        actorSystem.Send(std::move(ping));
+        actorSystem.Send(pingActorId, pongActorId, std::move(ping));
     }
 
     auto fetcher = Fetcher(&actorSystem);
@@ -165,9 +147,7 @@ void test_ask_respond(void**) {
 
     {
         auto ping = std::make_unique<TPingMessage>();
-        ping->From = responderActorId;
-        ping->To = askerActorId;
-        actorSystem.Send(std::move(ping));
+        actorSystem.Send(responderActorId, askerActorId, std::move(ping));
     }
 
     auto fetcher = Fetcher(&actorSystem);

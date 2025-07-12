@@ -28,19 +28,6 @@ public:
     std::unique_ptr<T> Answer = nullptr;
 };
 
-template<typename T>
-class TAsk : public IActor {
-public:
-    TAsk(const std::shared_ptr<TAskState<T>>& state)
-        : State(state)
-    { }
-
-    TFuture<void> Receive(TMessage::TPtr message) override;
-
-private:
-    std::shared_ptr<TAskState<T>> State;
-};
-
 struct TActorInternalState
 {
     uint64_t Cookie = 0;
@@ -51,6 +38,19 @@ struct TActorInternalState
     struct TFlags {
         uint64_t IsReady : 1 = 0;
     } Flags = {};
+};
+
+template<typename T>
+class TAsk : public IActor {
+public:
+    TAsk(const std::shared_ptr<TAskState<T>>& state)
+        : State(state)
+    { }
+
+    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override;
+
+private:
+    std::shared_ptr<TAskState<T>> State;
 };
 
 class TActorSystem
@@ -73,10 +73,10 @@ public:
         return Poller->Sleep(duration);
     }
 
-    void Send(TMessage::TPtr message);
+    void Send(TActorId sender, TActorId recepient, TMessage::TPtr message);
 
     template<typename T>
-    auto Ask(TMessage::TPtr message) {
+    auto Ask(TActorId recepient, TMessage::TPtr message) {
         class TAskAwaiter
         {
         public:
@@ -103,8 +103,7 @@ public:
         auto state = std::make_shared<TAskState<T>>();
         auto askActor = std::make_unique<TAsk<T>>(state);
         auto actorId = Register(std::move(askActor));
-        message->From = actorId;
-        Send(std::move(message));
+        Send(actorId, recepient, std::move(message));
         return TAskAwaiter{state};
     }
 
@@ -154,13 +153,26 @@ private:
 };
 
 template<typename T>
-TFuture<void> TAsk<T>::Receive(TMessage::TPtr message) {
+TFuture<void> TAsk<T>::Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
     State->Answer = std::unique_ptr<T>(static_cast<T*>(message.release()));
     State->Handle.resume();
     auto command = std::make_unique<TPoisonPill>();
-    command->To = SelfActorId;
-    ActorSystem->Send(std::move(command));
+    ctx->Send(ctx->Self(), std::move(command));
     co_return;
+}
+
+inline TFuture<void> TActorContext::Sleep(TTime until) {
+    co_return co_await ActorSystem->Sleep(until);
+}
+
+template<typename Rep, typename Period>
+inline TFuture<void> TActorContext::Sleep(std::chrono::duration<Rep,Period> duration) {
+    co_return co_await ActorSystem->Sleep(duration);
+}
+
+template<typename T>
+inline TFuture<std::unique_ptr<T>> TActorContext::Ask(TActorId recepient, TMessage::TPtr message) {
+    co_return co_await ActorSystem->Ask<T>(recepient, std::move(message));
 }
 
 } // namespace NActors

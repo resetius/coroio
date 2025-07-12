@@ -3,6 +3,15 @@
 namespace NNet {
 namespace NActors {
 
+void TActorContext::Send(TActorId to, TMessage::TPtr message)
+{
+    ActorSystem->Send(Self(), to, std::move(message));
+}
+
+void TActorContext::Forward(TActorId to, TMessage::TPtr message) {
+    ActorSystem->Send(Sender(), to, std::move(message));
+}
+
 TActorId TActorSystem::Register(IActor::TPtr actor) {
     AliveActors++;
     uint64_t id = 0;
@@ -14,7 +23,6 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     }
     auto cookie = NextCookie_++;
     TActorId actorId{NodeId_, id, cookie};
-    actor->Attach(this, actorId); // TODO: remove me
 
     TActorInternalState state = TActorInternalState {
         .Cookie = cookie,
@@ -30,14 +38,14 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     return actorId;
 }
 
-void TActorSystem::Send(TMessage::TPtr message) {
-    auto to = message->To.ActorId();
+void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr message) {
+    auto to = recipient.ActorId();
     if (to == 0 || to >= Actors.size()) {
         std::cerr << "Cannot send message to actor with id: " << to << "\n";
         return;
     }
     auto& state = Actors[to];
-    if (message->To.Cookie() != state.Cookie) {
+    if (recipient.Cookie() != state.Cookie) {
         std::cerr << "Message cookie mismatch for actor with id: " << to << "\n";
         return;
     }
@@ -45,6 +53,8 @@ void TActorSystem::Send(TMessage::TPtr message) {
     if (!mailbox) {
         return;
     }
+    message->From = sender;
+    message->To = recipient;
     mailbox->push(std::move(message));
     if (!state.Flags.IsReady && !state.Pending.raw()) {
         state.Flags.IsReady = 1;
@@ -83,7 +93,8 @@ TFuture<void> TActorSystem::WaitExecute() {
                 CleanupActors.emplace_back(actorId);
                 break;
             }
-            auto future = actor->Receive(std::move(message)).Accept([this, actorId=actorId](){
+            auto ctx = std::make_unique<TActorContext>(message->From, message->To, this);
+            auto future = actor->Receive(std::move(message), std::move(ctx)).Accept([this, actorId=actorId](){
                 // if we were in pending
                 // we need to try restart ActorSystem loop
                 auto& pending = Actors[actorId].Pending;

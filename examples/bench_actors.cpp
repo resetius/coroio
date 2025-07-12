@@ -26,7 +26,7 @@ public:
       , Ring_(r)
     { }
 
-    TFuture<void> Receive(TMessage::TPtr msg) override {
+    TFuture<void> Receive(TMessage::TPtr msg, TActorContext::TPtr ctx) override {
         if (Idx_ == 0 && Remain_ == M_) [[unlikely]] {
             StartTime_ = std::chrono::steady_clock::now();
         }
@@ -36,16 +36,14 @@ public:
         }
 
         auto next = std::make_unique<TNext>();
-        next->From = SelfActorId;
-        next->To   = Ring_[(Idx_ + 1)%N_];
-        ActorSystem->Send(std::move(next));
+        ctx->Send(Ring_[(Idx_ + 1)%N_], std::move(next));
 
         if (Idx_ == 0) {
             --Remain_;
             PrintProgress();
 
             if (Remain_ == 0) {
-                ShutdownRing();
+                ShutdownRing(ctx);
             }
         }
 
@@ -53,7 +51,7 @@ public:
     }
 
 private:
-    void ShutdownRing() {
+    void ShutdownRing(TActorContext::TPtr& ctx) {
         auto now = std::chrono::steady_clock::now();
         double secs = std::chrono::duration<double>(now - StartTime_).count();
         std::cout << "\nRing throughput: "
@@ -61,9 +59,7 @@ private:
                     << " msg/s\n";
         for (auto& idx : Ring_) {
             auto poisson = std::make_unique<TPoisonPill>();
-            poisson->From = SelfActorId;
-            poisson->To   = idx;
-            ActorSystem->Send(std::move(poisson));
+            ctx->Send(idx, std::move(poisson));
         }
     }
 
@@ -131,9 +127,7 @@ int main(int argc, char** argv) {
             ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, N, M, ringIds));
         }
         auto msg = std::make_unique<TNext>();
-        msg->From = ringIds[0];
-        msg->To   = ringIds[0];
-        sys.Send(std::move(msg));
+        sys.Send(ringIds[0], ringIds[0], std::move(msg));
     } else {
         // Unsupported yet
     }
