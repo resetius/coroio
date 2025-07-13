@@ -32,7 +32,7 @@ public:
 struct TActorInternalState
 {
     uint64_t Cookie = 0;
-    std::unique_ptr<std::queue<TMessage::TPtr>> Mailbox;
+    std::unique_ptr<std::queue<TEnvelope>> Mailbox;
     TFuture<void> Pending;
     IActor::TPtr Actor;
 
