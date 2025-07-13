@@ -32,40 +32,40 @@ public:
 
     ~TArenaAllocator() {
         for (auto block : Pools_) {
-            ::operator delete(block);
+            ::operator delete(block, std::align_val_t(alignof(T)));
         }
     }
 
-    T* allocate() {
+    void* Allocate() {
         if (FreePages_.empty()) {
             AllocatePool();
         }
         ++AllocatedObjects_;
-        T* ret = FreePages_.top();
+        void* ret = FreePages_.top();
         FreePages_.pop();
         return ret;
     }
 
-    void deallocate(T* obj) {
+    void Deallocate(void* obj) {
         --AllocatedObjects_;
         FreePages_.push(obj);
     }
 
-    int count() const {
+    int Count() const {
         return AllocatedObjects_;
     }
 
 private:
     void AllocatePool() {
-        T* pool = static_cast<T*>(::operator new(PoolSize * sizeof(T)));
+        char* pool = static_cast<char*>(::operator new(PoolSize * sizeof(T), std::align_val_t(alignof(T))));
         Pools_.emplace_back(pool);
         for (size_t i = 0; i < PoolSize; i++) {
-            FreePages_.push(&pool[i]);
+            FreePages_.push(&pool[i * sizeof(T)]);
         }
     }
 
-    std::vector<T*> Pools_;
-    std::stack<T*> FreePages_;
+    std::vector<char*> Pools_;
+    std::stack<void*> FreePages_;
     int AllocatedObjects_ = 0;
 };
 

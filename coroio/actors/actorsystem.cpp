@@ -93,7 +93,9 @@ TFuture<void> TActorSystem::WaitExecute() {
                 CleanupActors.emplace_back(actorId);
                 break;
             }
-            auto ctx = std::make_unique<TActorContext>(message->From, message->To, this);
+            auto ctx = std::unique_ptr<TActorContext>(
+                new (this) TActorContext(message->From, message->To, this)
+            );
             auto future = actor->Receive(std::move(message), std::move(ctx)).Accept([this, actorId=actorId](){
                 // if we were in pending
                 // we need to try restart ActorSystem loop

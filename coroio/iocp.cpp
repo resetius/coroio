@@ -23,11 +23,11 @@ TIOCp::~TIOCp()
 }
 
 TIOCp::TIO* TIOCp::NewTIO() {
-    return new (Allocator_.allocate()) TIO();
+    return new (Allocator_.Allocate()) TIO();
 }
 
 void TIOCp::FreeTIO(TIO* tio) {
-    Allocator_.deallocate(tio);
+    Allocator_.Deallocate(tio);
 }
 
 void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
@@ -166,7 +166,7 @@ long TIOCp::GetTimeoutMs() {
 void TIOCp::Poll()
 {
     Reset();
-    Entries_.resize(std::max(Allocator_.count(), 1));
+    Entries_.resize(std::max(Allocator_.Count(), 1));
 
     DWORD fired = 0;
     auto res = GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, GetTimeoutMs(), FALSE);
