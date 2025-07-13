@@ -1,6 +1,7 @@
 #pragma once
 
 #include "actor.hpp"
+#include <coroio/arena.hpp>
 
 #include <queue>
 #include <stack>
@@ -136,6 +137,14 @@ private:
         }
     }
 
+    void* AllocateActorContext() {
+        return ContextAllocator.Allocate();
+    }
+
+    void DeallocateActorContext(TActorContext* ptr) {
+        ContextAllocator.Deallocate(ptr);
+    }
+
     TPollerBase* Poller;
 
     std::queue<uint64_t> ReadyActors;
@@ -146,10 +155,14 @@ private:
     std::vector<uint64_t> CleanupActors;
     std::stack<uint64_t> FreeActorIds;
 
+    TArenaAllocator<TActorContext> ContextAllocator;
+
     uint64_t NextActorId_ = 1;
     uint64_t NextCookie_ = 1;
     uint64_t NodeId_ = 1;
     THandle ExecuteAwait_{};
+
+    friend class TActorContext;
 };
 
 template<typename T>
@@ -173,6 +186,18 @@ inline TFuture<void> TActorContext::Sleep(std::chrono::duration<Rep,Period> dura
 template<typename T>
 inline TFuture<std::unique_ptr<T>> TActorContext::Ask(TActorId recepient, TMessage::TPtr message) {
     co_return co_await ActorSystem->Ask<T>(recepient, std::move(message));
+}
+
+inline void* TActorContext::operator new(size_t size, TActorSystem* actorSystem) {
+    return actorSystem->AllocateActorContext();
+}
+
+inline void TActorContext::operator delete(void* ptr) {
+    if (ptr) {
+        auto* self = static_cast<TActorContext*>(ptr);
+        auto* actorSystem = self->ActorSystem;
+        actorSystem->DeallocateActorContext(self);
+    }
 }
 
 } // namespace NActors

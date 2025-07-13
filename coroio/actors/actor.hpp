@@ -78,16 +78,21 @@ public:
     template<typename T>
     TFuture<std::unique_ptr<T>> Ask(TActorId recepient, TMessage::TPtr message);
 
+    static void* operator new(size_t size, TActorSystem* actorSystem);
+    static void operator delete(void* ptr);
+
+private:
     TActorContext(TActorId sender, TActorId self, TActorSystem* actorSystem)
         : Sender_(sender)
         , Self_(self)
         , ActorSystem(actorSystem)
     { }
 
-private:
     TActorId Sender_;
     TActorId Self_;
     TActorSystem* ActorSystem = nullptr;
+
+    friend class TActorSystem;
 };
 
 class IActor {
