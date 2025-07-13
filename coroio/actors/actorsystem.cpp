@@ -53,7 +53,6 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr mess
     if (!mailbox) {
         return;
     }
-    auto envelope = std::make_unique<TEnvelope>();
     mailbox->push(TEnvelope{
         .Sender = sender,
         .Recipient = recipient,
