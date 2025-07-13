@@ -32,7 +32,7 @@ public:
 
     ~TArenaAllocator() {
         for (auto block : Pools_) {
-            ::operator delete(block);
+            ::operator delete(block, std::align_val_t(alignof(T)));
         }
     }
 
