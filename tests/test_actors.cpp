@@ -52,7 +52,7 @@ public:
 class TPongActor : public IActor {
 public:
     TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
-        std::cerr << "Received Ping message from: " << message->From.ToString() << ", message: " << counter++ << "\n";
+        std::cerr << "Received Ping message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
         auto reply = std::make_unique<TPongMessage>();
         ctx->Send(ctx->Sender(), std::move(reply));
         if (counter == 5) {
@@ -67,7 +67,7 @@ public:
 
 class TAskerActor : public IActor {
     TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
-        std::cerr << "Asker Received message from: " << message->From.ToString() << "\n";
+        std::cerr << "Asker Received message from: " << ctx->Sender().ToString() << "\n";
         auto question = std::make_unique<TPingMessage>();
         std::cerr << "Ask\n";
         auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), std::move(question));

@@ -26,7 +26,7 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
 
     TActorInternalState state = TActorInternalState {
         .Cookie = cookie,
-        .Mailbox = std::make_unique<std::queue<TMessage::TPtr>>(),
+        .Mailbox = std::make_unique<std::queue<TEnvelope>>(),
         .Actor = std::move(actor)
     };
 
@@ -53,9 +53,12 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr mess
     if (!mailbox) {
         return;
     }
-    message->From = sender;
-    message->To = recipient;
-    mailbox->push(std::move(message));
+    auto envelope = std::make_unique<TEnvelope>();
+    mailbox->push(TEnvelope{
+        .Sender = sender,
+        .Recipient = recipient,
+        .Message = std::move(message)
+    });
     if (!state.Flags.IsReady && !state.Pending.raw()) {
         state.Flags.IsReady = 1;
         ReadyActors.push({to});
@@ -88,15 +91,15 @@ TFuture<void> TActorSystem::WaitExecute() {
             continue;
         }
         while (!mailbox->empty()) {
-            auto message = std::move(mailbox->front()); mailbox->pop();
-            if (message->MessageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
+            auto envelope = std::move(mailbox->front()); mailbox->pop();
+            if (envelope.Message->MessageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
                 CleanupActors.emplace_back(actorId);
                 break;
             }
             auto ctx = std::unique_ptr<TActorContext>(
-                new (this) TActorContext(message->From, message->To, this)
+                new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
-            auto future = actor->Receive(std::move(message), std::move(ctx)).Accept([this, actorId=actorId](){
+            auto future = actor->Receive(std::move(envelope.Message), std::move(ctx)).Accept([this, actorId=actorId](){
                 // if we were in pending
                 // we need to try restart ActorSystem loop
                 auto& pending = Actors[actorId].Pending;

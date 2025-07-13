@@ -54,8 +54,15 @@ public:
     using TPtr = std::unique_ptr<TMessage>;
 
     uint64_t MessageId;
-    TActorId From;
-    TActorId To;
+};
+
+class TEnvelope
+{
+public:
+    TActorId Sender;
+    TActorId Recipient;
+
+    TMessage::TPtr Message;
 };
 
 class TActorContext
