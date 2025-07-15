@@ -198,6 +198,10 @@ public:
     template<typename T>
     TFuture<TAddress> Resolve(TResolver<T>& resolver);
 
+    const std::string ToString() const {
+        return Host + ":" + std::to_string(Port);
+    }
+
 private:
     std::string Host;
     int Port;

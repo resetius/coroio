@@ -1,7 +1,10 @@
 #pragma once
 
 #include "actor.hpp"
+#include "node.hpp"
+
 #include <coroio/arena.hpp>
+#include <coroio/sockutils.hpp>
 
 #include <queue>
 #include <stack>
@@ -128,7 +131,73 @@ public:
         return AliveActors;
     }
 
+    void AddNode(int id, std::unique_ptr<INode> node) {
+        if (Nodes.size() >= id) {
+            Nodes.resize(id + 1);
+        }
+        Nodes[id] = std::move(node);
+    }
+
+    template<typename TSocket>
+    void Serve(TSocket socket) {
+        InboundServe(std::move(socket));
+        for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
+            if (Nodes[i]) {
+                OutboundServe(i);
+            }
+        }
+    }
+
 private:
+    TVoidTask OutboundServe(int id) {
+        while (true) {
+            co_await std::suspend_always{};
+            auto& node = Nodes[id];
+            if (node) {
+                node->Drain();
+            } else {
+                std::cerr << "Node with id: " << id << " is not registered\n";
+            }
+        }
+    }
+
+    template<typename TSocket>
+    TVoidTask InboundServe(TSocket socket) {
+        while (true) {
+            auto client = co_await socket.Accept();
+            std::cerr << "Accepted\n";
+            InboundConnection(std::move(client));
+        }
+        co_return;
+    }
+
+    template<typename TSocket>
+    TVoidTask InboundConnection(TSocket socket) {
+        // TODO: serialize data
+        struct TSendData {
+            TActorId Sender;
+            TActorId Recipient;
+            uint64_t MessageId;
+        };
+
+        TStructReader<TSendData, TSocket> reader(std::move(socket));
+
+        try {
+            while (true) {
+                auto data = co_await reader.Read();
+                if (data.Recipient.NodeId() != NodeId_) {
+                    std::cerr << "Received message for different node: " << data.Recipient.ToString() << "\n";
+                    continue;
+                }
+                auto message = std::make_unique<TMessage>();
+                message->MessageId = data.MessageId;
+                Send(data.Sender, data.Recipient, std::move(message));
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error in InboundConnection: " << e.what() << "\n";
+        }
+    }
+
     void ShutdownActor(uint64_t actorId) {
         if (actorId < Actors.size()) {
             AliveActors--;
@@ -161,6 +230,8 @@ private:
     uint64_t NextCookie_ = 1;
     uint64_t NodeId_ = 1;
     THandle ExecuteAwait_{};
+
+    std::vector<std::unique_ptr<INode>> Nodes;
 
     friend class TActorContext;
 };

@@ -39,6 +39,19 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
 }
 
 void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr message) {
+    if (recipient.NodeId() != NodeId_) {
+        auto& maybeRemote = Nodes[recipient.NodeId()];
+        if (!maybeRemote) {
+            std::cerr << "Cannot send message to actor on different node: " << recipient.ToString() << "\n";
+            return;
+        }
+        maybeRemote->Send(TEnvelope{
+            .Sender = sender,
+            .Recipient = recipient,
+            .Message = std::move(message)
+        });
+        return;
+    }
     auto to = recipient.ActorId();
     if (to == 0 || to >= Actors.size()) {
         std::cerr << "Cannot send message to actor with id: " << to << "\n";
