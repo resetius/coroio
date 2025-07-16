@@ -96,20 +96,6 @@ class TResponderActor : public IActor {
     }
 };
 
-// need to delete completed receives via eventloop iteration to avoid read of deleted memory
-TFuture<void> Gc(TActorSystem* actorSystem) {
-    while (true) {
-        co_await actorSystem->Sleep(std::chrono::milliseconds(1000));
-        actorSystem->GcIterationSync();
-    }
-}
-
-TFuture<void> Fetcher(TActorSystem* actorSystem) {
-    while (true) {
-        co_await actorSystem->WaitExecute();
-    }
-}
-
 void test_ping_pong(void**) {
     TLoop<TDefaultPoller> loop;
 
@@ -125,9 +111,7 @@ void test_ping_pong(void**) {
         actorSystem.Send(pingActorId, pongActorId, std::move(ping));
     }
 
-    auto fetcher = Fetcher(&actorSystem);
-    auto gc = Gc(&actorSystem);
-
+    actorSystem.Serve();
     actorSystem.MaybeNotify();
 
     while (actorSystem.ActorsSize() > 0) {
@@ -150,9 +134,7 @@ void test_ask_respond(void**) {
         actorSystem.Send(responderActorId, askerActorId, std::move(ping));
     }
 
-    auto fetcher = Fetcher(&actorSystem);
-    auto gc = Gc(&actorSystem);
-
+    actorSystem.Serve();
     actorSystem.MaybeNotify();
 
     while (actorSystem.ActorsSize() > 0) {

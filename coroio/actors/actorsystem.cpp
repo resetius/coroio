@@ -144,6 +144,29 @@ TFuture<void> TActorSystem::WaitExecute() {
     co_return;
 }
 
+void TActorSystem::GcIterationSync() {
+    CleanupMessages.clear();
+    for (auto actorId : CleanupActors) {
+        ShutdownActor(actorId);
+    }
+    CleanupActors.clear();
+}
+
+void TActorSystem::Serve()
+{
+    auto fetcher = [&]() -> TVoidTask {
+        while (true) {
+            co_await WaitExecute();
+        }
+    }();
+
+    auto gc = [&]() -> TVoidTask {
+        while (true) {
+            co_await Sleep(std::chrono::milliseconds(1000));
+            GcIterationSync();
+        }
+    }();
+}
 
 } // namespace NNet
 } // namespace NActors

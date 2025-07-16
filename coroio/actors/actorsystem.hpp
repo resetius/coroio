@@ -117,16 +117,6 @@ public:
         }
     }
 
-    void GcIterationSync() {
-        CleanupMessages.clear();
-        for (auto actorId : CleanupActors) {
-            ShutdownActor(actorId);
-        }
-        CleanupActors.clear();
-    }
-
-    TFuture<void> WaitExecute();
-
     size_t ActorsSize() const {
         return AliveActors;
     }
@@ -138,8 +128,12 @@ public:
         Nodes[id].Node = std::move(node);
     }
 
+    // Use Serve() for local actors and Serve(TSocket) for local and remote actors
+    void Serve();
+
     template<typename TSocket>
     void Serve(TSocket socket) {
+        Serve();
         InboundServe(std::move(socket));
         for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
             if (Nodes[i].Node) {
@@ -149,6 +143,9 @@ public:
     }
 
 private:
+    void GcIterationSync();
+    TFuture<void> WaitExecute();
+
     TVoidTask OutboundServe(int id) {
         while (true) {
             co_await SuspendExecution(id);
