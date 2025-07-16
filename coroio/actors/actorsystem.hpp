@@ -135,14 +135,14 @@ public:
         if (Nodes.size() >= id) {
             Nodes.resize(id + 1);
         }
-        Nodes[id] = std::move(node);
+        Nodes[id].Node = std::move(node);
     }
 
     template<typename TSocket>
     void Serve(TSocket socket) {
         InboundServe(std::move(socket));
         for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
-            if (Nodes[i]) {
+            if (Nodes[i].Node) {
                 OutboundServe(i);
             }
         }
@@ -151,8 +151,8 @@ public:
 private:
     TVoidTask OutboundServe(int id) {
         while (true) {
-            co_await std::suspend_always{};
-            auto& node = Nodes[id];
+            co_await SuspendExecution(id);
+            auto& node = Nodes[id].Node;
             if (node) {
                 node->Drain();
             } else {
@@ -214,6 +214,20 @@ private:
         ContextAllocator.Deallocate(ptr);
     }
 
+    TFuture<void> SuspendExecution() {
+        ExecuteAwait_ = co_await Self();
+        co_await std::suspend_always();
+        ExecuteAwait_ = {};
+        co_return;
+    }
+
+    TFuture<void> SuspendExecution(int nodeId) {
+        Nodes[nodeId].Pending = co_await Self();
+        co_await std::suspend_always();
+        Nodes[nodeId].Pending = {};
+        co_return;
+    }
+
     TPollerBase* Poller;
 
     std::queue<uint64_t> ReadyActors;
@@ -231,7 +245,11 @@ private:
     uint64_t NodeId_ = 1;
     THandle ExecuteAwait_{};
 
-    std::vector<std::unique_ptr<INode>> Nodes;
+    struct TNodeState {
+        std::unique_ptr<INode> Node;
+        THandle Pending;
+    };
+    std::vector<TNodeState> Nodes;
 
     friend class TActorContext;
 };
