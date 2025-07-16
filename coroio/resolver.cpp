@@ -327,21 +327,6 @@ THostPort::THostPort(const std::string& host, int port)
     , Port(port)
 { }
 
-template<typename T>
-TFuture<TAddress> THostPort::Resolve(TResolver<T>& resolver) {
-    char buf[16];
-    if (inet_pton(AF_INET, Host.c_str(), buf) == 1 || inet_pton(AF_INET6, Host.c_str(), buf)) {
-        co_return TAddress{Host, Port};
-    }
-
-    auto addresses = co_await resolver.Resolve(Host);
-    if (addresses.empty()) {
-        throw std::runtime_error("Empty address");
-    }
-
-    co_return addresses.front().WithPort(Port);
-}
-
 template class TResolver<TPollerBase>;
 #ifdef HAVE_URING
 template class TResolver<TUring>;

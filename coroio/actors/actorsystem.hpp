@@ -60,8 +60,9 @@ private:
 class TActorSystem
 {
 public:
-    TActorSystem(TPollerBase* poller)
+    TActorSystem(TPollerBase* poller, int nodeId = 1)
         : Poller(poller)
+        , NodeId_(nodeId)
     { }
 
     TActorId Register(IActor::TPtr actor);
@@ -111,22 +112,11 @@ public:
         return TAskAwaiter{state};
     }
 
-    void MaybeNotify() {
-        if (ExecuteAwait_) {
-            ExecuteAwait_.resume();
-        }
-    }
+    void MaybeNotify();
 
-    size_t ActorsSize() const {
-        return AliveActors;
-    }
+    size_t ActorsSize() const;
 
-    void AddNode(int id, std::unique_ptr<INode> node) {
-        if (Nodes.size() >= id) {
-            Nodes.resize(id + 1);
-        }
-        Nodes[id].Node = std::move(node);
-    }
+    void AddNode(int id, std::unique_ptr<INode> node);
 
     // Use Serve() for local actors and Serve(TSocket) for local and remote actors
     void Serve();
@@ -147,6 +137,7 @@ private:
     TFuture<void> WaitExecute();
 
     TVoidTask OutboundServe(int id) {
+        Nodes[id].Node->StartConnect();
         while (true) {
             co_await SuspendExecution(id);
             auto& node = Nodes[id].Node;
@@ -160,6 +151,7 @@ private:
 
     template<typename TSocket>
     TVoidTask InboundServe(TSocket socket) {
+        std::cerr << "InboundServe started\n";
         while (true) {
             auto client = co_await socket.Accept();
             std::cerr << "Accepted\n";
@@ -170,14 +162,8 @@ private:
 
     template<typename TSocket>
     TVoidTask InboundConnection(TSocket socket) {
-        // TODO: serialize data
-        struct TSendData {
-            TActorId Sender;
-            TActorId Recipient;
-            uint64_t MessageId;
-        };
-
-        TStructReader<TSendData, TSocket> reader(std::move(socket));
+        // TODO: deserialize data
+        TStructReader<TSendData, TSocket> reader(socket);
 
         try {
             while (true) {

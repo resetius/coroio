@@ -35,14 +35,13 @@ public:
                 + std::to_string(Cookie_);
     }
 
-private:
-    friend class TActorSystem;
     TActorId(uint64_t nodeId, uint64_t actorId, uint64_t cookie)
         : NodeId_(nodeId)
         , ActorId_(actorId)
         , Cookie_(cookie)
     { }
 
+private:
     uint64_t NodeId_ = 0;
     uint64_t ActorId_ = 0;
     uint64_t Cookie_ = 0;

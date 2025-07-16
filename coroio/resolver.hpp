@@ -196,10 +196,30 @@ public:
     THostPort(const std::string& host, int port);
 
     template<typename T>
-    TFuture<TAddress> Resolve(TResolver<T>& resolver);
+    TFuture<TAddress> Resolve(TResolver<T>& resolver) {
+        char buf[16];
+        if (inet_pton(AF_INET, Host.c_str(), buf) == 1 || inet_pton(AF_INET6, Host.c_str(), buf)) {
+            co_return TAddress{Host, Port};
+        }
+
+        auto addresses = co_await resolver.Resolve(Host);
+        if (addresses.empty()) {
+            throw std::runtime_error("Empty address");
+        }
+
+        co_return addresses.front().WithPort(Port);
+    }
 
     const std::string ToString() const {
         return Host + ":" + std::to_string(Port);
+    }
+
+    const std::string& GetHost() const {
+        return Host;
+    }
+
+    int GetPort() const {
+        return Port;
     }
 
 private:

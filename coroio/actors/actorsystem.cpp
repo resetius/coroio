@@ -78,6 +78,8 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr mess
         state.Flags.IsReady = 1;
         ReadyActors.push({to});
     }
+
+    MaybeNotify();
 }
 
 TFuture<void> TActorSystem::WaitExecute() {
@@ -166,6 +168,28 @@ void TActorSystem::Serve()
             GcIterationSync();
         }
     }();
+}
+
+void TActorSystem::AddNode(int id, std::unique_ptr<INode> node)
+{
+    if (id == NodeId_) {
+        std::cerr << "Cannot add node with the same id as current node: " << id << "\n";
+        return;
+    }
+    if (Nodes.size() <= id) {
+        Nodes.resize(id + 1);
+    }
+    Nodes[id].Node = std::move(node);
+}
+
+size_t TActorSystem::ActorsSize() const {
+    return AliveActors;
+}
+
+void TActorSystem::MaybeNotify() {
+    if (ExecuteAwait_) {
+        ExecuteAwait_.resume();
+    }
 }
 
 } // namespace NNet

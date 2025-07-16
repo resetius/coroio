@@ -12,7 +12,16 @@ class INode {
 public:
     virtual ~INode() = default;
     virtual void Send(TEnvelope&& envelope) = 0;
+    virtual void StartConnect() = 0;
     virtual void Drain() = 0;
+    virtual THostPort GetHostPort() const = 0;
+};
+
+// TODO: serialize data
+struct TSendData {
+    TActorId Sender;
+    TActorId Recipient;
+    uint64_t MessageId;
 };
 
 template<typename TSocket, typename TResolver>
@@ -28,32 +37,32 @@ public:
         OutgoingMessages.push(std::move(envelope));
     }
 
-    void Drain() override {
+    void StartConnect() override {
         if (!Connected) {
             Connect();
             return;
         }
+    }
 
+    void Drain() override {
+        StartConnect();
         if (!Drainer.raw() || Drainer.done()) {
             Drainer = DoDrain();
         }
     }
 
+    THostPort GetHostPort() const override {
+        return HostPort;
+    }
+
 private:
     TFuture<void> DoDrain() {
-        // TODO: serialize data
-        struct TSendData {
-            TActorId Sender;
-            TActorId Recipient;
-            uint64_t MessageId;
-        };
-
         try {
             while (!OutgoingMessages.empty()) {
                 auto envelope = std::move(OutgoingMessages.front());
                 OutgoingMessages.pop();
 
-                // TODO: serialize
+                // TODO: serialize data
                 TSendData data{
                     .Sender = envelope.Sender,
                     .Recipient = envelope.Recipient,
@@ -84,15 +93,29 @@ private:
         std::cout << "Connecting to " << HostPort.ToString() << "\n";
         while (!Connected) {
             try {
-                auto deadline = NNet::TClock::now() + std::chrono::milliseconds(100);
+                //auto deadline = NNet::TClock::now() + std::chrono::milliseconds(5000);
                 TAddress addr = co_await HostPort.Resolve(Resolver);
                 Socket = SocketFactory(addr);
-                co_await Socket.Connect(deadline);
+                co_await Socket.Connect(addr /*, deadline*/);
+                // Connection bug workaround:
+                {
+                    auto sender = TActorId(0, 0, 0);
+                    auto recipient = TActorId(0, 0, 0);
+                    TSendData data{
+                        .Sender = sender,
+                        .Recipient = recipient,
+                        .MessageId = 0
+                    };
+                    co_await TByteWriter(Socket).Write(&data, sizeof(data));
+                }
                 Connected = true;
                 std::cout << "Connected to " << HostPort.ToString() << "\n";
             } catch (const std::exception& ex) {
                 std::cerr << "Error connecting to " << HostPort.ToString() << ": " << ex.what() << "\n";
                 Connected = false;
+            }
+            if (!Connected) {
+                co_await Socket.Poller()->Sleep(std::chrono::milliseconds(1000));
             }
         }
         co_return;
