@@ -1,6 +1,6 @@
 #!/bin/bash
 
-N=10  # Number of nodes
+N=${1:-10}  # Number of nodes
 BASE_PORT=2001
 
 NODE_ARGS=""
