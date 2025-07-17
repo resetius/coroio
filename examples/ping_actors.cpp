@@ -27,27 +27,90 @@ public:
 
 class TPingActor : public IActor {
 public:
-    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override {
-        std::cerr << "Received message of type " << message->MessageId << " from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
+    TPingActor(bool isFirstNode, int total, int nextNodeId, const std::vector<uint64_t>& nodeIds)
+        : IsFirstNode(isFirstNode)
+        , TotalMessages(total)
+        , RemainingMessages(total)
+        , NextNodeId(nextNodeId)
+        , NodeIds(nodeIds)
+    { }
 
-        if (message->MessageId == 10) {
-            auto reply = std::make_unique<TPongMessage>();
-            ctx->Send(ctx->Sender(), std::move(reply));
-        } else if (message->MessageId == 20) {
-            auto reply = std::make_unique<TPingMessage>();
-            auto sender = ctx->Sender();
-            ctx->Send(ctx->Sender(), std::move(reply));
+    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override {
+        //std::cerr << "Received message of type " << message->MessageId << " from: " << ctx->Sender().ToString() << ", message: " << Counter++ << "\n";
+
+        if (IsFirstNode && RemainingMessages == TotalMessages) {
+            std::cout << "Starting pinging...\n";
+            StartTime = std::chrono::steady_clock::now();
         }
 
-        co_await ctx->Sleep(std::chrono::milliseconds(1000));
+        if (IsFirstNode && RemainingMessages == 0) {
+            co_return;
+        }
+
+        auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
+        auto next = std::make_unique<TPingMessage>();
+        ctx->Send(nextActorId, std::move(next));
+
+        // co_await ctx->Sleep(std::chrono::milliseconds(1000));
+        if (IsFirstNode) {
+            --RemainingMessages;
+            PrintProgress();
+
+            if (RemainingMessages == 0) {
+                auto now = std::chrono::steady_clock::now();
+                double secs = std::chrono::duration<double>(now - StartTime).count();
+                std::cout << "\nPing throughput: "
+                            << (double)(TotalMessages) / secs
+                            << " msg/s\n";
+
+                for (auto nodeId : NodeIds) {
+                    auto poison = std::make_unique<TPoisonPill>();
+                    auto actorId = TActorId{nodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
+                    std::cerr << "Sending poison pill to actor: " << actorId << "\n";
+                    ctx->Send(actorId, std::move(poison));
+                }
+            }
+        }
         co_return;
     }
 
-    int counter = 1;
+    void PrintProgress() {
+        size_t processed = TotalMessages - RemainingMessages;
+        int percent = int((processed * 100) / TotalMessages);
+        if (percent != LastPercent_) {
+            LastPercent_ = percent;
+            const int barWidth = 50;
+            int pos = (percent * barWidth) / 100;
+            std::cerr << "\r[";
+            for (int i = 0; i < barWidth; ++i) {
+                if (i < pos) {
+                    std::cerr << "=";
+                }
+                else if (i == pos) {
+                    std::cerr << ">";
+                }
+                else {
+                    std::cerr << " ";
+                }
+            }
+            std::cerr << "] " << percent << "%";
+            std::cerr.flush();
+        }
+    }
+
+    int Counter = 1;
+    bool IsFirstNode;
+    int TotalMessages;
+    int RemainingMessages;
+    uint64_t NextNodeId;
+    std::chrono::steady_clock::time_point StartTime;
+    int LastPercent_ = -1;
+    std::vector<uint64_t> NodeIds;
 };
 
 int main(int argc, char** argv) {
-    using Poller = TSelect;
+    //using Poller = TSelect;
+    using Poller = TDefaultPoller;
     TInitializer init;
     TLoop<Poller> loop;
     TResolver<TPollerBase> resolver(loop.Poller());
@@ -55,9 +118,9 @@ int main(int argc, char** argv) {
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<Poller::TSocket, TResolver<TPollerBase>>>>
     > nodes;
-    int myNodeId = 1;
+    uint64_t myNodeId = 1;
     int port = 0;
-    int delay = 1000;
+    int delay = 5000;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -94,6 +157,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::vector<uint64_t> nodeIds;
     TActorSystem sys(&loop.Poller(), myNodeId);
     for (auto&& [nodeId, node] : nodes) {
         if (nodeId != myNodeId) {
@@ -102,9 +166,19 @@ int main(int argc, char** argv) {
         } else {
             port = node->GetHostPort().GetPort();
         }
+        nodeIds.push_back(nodeId);
     }
+    std::sort(nodeIds.begin(), nodeIds.end());
+    auto it = std::find(nodeIds.begin(), nodeIds.end(), myNodeId);
+    if (it == nodeIds.end()) {
+        std::cerr << "Node with id: " << myNodeId << " is not registered.\n";
+        return -1;
+    }
+    int myIdx = std::distance(nodeIds.begin(), it);
+    int nextIdx = (myIdx + 1) % nodeIds.size();
+    uint64_t nextNodeId = nodeIds[nextIdx];
 
-    auto pingActor = std::make_unique<TPingActor>();
+    auto pingActor = std::make_unique<TPingActor>(myNodeId == nodeIds.front(), 100000, nextNodeId, nodeIds);
     auto pingActorId = sys.Register(std::move(pingActor));
 
     TAddress address{"::", port};
@@ -114,17 +188,19 @@ int main(int argc, char** argv) {
 
     sys.Serve(std::move(socket));
 
-    auto firstPing = [&]() -> TVoidTask {
-        if (myNodeId == 1) {
-            auto from = TActorId{2, pingActorId.ActorId(), pingActorId.Cookie()};
-            auto to = pingActorId;
+    if (myNodeId == nodeIds.front()) {
+        auto firstPing = [&]() -> TVoidTask {
+            auto from = TActorId{nodeIds.back(), pingActorId.ActorId(), pingActorId.Cookie()};
+            auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
             co_await sys.Sleep(std::chrono::milliseconds(delay));
             std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
             auto pingMessage = std::make_unique<TPingMessage>();
             sys.Send(from, to, std::move(pingMessage));
-        }
-        co_return;
-    }();
+            co_return;
+        }();
+    }
 
-    loop.Loop();
+    while (sys.ActorsSize() > 0) {
+        loop.Step();
+    }
 }
