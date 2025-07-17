@@ -156,18 +156,18 @@ void TActorSystem::GcIterationSync() {
 
 void TActorSystem::Serve()
 {
-    auto fetcher = [&]() -> TVoidTask {
+    auto fetcher = [](TActorSystem* self) -> TVoidTask {
         while (true) {
-            co_await WaitExecute();
+            co_await self->WaitExecute();
         }
-    }();
+    }(this);
 
-    auto gc = [&]() -> TVoidTask {
+    auto gc = [](TActorSystem* self) -> TVoidTask {
         while (true) {
-            co_await Sleep(std::chrono::milliseconds(1000));
-            GcIterationSync();
+            co_await self->Sleep(std::chrono::milliseconds(1000));
+            self->GcIterationSync();
         }
-    }();
+    }(this);
 }
 
 void TActorSystem::AddNode(int id, std::unique_ptr<INode> node)
