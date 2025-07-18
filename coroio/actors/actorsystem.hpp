@@ -65,6 +65,8 @@ public:
         , NodeId_(nodeId)
     { }
 
+    ~TActorSystem();
+
     TActorId Register(IActor::TPtr actor);
 
     void Schedule(TMessage::TPtr message, TTime when);
@@ -124,10 +126,10 @@ public:
     template<typename TSocket>
     void Serve(TSocket socket) {
         Serve();
-        InboundServe(std::move(socket));
+        Handles.emplace_back(InboundServe(std::move(socket)));
         for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
             if (Nodes[i].Node) {
-                OutboundServe(i);
+                Handles.emplace_back(OutboundServe(i));
             }
         }
     }
@@ -233,6 +235,8 @@ private:
         THandle Pending;
     };
     std::vector<TNodeState> Nodes;
+
+    std::vector<THandle> Handles;
 
     friend class TActorContext;
 };

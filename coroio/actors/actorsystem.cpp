@@ -3,6 +3,12 @@
 namespace NNet {
 namespace NActors {
 
+TActorSystem::~TActorSystem() {
+    for (auto handle : Handles) {
+        handle.destroy();
+    }
+}
+
 void TActorContext::Send(TActorId to, TMessage::TPtr message)
 {
     ActorSystem->Send(Self(), to, std::move(message));
@@ -156,18 +162,18 @@ void TActorSystem::GcIterationSync() {
 
 void TActorSystem::Serve()
 {
-    auto fetcher = [](TActorSystem* self) -> TVoidTask {
+    Handles.emplace_back([](TActorSystem* self) -> TVoidTask {
         while (true) {
             co_await self->WaitExecute();
         }
-    }(this);
+    }(this));
 
-    auto gc = [](TActorSystem* self) -> TVoidTask {
+    Handles.emplace_back([](TActorSystem* self) -> TVoidTask {
         while (true) {
             co_await self->Sleep(std::chrono::milliseconds(1000));
             self->GcIterationSync();
         }
-    }(this);
+    }(this));
 }
 
 void TActorSystem::AddNode(int id, std::unique_ptr<INode> node)
