@@ -132,6 +132,7 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId,
     if (!mailbox) {
         return;
     }
+    std::cerr << "Sending message with id: " << messageId << " to actor: " << recipient.ToString() << "\n";
     mailbox->push(TEnvelope{
         .Sender = sender,
         .Recipient = recipient,
@@ -192,7 +193,10 @@ TFuture<void> TActorSystem::WaitExecute() {
 
         while (!mailbox->empty()) {
             auto envelope = std::move(mailbox->front()); mailbox->pop();
-            if (envelope.Message->MessageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
+            auto messageId = envelope.Message
+                ? envelope.Message->MessageId
+                : envelope.MessageId;
+            if (messageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
                 CleanupActors.emplace_back(actorId);
                 break;
             }
