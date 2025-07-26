@@ -18,6 +18,16 @@ void TActorContext::Forward(TActorId to, TMessage::TPtr message) {
     ActorSystem->Send(Sender(), to, std::move(message));
 }
 
+void TActorContext::Send(TActorId to, uint32_t messageId, TBlob blob)
+{
+    ActorSystem->Send(Self(), to, messageId, std::move(blob));
+}
+
+void TActorContext::Forward(TActorId to, uint32_t messageId, TBlob blob)
+{
+    ActorSystem->Send(Sender(), to, messageId, std::move(blob));
+}
+
 TActorId TActorSystem::Register(IActor::TPtr actor) {
     AliveActors++;
     uint64_t id = 0;
@@ -44,6 +54,7 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     return actorId;
 }
 
+// TODO: remove
 void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr message) {
     if (recipient.NodeId() != NodeId_) {
         auto& maybeRemote = Nodes[recipient.NodeId()];
@@ -88,6 +99,53 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr mess
     MaybeNotify();
 }
 
+void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId, TBlob blob)
+{
+    if (recipient.NodeId() != NodeId_) {
+        auto& maybeRemote = Nodes[recipient.NodeId()];
+        if (!maybeRemote.Node) {
+            std::cerr << "Cannot send message to actor on different node: " << recipient.ToString() << "\n";
+            return;
+        }
+        maybeRemote.Node->Send(TEnvelope{
+            .Sender = sender,
+            .Recipient = recipient,
+            .MessageId = messageId,
+            .Blob = std::move(blob)
+        });
+        if (maybeRemote.Pending) {
+            maybeRemote.Pending.resume();
+        }
+        return;
+    }
+    auto to = recipient.ActorId();
+    if (to == 0 || to >= Actors.size()) {
+        std::cerr << "Cannot send message to actor with id: " << to << "\n";
+        return;
+    }
+    auto& state = Actors[to];
+    if (recipient.Cookie() != state.Cookie) {
+        std::cerr << "Message cookie mismatch for actor with id: " << to << "\n";
+        return;
+    }
+    auto& mailbox = state.Mailbox;
+    if (!mailbox) {
+        return;
+    }
+    mailbox->push(TEnvelope{
+        .Sender = sender,
+        .Recipient = recipient,
+        .MessageId = messageId,
+        .Blob = std::move(blob)
+    });
+    if (!state.Flags.IsReady && !state.Pending.raw()) {
+        state.Flags.IsReady = 1;
+        ReadyActors.push({to});
+    }
+
+    MaybeNotify();
+}
+
 TFuture<void> TActorSystem::WaitExecute() {
     if (ReadyActors.empty()) {
         co_await SuspendExecution();
@@ -111,6 +169,27 @@ TFuture<void> TActorSystem::WaitExecute() {
             std::cerr << "Mailbox for actor with id: " << actorId << " is not initialized\n";
             continue;
         }
+
+        auto pendingLambda = [this, actorId]() {
+            // if we were in pending
+            // we need to try restart ActorSystem loop
+            auto& pending = Actors[actorId].Pending;
+            if (pending.raw()) {
+                CleanupMessages.emplace_back(std::move(pending)); // we cannot delete coroutine from itself, need to do "gc"
+                pending = {};
+                Actors[actorId].Flags.IsReady = 0;
+
+                // if Sent to actorId was called, we need to check if it has any messages in mailbox
+                auto& mailbox = Actors[actorId].Mailbox;
+                if (!mailbox->empty()) {
+                    Actors[actorId].Flags.IsReady = 1;
+                    ReadyActors.push({actorId});
+                }
+
+                MaybeNotify();
+            }
+        };
+
         while (!mailbox->empty()) {
             auto envelope = std::move(mailbox->front()); mailbox->pop();
             if (envelope.Message->MessageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
@@ -120,25 +199,9 @@ TFuture<void> TActorSystem::WaitExecute() {
             auto ctx = std::unique_ptr<TActorContext>(
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
-            auto future = actor->Receive(std::move(envelope.Message), std::move(ctx)).Accept([this, actorId=actorId](){
-                // if we were in pending
-                // we need to try restart ActorSystem loop
-                auto& pending = Actors[actorId].Pending;
-                if (pending.raw()) {
-                    CleanupMessages.emplace_back(std::move(pending)); // we cannot delete coroutine from itself, need to do "gc"
-                    pending = {};
-                    Actors[actorId].Flags.IsReady = 0;
-
-                    // if Sent to actorId was called, we need to check if it has any messages in mailbox
-                    auto& mailbox = Actors[actorId].Mailbox;
-                    if (!mailbox->empty()) {
-                        Actors[actorId].Flags.IsReady = 1;
-                        ReadyActors.push({actorId});
-                    }
-
-                    MaybeNotify();
-                }
-            });
+            auto future = envelope.Message
+                ? actor->Receive(std::move(envelope.Message), std::move(ctx)).Accept(pendingLambda) // TODO: remove
+                : actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx)).Accept(pendingLambda);
             if (!future.done()) {
                 Actors[actorId].Pending = std::move(future);
                 break;

@@ -50,6 +50,11 @@ public:
         co_return;
     }
 
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
+        co_return;
+    }
+
 private:
     void ShutdownRing(TActorContext::TPtr& ctx) {
         auto now = std::chrono::steady_clock::now();
