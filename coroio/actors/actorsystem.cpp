@@ -132,7 +132,6 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId,
     if (!mailbox) {
         return;
     }
-    std::cerr << "Sending message with id: " << messageId << " to actor: " << recipient.ToString() << "\n";
     mailbox->push(TEnvelope{
         .Sender = sender,
         .Recipient = recipient,
