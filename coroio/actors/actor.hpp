@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <coroio/corochain.hpp>
+#include "messages.hpp"
 
 namespace NNet {
 namespace NActors {
@@ -47,6 +48,7 @@ private:
     uint64_t Cookie_ = 0;
 };
 
+// TODO: remove
 class TMessage
 {
 public:
@@ -61,7 +63,10 @@ public:
     TActorId Sender;
     TActorId Recipient;
 
-    TMessage::TPtr Message;
+    TMessage::TPtr Message; // TODO: remove
+
+    uint32_t MessageId;
+    TBlob Blob;
 };
 
 class TActorContext
@@ -75,14 +80,16 @@ public:
     TActorId Self() const {
         return Self_;
     }
-    void Send(TActorId to, TMessage::TPtr message);
-    void Forward(TActorId to, TMessage::TPtr message);
+    void Send(TActorId to, TMessage::TPtr message); // TODO: remove
+    void Forward(TActorId to, TMessage::TPtr message); // TODO: remove
+    void Send(TActorId to, uint32_t messageId, TBlob blob);
+    void Forward(TActorId to, uint32_t messageId, TBlob blob);
     TFuture<void> PipeTo(uint64_t to, TFuture<TMessage::TPtr> future);
     TFuture<void> Sleep(TTime until);
     template<typename Rep, typename Period>
     TFuture<void> Sleep(std::chrono::duration<Rep,Period> duration);
     template<typename T>
-    TFuture<std::unique_ptr<T>> Ask(TActorId recepient, TMessage::TPtr message);
+    TFuture<std::unique_ptr<T>> Ask(TActorId recipient, TMessage::TPtr message);
 
     static void* operator new(size_t size, TActorSystem* actorSystem);
     static void operator delete(void* ptr);
@@ -110,6 +117,7 @@ public:
     virtual ~IActor() = default;
 
     virtual TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) = 0;
+    virtual TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
 
 } // namespace NActors

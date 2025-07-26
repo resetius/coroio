@@ -47,6 +47,11 @@ public:
         co_return;
     }
 
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
+        co_return;
+    }
+
     int counter = 0;
 };
 
@@ -60,6 +65,11 @@ public:
             auto command = std::make_unique<TPoisonPill>();
             ctx->Send(ctx->Self(), std::move(command));
         }
+        co_return;
+    }
+
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
         co_return;
     }
 
@@ -80,6 +90,11 @@ class TAskerActor : public IActor {
 
         co_return;
     }
+
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
+        co_return;
+    }
 };
 
 class TResponderActor : public IActor {
@@ -93,6 +108,11 @@ class TResponderActor : public IActor {
         ctx->Send(ctx->Self(), std::move(command));
         std::cerr << "PoisonPill sent\n";
 
+        co_return;
+    }
+
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
         co_return;
     }
 };

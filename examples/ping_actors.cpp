@@ -74,6 +74,11 @@ public:
         co_return;
     }
 
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
+        co_return;
+    }
+
     void PrintProgress() {
         size_t processed = TotalMessages - RemainingMessages;
         int percent = int((processed * 100) / TotalMessages);

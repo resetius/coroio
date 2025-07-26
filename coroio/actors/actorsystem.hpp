@@ -52,6 +52,10 @@ public:
     { }
 
     TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override;
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        // TODO: implement
+        co_return;
+    }
 
 private:
     std::shared_ptr<TAskState<T>> State;
@@ -81,6 +85,7 @@ public:
     }
 
     void Send(TActorId sender, TActorId recepient, TMessage::TPtr message);
+    void Send(TActorId sender, TActorId recepient, uint32_t messageId, TBlob blob);
 
     template<typename T>
     auto Ask(TActorId recepient, TMessage::TPtr message) {
