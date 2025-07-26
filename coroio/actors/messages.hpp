@@ -21,17 +21,44 @@ struct TBlob {
 template<typename T>
 constexpr bool is_pod_v = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T>;
 
+template<typename T, typename = void>
+struct has_data_members : std::true_type {};
+
+template<typename T>
+struct has_data_members<T, std::enable_if_t<
+    std::is_empty_v<T> &&
+    std::is_trivial_v<T> &&
+    std::is_standard_layout_v<T>
+>> : std::false_type {};
+
+template<typename T>
+constexpr bool has_data_members_v = has_data_members<T>::value;
+
+template<typename T>
+constexpr size_t sizeof_data() {
+    if constexpr (has_data_members_v<T>) {
+        return sizeof(T);
+    } else {
+        return 0;
+    }
+}
+
 template<typename T, typename TAllocator>
 typename std::enable_if_t<is_pod_v<T>, TBlob>
 SerializePodNear(T&& message, TAllocator& alloc)
 {
-    uint32_t size = sizeof(T);
-    auto* data = alloc.Acquire(size);
-    new (data) T(std::move(message));
+    constexpr uint32_t size = sizeof_data<T>();
 
-    auto rawPtr = TBlob::TRawPtr(data, [&alloc](void* ptr) {
-        alloc.Release(ptr);
-    });
+    TBlob::TRawPtr rawPtr = nullptr;
+
+    if constexpr (size > 0) {
+        auto* data = alloc.Acquire(size);
+        new (data) T(std::move(message));
+
+        rawPtr = TBlob::TRawPtr(data, [&alloc](void* ptr) {
+            alloc.Release(ptr);
+        });
+    }
 
     return TBlob{std::move(rawPtr), size, TBlob::PointerType::Near};
 }
@@ -85,8 +112,12 @@ TBlob SerializeFar(TBlob blob, TAllocator& alloc)
 }
 
 template<typename T>
-T& DeserializeNear(const TBlob& blob) {
-    return *reinterpret_cast<T*>(blob.Data.get());
+auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() == 0, T, T&> {
+    if constexpr (sizeof_data<T>() == 0) {
+        return T{};
+    } else {
+        return *reinterpret_cast<T*>(blob.Data.get());
+    }
 }
 
 template<typename T>
