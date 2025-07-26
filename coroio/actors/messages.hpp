@@ -27,11 +27,11 @@ typename std::enable_if_t<is_pod_v<T>, TBlob>
 SerializePodNear(T&& message, TAllocator& alloc)
 {
     uint32_t size = sizeof(T);
-    auto* data = alloc.acquire(size);
+    auto* data = alloc.Acquire(size);
     new (data) T(std::move(message));
 
-    auto rawPtr = TBlob::TRawPtr(data, [alloc](void* ptr) {
-        alloc.release(ptr);
+    auto rawPtr = TBlob::TRawPtr(data, [&alloc](void* ptr) {
+        alloc.Release(ptr);
     });
 
     return TBlob{std::move(rawPtr), size, true, TBlob::PointerType::Near};
@@ -41,8 +41,7 @@ template<typename T, typename TAllocator>
 typename std::enable_if_t<!is_pod_v<T>, TBlob>
 SerializeNonPodNear(T&& message, TAllocator& alloc)
 {
-    // For non-POD types, we use regular memory allocation
-    T* obj = new T(std::move(message));
+    T* obj = new T(std::forward<T>(message));
 
     auto rawPtr = TBlob::TRawPtr(obj, [](void* ptr) {
         delete reinterpret_cast<T*>(ptr);
@@ -55,10 +54,16 @@ template<typename T, typename TAllocator>
 TBlob SerializeNear(T&& message, TAllocator& alloc)
 {
     if constexpr (is_pod_v<T>) {
-        return SerializePodNear(std::forward<T>(message), alloc);
+        return SerializePodNear<T>(std::forward<T>(message), alloc);
     } else {
-        return SerializeNonPodNear(std::forward<T>(message), alloc);
+        return SerializeNonPodNear<T>(std::forward<T>(message), alloc);
     }
+}
+
+template<typename T>
+void SerializeToStream(const T& obj, std::ostringstream& oss)
+{
+    static_assert(sizeof(T) == 0, "Serialization not implemented for this type");
 }
 
 template<typename T, typename TAllocator>
@@ -73,7 +78,7 @@ TBlob SerializeFar(TBlob blob, TAllocator& alloc)
         SerializeToStream(*obj, oss);
         void* data = ::operator new(oss.str().size());
         std::memcpy(data, oss.str().data(), oss.str().size());
-        auto rawPtr = TBlob::TRawPtr(data, [alloc](void* ptr) {
+        auto rawPtr = TBlob::TRawPtr(data, [](void* ptr) {
             ::operator delete(ptr);
         });
         return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), false, TBlob::PointerType::Far};
@@ -81,14 +86,13 @@ TBlob SerializeFar(TBlob blob, TAllocator& alloc)
 }
 
 template<typename T>
-void SerializeToStream(const T& obj, std::ostringstream& oss)
-{
-    static_assert(sizeof(T) == 0, "Serialization not implemented for this type");
+T& DeserializeNear(const TBlob& blob) {
+    return *reinterpret_cast<T*>(blob.Data.get());
 }
 
 template<typename T>
-T& DeserializeNear(const TBlob& blob) {
-    return *reinterpret_cast<T*>(blob.Data.get());
+void DeserializeFromStream(T& obj, std::istringstream& iss) {
+    static_assert(sizeof(T) == 0, "Deserialization not implemented for this type");
 }
 
 template<typename T>
