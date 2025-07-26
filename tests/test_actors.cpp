@@ -155,6 +155,30 @@ void test_ask_respond(void**) {
     }
 }
 
+struct TEmptyMessage {
+    bool operator==(const TEmptyMessage&) const = default;
+};
+
+void test_serialize_zero_size(void**) {
+    TAllocator allocator;
+
+    // Serialize
+    auto blob = SerializeNear(TEmptyMessage{}, allocator);
+    assert_true(blob.Size == 0);
+    assert_true(blob.Data.get() == nullptr);
+
+    // Deserialize
+    auto deserialized = DeserializeNear<TEmptyMessage>(blob);
+    assert_true(deserialized == TEmptyMessage{});
+
+    auto farBlob = SerializeFar<TEmptyMessage>(blob, allocator);
+    assert_true(farBlob.Data.get() == blob.Data.get());
+    assert_true(farBlob.Size == 0);
+
+    auto deserializedFar = DeserializeFar<TEmptyMessage>(farBlob);
+    assert_true(deserializedFar == TEmptyMessage{});
+}
+
 struct TPodMessage {
     int field1;
     double field2;
@@ -224,6 +248,7 @@ int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
         cmocka_unit_test(test_ask_respond),
+        cmocka_unit_test(test_serialize_zero_size),
         cmocka_unit_test(test_serialize_pod),
         cmocka_unit_test(test_serialize_non_pod),
     };
