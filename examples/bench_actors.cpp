@@ -10,10 +10,8 @@
 using namespace NNet;
 using namespace NNet::NActors;
 
-struct TNext : public TMessage {
-    TNext() {
-        MessageId = 100;
-    }
+struct TNext {
+    static constexpr uint32_t MessageId = 100;
 };
 
 class TRingActor : public IActor {
@@ -26,7 +24,7 @@ public:
       , Ring_(r)
     { }
 
-    TFuture<void> Receive(TMessage::TPtr msg, TActorContext::TPtr ctx) override {
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         if (Idx_ == 0 && Remain_ == M_) [[unlikely]] {
             StartTime_ = std::chrono::steady_clock::now();
         }
@@ -35,8 +33,7 @@ public:
             co_return;
         }
 
-        auto next = std::make_unique<TNext>();
-        ctx->Send(Ring_[(Idx_ + 1)%N_], std::move(next));
+        ctx->Send_(Ring_[(Idx_ + 1)%N_], TNext{});
 
         if (Idx_ == 0) {
             --Remain_;
@@ -50,11 +47,6 @@ public:
         co_return;
     }
 
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        // TODO: implement
-        co_return;
-    }
-
 private:
     void ShutdownRing(TActorContext::TPtr& ctx) {
         auto now = std::chrono::steady_clock::now();
@@ -63,8 +55,7 @@ private:
                     << (double)(N_ * M_) / secs
                     << " msg/s\n";
         for (auto& idx : Ring_) {
-            auto poisson = std::make_unique<TPoisonPill>();
-            ctx->Send(idx, std::move(poisson));
+            ctx->Send_(idx, TPoison{});
         }
     }
 
@@ -101,6 +92,17 @@ private:
     int LastPercent_ = -1;
 };
 
+// TODO: remove me
+struct TAllocator {
+    void* Acquire(size_t size) {
+        return ::operator new(size);
+    }
+
+    void Release(void* ptr) {
+        ::operator delete(ptr);
+    }
+};
+
 int main(int argc, char** argv) {
     size_t N = 2; // Number of actors
     size_t M = 100; // Messages
@@ -109,6 +111,7 @@ int main(int argc, char** argv) {
     TLoop<TDefaultPoller> loop;
     TActorSystem sys(&loop.Poller());
     std::vector<TActorId> ringIds;
+    TAllocator alloc; // TODO: remove
 
     for (int i = 0; i < argc; ++i) {
         if (std::string(argv[i]) == "--actors") {
@@ -131,8 +134,8 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < N; ++i) {
             ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, N, M, ringIds));
         }
-        auto msg = std::make_unique<TNext>();
-        sys.Send(ringIds[0], ringIds[0], std::move(msg));
+        auto msg = SerializePodNear(TNext{}, alloc);
+        sys.Send(ringIds[0], ringIds[0], TNext::MessageId, std::move(msg));
     } else {
         // Unsupported yet
     }
