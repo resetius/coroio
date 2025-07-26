@@ -5,7 +5,7 @@
 ### Guide to Using the Library
 
 #### Overview
-This library leverages C++20 coroutines for asynchronous programming, providing efficient and non-blocking I/O operations. It offers a range of polling mechanisms and utilities for handling sockets and files, making it suitable for various networking and file I/O tasks.
+This library leverages C++ coroutines for asynchronous programming, providing efficient and non-blocking I/O operations. It offers a range of polling mechanisms and utilities for handling sockets and files, making it suitable for various networking and file I/O tasks.
 
  :star: If you find COROIO useful, please consider giving us a star on GitHub! Your support helps us continue to innovate and deliver exciting features.
 
@@ -16,7 +16,7 @@ This library leverages C++20 coroutines for asynchronous programming, providing 
 #### Key Features
 
 1. **Coroutines for Asynchronous Code**:
-   - The library uses C++20 coroutines, allowing you to write asynchronous code in a more straightforward and readable manner.
+   - The library uses C++ coroutines, allowing you to write asynchronous code in a more straightforward and readable manner.
 
 2. **Polling Mechanisms**:
    - **`TSelect`**: Utilizes the `select` system call, suitable for a wide range of platforms.
@@ -46,7 +46,7 @@ The library supports the following operating systems:
 
 #### Using the Library
 
-1. **Setup**: Include the library in your project and ensure C++20 support is enabled in your compiler settings.
+1. **Setup**: Include the library in your project and ensure C++ support is enabled in your compiler settings.
 
 2. **Selecting a Poller**:
    - Choose a polling mechanism based on your platform and performance needs. For most cases, `TDefaultPoll` can automatically select the appropriate poller.
