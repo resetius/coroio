@@ -19,100 +19,90 @@ extern "C" {
 using namespace NNet;
 using namespace NNet::NActors;
 
-class TPingMessage : public TMessage {
-public:
-    TPingMessage() {
-        MessageId = 10;
-    }
+struct TPingMessage {
+    static constexpr uint32_t MessageId = 100;
 };
 
-class TPongMessage : public TMessage {
-public:
-    TPongMessage() {
-        MessageId = 20;
+struct TPongMessage {
+    static constexpr uint32_t MessageId = 200;
+};
+
+struct TAllocator {
+    void* Acquire(size_t size) {
+        return ::operator new(size);
+    }
+
+    void Release(void* ptr) {
+        ::operator delete(ptr);
     }
 };
 
 class TPingActor : public IActor {
 public:
-    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override {
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
-        auto reply = std::make_unique<TPingMessage>();
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
-        ctx->Send(ctx->Sender(), std::move(reply));
+        ctx->Send_(ctx->Sender(), TPingMessage{});
         if (counter == 4) {
-            auto command = std::make_unique<TPoisonPill>();
-            ctx->Send(ctx->Self(), std::move(command));
+            ctx->Send_(ctx->Self(), TPoison{});
         }
         co_return;
     }
 
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        // TODO: implement
-        co_return;
-    }
-
+    TAllocator alloc; // TODO: remove
     int counter = 0;
 };
 
 class TPongActor : public IActor {
 public:
-    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Ping message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
-        auto reply = std::make_unique<TPongMessage>();
-        ctx->Send(ctx->Sender(), std::move(reply));
+        ctx->Send_(ctx->Sender(), TPongMessage{});
         if (counter == 5) {
-            auto command = std::make_unique<TPoisonPill>();
-            ctx->Send(ctx->Self(), std::move(command));
+            ctx->Send_(ctx->Self(), TPoison{});
         }
         co_return;
     }
 
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        // TODO: implement
-        co_return;
-    }
-
+    TAllocator alloc; // TODO: remove
     int counter = 0;
 };
 
-class TAskerActor : public IActor {
-    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
-        std::cerr << "Asker Received message from: " << ctx->Sender().ToString() << "\n";
-        auto question = std::make_unique<TPingMessage>();
-        std::cerr << "Ask\n";
-        auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), std::move(question));
-        std::cerr << "Reply received from " << ctx->Sender().ToString() << ", message: " << result->MessageId << "\n";
+struct TPingMessageOld : public TMessage {
+    TPingMessageOld() {
+        MessageId = 10;
+    }
+};
 
-        auto command = std::make_unique<TPoisonPill>();
-        ctx->Send(ctx->Self(), std::move(command));
+struct TPongMessageOld : public TMessage {
+    TPongMessageOld() {
+        MessageId = 20;
+    }
+};
+
+
+class TAskerActor : public IActor {
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        std::cerr << "Asker Received message from: " << ctx->Sender().ToString() << "\n";
+        auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), TPingMessage{});
+        std::cerr << "Reply received from " << ctx->Sender().ToString() << ", message: " << result.MessageId << "\n";
+
+        ctx->Send_(ctx->Self(), TPoison{});
         std::cerr << "PoisonPill sent\n";
 
-        co_return;
-    }
-
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        // TODO: implement
         co_return;
     }
 };
 
 class TResponderActor : public IActor {
-    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) {
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Responder Received message from: " << ctx->Sender().ToString() << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
-        auto reply = std::make_unique<TPongMessage>();
-        ctx->Send(ctx->Sender(), std::move(reply));
+        ctx->Send_(ctx->Sender(), TPongMessage{});
 
-        auto command = std::make_unique<TPoisonPill>();
-        ctx->Send(ctx->Self(), std::move(command));
+        ctx->Send_(ctx->Self(), TPoison{});
         std::cerr << "PoisonPill sent\n";
 
-        co_return;
-    }
-
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        // TODO: implement
         co_return;
     }
 };
@@ -121,6 +111,7 @@ void test_ping_pong(void**) {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
+    TAllocator alloc; // TODO: remove
 
     auto pingActorId = actorSystem.Register(std::move(std::make_unique<TPingActor>()));
     auto pongActorId = actorSystem.Register(std::move(std::make_unique<TPongActor>()));
@@ -128,8 +119,8 @@ void test_ping_pong(void**) {
     std::cerr << "PongActor: " << pongActorId.ToString() << "\n";
 
     {
-        auto ping = std::make_unique<TPingMessage>();
-        actorSystem.Send(pingActorId, pongActorId, std::move(ping));
+        auto blob = SerializeNear(TPingMessage{}, alloc);
+        actorSystem.Send(pingActorId, pongActorId, TPingMessage::MessageId, std::move(blob));
     }
 
     actorSystem.Serve();
@@ -144,6 +135,7 @@ void test_ask_respond(void**) {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
+    TAllocator alloc; // TODO: remove
 
     auto askerActorId = actorSystem.Register(std::move(std::make_unique<TAskerActor>()));
     auto responderActorId = actorSystem.Register(std::move(std::make_unique<TResponderActor>()));
@@ -151,8 +143,8 @@ void test_ask_respond(void**) {
     std::cerr << "ResponderActor: " << responderActorId.ToString() << "\n";
 
     {
-        auto ping = std::make_unique<TPingMessage>();
-        actorSystem.Send(responderActorId, askerActorId, std::move(ping));
+        auto blob = SerializeNear(TPingMessage{}, alloc);
+        actorSystem.Send(responderActorId, askerActorId, TPingMessage::MessageId, std::move(blob));
     }
 
     actorSystem.Serve();
@@ -171,23 +163,12 @@ struct TPodMessage {
     double field5;
 };
 
-struct TAllocator {
-    void* Acquire(size_t size) {
-        return ::operator new(size);
-    }
-
-    void Release(void* ptr) {
-        ::operator delete(ptr);
-    }
-};
-
 void test_serialize_pod(void**) {
     TPodMessage msg{1, 2.0, 'c', 4.0, 5.0};
     TAllocator allocator;
 
     // Serialize
     auto blob = NNet::NActors::SerializeNear(std::move(msg), allocator);
-    assert_true(blob.IsPOD);
 
     // Deserialize
     auto& deserialized = NNet::NActors::DeserializeNear<TPodMessage>(blob);
@@ -227,7 +208,6 @@ void test_serialize_non_pod(void**) {
     std::string str = "Hello, World!";
     auto size = str.size();
     NNet::NActors::TBlob blob = NNet::NActors::SerializeNear<std::string>(std::move(str), allocator);
-    assert_true(blob.IsPOD == false);
 
     std::string& deserialized = NNet::NActors::DeserializeNear<std::string>(blob);
     assert_string_equal(deserialized.c_str(), "Hello, World!");

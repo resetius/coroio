@@ -12,7 +12,6 @@ struct TBlob {
     using TRawPtr = std::shared_ptr<void>;
     TRawPtr Data;
     uint32_t Size;
-    bool IsPOD;
     enum class PointerType {
         Near,  // Pointer to the object (for actor communication)
         Far    // Serialized representation (for network transmission)
@@ -34,7 +33,7 @@ SerializePodNear(T&& message, TAllocator& alloc)
         alloc.Release(ptr);
     });
 
-    return TBlob{std::move(rawPtr), size, true, TBlob::PointerType::Near};
+    return TBlob{std::move(rawPtr), size, TBlob::PointerType::Near};
 }
 
 template<typename T, typename TAllocator>
@@ -47,7 +46,7 @@ SerializeNonPodNear(T&& message, TAllocator& alloc)
         delete reinterpret_cast<T*>(ptr);
     });
 
-    return TBlob{std::move(rawPtr), sizeof(T), false, TBlob::PointerType::Near};
+    return TBlob{std::move(rawPtr), sizeof(T), TBlob::PointerType::Near};
 }
 
 template<typename T, typename TAllocator>
@@ -81,7 +80,7 @@ TBlob SerializeFar(TBlob blob, TAllocator& alloc)
         auto rawPtr = TBlob::TRawPtr(data, [](void* ptr) {
             ::operator delete(ptr);
         });
-        return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), false, TBlob::PointerType::Far};
+        return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), TBlob::PointerType::Far};
     }
 }
 

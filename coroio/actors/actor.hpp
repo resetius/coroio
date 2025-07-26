@@ -63,7 +63,7 @@ public:
     TActorId Sender;
     TActorId Recipient;
 
-    TMessage::TPtr Message; // TODO: remove
+    TMessage::TPtr Message = nullptr; // TODO: remove
 
     uint32_t MessageId;
     TBlob Blob;
@@ -80,16 +80,49 @@ public:
     TActorId Self() const {
         return Self_;
     }
-    void Send(TActorId to, TMessage::TPtr message); // TODO: remove
-    void Forward(TActorId to, TMessage::TPtr message); // TODO: remove
     void Send(TActorId to, uint32_t messageId, TBlob blob);
     void Forward(TActorId to, uint32_t messageId, TBlob blob);
+    template<typename T>
+    void Send_(TActorId to, T&& message) {
+        // TODO: remove
+        struct TAllocator {
+            void* Acquire(size_t size) {
+                return ::operator new(size);
+            }
+
+            void Release(void* ptr) {
+                ::operator delete(ptr);
+            }
+        };
+        static TAllocator Alloc;
+        auto blob = SerializeNear(std::forward<T>(message), Alloc);
+        Send(to, T::MessageId, std::move(blob));
+    }
+    template<typename T>
+    void Forward_(TActorId to, T&& message) {
+        // TODO: remove
+        struct TAllocator {
+            void* Acquire(size_t size) {
+                return ::operator new(size);
+            }
+
+            void Release(void* ptr) {
+                ::operator delete(ptr);
+            }
+        };
+        static TAllocator Alloc;
+        auto blob = SerializeNear(std::forward<T>(message), Alloc);
+        Forward(to, T::MessageId, std::move(blob));
+    }
+    void Send(TActorId to, TMessage::TPtr message); // TODO: remove
+    void Forward(TActorId to, TMessage::TPtr message); // TODO: remove
+
     TFuture<void> PipeTo(uint64_t to, TFuture<TMessage::TPtr> future);
     TFuture<void> Sleep(TTime until);
     template<typename Rep, typename Period>
     TFuture<void> Sleep(std::chrono::duration<Rep,Period> duration);
-    template<typename T>
-    TFuture<std::unique_ptr<T>> Ask(TActorId recipient, TMessage::TPtr message);
+    template<typename T, typename TQuestion>
+    TFuture<T> Ask(TActorId recipient, TQuestion&& question);
 
     static void* operator new(size_t size, TActorSystem* actorSystem);
     static void operator delete(void* ptr);
@@ -116,7 +149,7 @@ public:
     IActor() = default;
     virtual ~IActor() = default;
 
-    virtual TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) = 0;
+    virtual TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) { co_return; } // TODO: remove me
     virtual TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
 
