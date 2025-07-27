@@ -140,7 +140,7 @@ TFuture<void> TActorSystem::WaitExecute() {
             auto envelope = std::move(mailbox->Front());
             mailbox->Pop();
             auto messageId = envelope.MessageId;
-            if (messageId == static_cast<TMessageId>(ESystemMessages::PoisonPill)) {
+            if (messageId == static_cast<TMessageId>(ESystemMessages::PoisonPill)) [[unlikely]] {
                 CleanupActors.emplace_back(actorId);
                 break;
             }
@@ -148,7 +148,7 @@ TFuture<void> TActorSystem::WaitExecute() {
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
             auto future = actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx));
-            if (!future.done()) {
+            if (!future.done()) [[unlikely]] {
                 Actors[actorId].Pending = std::move(future.Accept(pendingLambda));
                 break;
             }
