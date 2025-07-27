@@ -1,6 +1,7 @@
 #pragma once
 
 #include "actor.hpp"
+#include "messages_factory.hpp"
 
 #include <coroio/address.hpp>
 #include <coroio/resolver.hpp>
@@ -27,8 +28,9 @@ struct TSendData {
 template<typename TSocket, typename TResolver>
 class TNode : public INode {
 public:
-    TNode(TResolver& resolver, const std::function<TSocket(const TAddress&)>& socketFactory, const THostPort& hostPort)
-        : Resolver(resolver)
+    TNode(TMessagesFactory& factory, TResolver& resolver, const std::function<TSocket(const TAddress&)>& socketFactory, const THostPort& hostPort)
+        : Factory(factory)
+        , Resolver(resolver)
         , SocketFactory(socketFactory)
         , HostPort(hostPort)
     { }
@@ -62,7 +64,6 @@ private:
                 auto envelope = std::move(OutgoingMessages.front());
                 OutgoingMessages.pop();
 
-                // TODO: serialize data
                 TSendData data{
                     .Sender = envelope.Sender,
                     .Recipient = envelope.Recipient,
@@ -71,9 +72,8 @@ private:
                 };
                 co_await TByteWriter(Socket).Write(&data, sizeof(data));
                 if (envelope.Blob.Size > 0) {
-                    // TODO: serialize far by message id
-                    // TODO: serialization factory?
-                    co_await TByteWriter(Socket).Write(envelope.Blob.Data.get(), envelope.Blob.Size);
+                    auto farBlob = Factory.SerializeFar(envelope.MessageId, std::move(envelope.Blob));
+                    co_await TByteWriter(Socket).Write(farBlob.Data.get(), farBlob.Size);
                 }
             }
             Connected = true;
@@ -132,6 +132,7 @@ private:
     TFuture<void> Connector;
     TSocket Socket;
 
+    TMessagesFactory& Factory;
     TResolver& Resolver;
     std::function<TSocket(TAddress&)> SocketFactory;
     THostPort HostPort;
