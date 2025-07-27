@@ -59,6 +59,7 @@
 #include <variant>
 #include <memory>
 #include <functional>
+#include <exception>
 
 #include "promises.hpp"
 #include "poller.hpp"

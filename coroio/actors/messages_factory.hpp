@@ -32,7 +32,11 @@ public:
     }
 
 private:
+#if __cpp_lib_move_only_function >= 202110L
     std::vector<std::move_only_function<TBlob(TBlob&&)>> Handlers_;
+#else
+    std::vector<std::function<TBlob(TBlob&&)>> Handlers_;
+#endif
 };
 
 } // namespace NActors
