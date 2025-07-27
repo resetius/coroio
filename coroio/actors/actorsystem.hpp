@@ -76,20 +76,14 @@ public:
     }
 
     void Send(TActorId sender, TActorId recepient, uint32_t messageId, TBlob blob);
+    template<typename T>
+    void Send(TActorId sender, TActorId recepient, T&& message) {
+        auto blob = SerializeNear(std::forward<T>(message), GetPodAllocator());
+        Send(sender, recepient, T::MessageId, std::move(blob));
+    }
 
     template<typename T, typename TQuestion>
     auto Ask(TActorId recepient, TQuestion&& message) {
-        struct TAllocator {
-            void* Acquire(size_t size) {
-                return ::operator new(size);
-            }
-
-            void Release(void* ptr) {
-                ::operator delete(ptr);
-            }
-        };
-        static TAllocator Alloc; // TODO: remove
-
         class TAskAwaiter
         {
         public:
@@ -120,7 +114,7 @@ public:
         auto state = std::make_shared<TAskState<T>>();
         auto askActor = std::make_unique<TAsk<T>>(state);
         auto actorId = Register(std::move(askActor));
-        Send(actorId, recepient, TQuestion::MessageId, SerializeNear(std::forward<TQuestion>(message), Alloc));
+        Send(actorId, recepient, TQuestion::MessageId, SerializeNear(std::forward<TQuestion>(message), GetPodAllocator()));
         return TAskAwaiter{state};
     }
 
@@ -174,7 +168,6 @@ private:
 
     template<typename TSocket>
     TVoidTask InboundConnection(TSocket socket) {
-        // TODO: deserialize data
         TStructReader<TSendData, TSocket> reader(socket);
 
         try {
@@ -230,6 +223,21 @@ private:
         co_return;
     }
 
+    // TODO: rewrite
+    struct TPodAllocator {
+        void* Acquire(size_t size) {
+            return ::operator new(size);
+        }
+
+        void Release(void* ptr) {
+            ::operator delete(ptr);
+        }
+    };
+
+    TPodAllocator& GetPodAllocator() {
+        return PodAllocator;
+    }
+
     TPollerBase* Poller;
 
     std::queue<uint64_t> ReadyActors;
@@ -241,6 +249,8 @@ private:
     std::stack<uint64_t> FreeActorIds;
 
     TArenaAllocator<TActorContext> ContextAllocator;
+
+    TPodAllocator PodAllocator;
 
     uint64_t NextActorId_ = 1;
     uint64_t NextCookie_ = 1;
@@ -279,6 +289,17 @@ inline TFuture<void> TActorContext::Sleep(std::chrono::duration<Rep,Period> dura
 template<typename T, typename TQuestion>
 inline TFuture<T> TActorContext::Ask(TActorId recipient, TQuestion&& question) {
     co_return co_await ActorSystem->Ask<T>(recipient, std::forward<TQuestion>(question));
+}
+
+template<typename T>
+inline void TActorContext::Send(TActorId to, T&& message) {
+    auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
+    Send(to, T::MessageId, std::move(blob));
+}
+template<typename T>
+inline void TActorContext::Forward(TActorId to, T&& message) {
+    auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
+    Forward(to, T::MessageId, std::move(blob));
 }
 
 inline void* TActorContext::operator new(size_t size, TActorSystem* actorSystem) {

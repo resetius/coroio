@@ -71,37 +71,9 @@ public:
     void Send(TActorId to, uint32_t messageId, TBlob blob);
     void Forward(TActorId to, uint32_t messageId, TBlob blob);
     template<typename T>
-    void Send(TActorId to, T&& message) {
-        // TODO: remove
-        struct TAllocator {
-            void* Acquire(size_t size) {
-                return ::operator new(size);
-            }
-
-            void Release(void* ptr) {
-                ::operator delete(ptr);
-            }
-        };
-        static TAllocator Alloc;
-        auto blob = SerializeNear(std::forward<T>(message), Alloc);
-        Send(to, T::MessageId, std::move(blob));
-    }
+    void Send(TActorId to, T&& message);
     template<typename T>
-    void Forward(TActorId to, T&& message) {
-        // TODO: remove
-        struct TAllocator {
-            void* Acquire(size_t size) {
-                return ::operator new(size);
-            }
-
-            void Release(void* ptr) {
-                ::operator delete(ptr);
-            }
-        };
-        static TAllocator Alloc;
-        auto blob = SerializeNear(std::forward<T>(message), Alloc);
-        Forward(to, T::MessageId, std::move(blob));
-    }
+    void Forward(TActorId to, T&& message);
 
     TFuture<void> Sleep(TTime until);
     template<typename Rep, typename Period>

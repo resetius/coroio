@@ -96,24 +96,12 @@ public:
     std::vector<uint64_t> NodeIds;
 };
 
-// TODO: remove me
-struct TAllocator {
-    void* Acquire(size_t size) {
-        return ::operator new(size);
-    }
-
-    void Release(void* ptr) {
-        ::operator delete(ptr);
-    }
-};
-
 int main(int argc, char** argv) {
     //using Poller = TSelect;
     using Poller = TDefaultPoller;
     TInitializer init;
     TLoop<Poller> loop;
     TResolver<TPollerBase> resolver(loop.Poller());
-    TAllocator alloc; // TODO: remove
 
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<Poller::TSocket, TResolver<TPollerBase>>>>
@@ -194,8 +182,7 @@ int main(int argc, char** argv) {
             auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
             co_await sys.Sleep(std::chrono::milliseconds(delay));
             std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
-            auto pingMessage = SerializePodNear(TPingMessage{}, alloc);
-            sys.Send(from, to, TPingMessage::MessageId, std::move(pingMessage));
+            sys.Send(from, to, TPingMessage{});
             co_return;
         }();
     }

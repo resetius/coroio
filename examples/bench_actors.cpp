@@ -92,17 +92,6 @@ private:
     int LastPercent_ = -1;
 };
 
-// TODO: remove me
-struct TAllocator {
-    void* Acquire(size_t size) {
-        return ::operator new(size);
-    }
-
-    void Release(void* ptr) {
-        ::operator delete(ptr);
-    }
-};
-
 int main(int argc, char** argv) {
     size_t N = 2; // Number of actors
     size_t M = 100; // Messages
@@ -111,7 +100,6 @@ int main(int argc, char** argv) {
     TLoop<TDefaultPoller> loop;
     TActorSystem sys(&loop.Poller());
     std::vector<TActorId> ringIds;
-    TAllocator alloc; // TODO: remove
 
     for (int i = 0; i < argc; ++i) {
         if (std::string(argv[i]) == "--actors") {
@@ -134,8 +122,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < N; ++i) {
             ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, N, M, ringIds));
         }
-        auto msg = SerializePodNear(TNext{}, alloc);
-        sys.Send(ringIds[0], ringIds[0], TNext::MessageId, std::move(msg));
+        sys.Send(ringIds[0], ringIds[0], TNext{});
     } else {
         // Unsupported yet
     }
