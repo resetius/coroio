@@ -9,6 +9,11 @@ namespace NActors {
 
 class TActorSystem;
 
+using TLocalActorId = uint32_t;
+using TNodeId = uint16_t;
+using TCookie = uint16_t;
+using TMessageId = uint32_t;
+
 class TActorId {
 public:
     TActorId() = default;
@@ -17,15 +22,15 @@ public:
         return !((NodeId_ == 0) & (ActorId_ == 0) & (Cookie_ == 0));
     }
 
-    uint64_t NodeId() const {
+    TNodeId NodeId() const {
         return NodeId_;
     }
 
-    uint64_t ActorId() const {
+    TLocalActorId ActorId() const {
         return ActorId_;
     }
 
-    uint64_t Cookie() const {
+    TCookie Cookie() const {
         return Cookie_;
     }
 
@@ -36,16 +41,16 @@ public:
                 + std::to_string(Cookie_);
     }
 
-    TActorId(uint64_t nodeId, uint64_t actorId, uint64_t cookie)
+    TActorId(TNodeId nodeId, TLocalActorId actorId, TCookie cookie)
         : NodeId_(nodeId)
         , ActorId_(actorId)
         , Cookie_(cookie)
     { }
 
 private:
-    uint64_t NodeId_ = 0;
-    uint64_t ActorId_ = 0;
-    uint64_t Cookie_ = 0;
+    TLocalActorId ActorId_ = 0;
+    TNodeId NodeId_ = 0;
+    TCookie Cookie_ = 0;
 };
 
 class TEnvelope
@@ -53,7 +58,7 @@ class TEnvelope
 public:
     TActorId Sender;
     TActorId Recipient;
-    uint32_t MessageId;
+    TMessageId MessageId;
     TBlob Blob;
 };
 
@@ -68,8 +73,8 @@ public:
     TActorId Self() const {
         return Self_;
     }
-    void Send(TActorId to, uint32_t messageId, TBlob blob);
-    void Forward(TActorId to, uint32_t messageId, TBlob blob);
+    void Send(TActorId to, TMessageId messageId, TBlob blob);
+    void Forward(TActorId to, TMessageId messageId, TBlob blob);
     template<typename T>
     void Send(TActorId to, T&& message);
     template<typename T>
@@ -106,7 +111,7 @@ public:
     IActor() = default;
     virtual ~IActor() = default;
 
-    virtual TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
+    virtual TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
 
 } // namespace NActors

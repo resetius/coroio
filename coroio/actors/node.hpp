@@ -17,11 +17,10 @@ public:
     virtual THostPort GetHostPort() const = 0;
 };
 
-// TODO: serialize data
 struct TSendData {
     TActorId Sender;
     TActorId Recipient;
-    uint64_t MessageId;
+    TMessageId MessageId;
     uint32_t Size;
 };
 

@@ -9,19 +9,19 @@ TActorSystem::~TActorSystem() {
     }
 }
 
-void TActorContext::Send(TActorId to, uint32_t messageId, TBlob blob)
+void TActorContext::Send(TActorId to, TMessageId messageId, TBlob blob)
 {
     ActorSystem->Send(Self(), to, messageId, std::move(blob));
 }
 
-void TActorContext::Forward(TActorId to, uint32_t messageId, TBlob blob)
+void TActorContext::Forward(TActorId to, TMessageId messageId, TBlob blob)
 {
     ActorSystem->Send(Sender(), to, messageId, std::move(blob));
 }
 
 TActorId TActorSystem::Register(IActor::TPtr actor) {
     AliveActors++;
-    uint64_t id = 0;
+    TLocalActorId id = 0;
     if (!FreeActorIds.empty()) {
         id = FreeActorIds.top();
         FreeActorIds.pop();
@@ -45,7 +45,7 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     return actorId;
 }
 
-void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId, TBlob blob)
+void TActorSystem::Send(TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
 {
     if (recipient.NodeId() != NodeId_) {
         auto& maybeRemote = Nodes[recipient.NodeId()];
@@ -129,7 +129,7 @@ TFuture<void> TActorSystem::WaitExecute() {
                 auto& mailbox = Actors[actorId].Mailbox;
                 if (!mailbox->Empty()) {
                     Actors[actorId].Flags.IsReady = 1;
-                    ReadyActors.Push(uint64_t{actorId});
+                    ReadyActors.Push(TLocalActorId{actorId});
                 }
 
                 MaybeNotify();
@@ -140,7 +140,7 @@ TFuture<void> TActorSystem::WaitExecute() {
             auto envelope = std::move(mailbox->Front());
             mailbox->Pop();
             auto messageId = envelope.MessageId;
-            if (messageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
+            if (messageId == static_cast<TMessageId>(ESystemMessages::PoisonPill)) {
                 CleanupActors.emplace_back(actorId);
                 break;
             }

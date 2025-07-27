@@ -12,12 +12,12 @@ using namespace NNet;
 using namespace NNet::NActors;
 
 struct TPingMessage {
-    static constexpr uint32_t MessageId = 100;
+    static constexpr TMessageId MessageId = 100;
 };
 
 class TPingActor : public IActor {
 public:
-    TPingActor(bool isFirstNode, int total, int nextNodeId, const std::vector<uint64_t>& nodeIds)
+    TPingActor(bool isFirstNode, int total, int nextNodeId, const std::vector<TNodeId>& nodeIds)
         : IsFirstNode(isFirstNode)
         , TotalMessages(total)
         , RemainingMessages(total)
@@ -25,7 +25,7 @@ public:
         , NodeIds(nodeIds)
     { }
 
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         //std::cerr << "Received message of type " << message->MessageId << " from: " << ctx->Sender().ToString() << ", message: " << Counter++ << "\n";
 
         if (IsFirstNode && RemainingMessages == TotalMessages) {
@@ -90,10 +90,10 @@ public:
     bool IsFirstNode;
     int TotalMessages;
     int RemainingMessages;
-    uint64_t NextNodeId;
+    TNodeId NextNodeId;
     std::chrono::steady_clock::time_point StartTime;
     int LastPercent_ = -1;
-    std::vector<uint64_t> NodeIds;
+    std::vector<TNodeId> NodeIds;
 };
 
 int main(int argc, char** argv) {
@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<Poller::TSocket, TResolver<TPollerBase>>>>
     > nodes;
-    uint64_t myNodeId = 1;
+    TNodeId myNodeId = 1;
     int port = 0;
     int delay = 5000;
 
@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::vector<uint64_t> nodeIds;
+    std::vector<TNodeId> nodeIds;
     TActorSystem sys(&loop.Poller(), myNodeId);
     for (auto&& [nodeId, node] : nodes) {
         if (nodeId != myNodeId) {
@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
     }
     int myIdx = std::distance(nodeIds.begin(), it);
     int nextIdx = (myIdx + 1) % nodeIds.size();
-    uint64_t nextNodeId = nodeIds[nextIdx];
+    TNodeId nextNodeId = nodeIds[nextIdx];
 
     auto pingActor = std::make_unique<TPingActor>(myNodeId == nodeIds.front(), 100000, nextNodeId, nodeIds);
     auto pingActorId = sys.Register(std::move(pingActor));
