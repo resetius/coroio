@@ -36,7 +36,17 @@ public:
     { }
 
     void Send(TEnvelope&& envelope) override {
-        OutgoingMessages.push(std::move(envelope));
+        TSendData data{
+            .Sender = envelope.Sender,
+            .Recipient = envelope.Recipient,
+            .MessageId = envelope.MessageId,
+            .Size = envelope.Blob.Size
+        };
+        OutputBuffer.insert(OutputBuffer.end(), (char*)&data, (char*)&data + sizeof(data));
+        if (envelope.Blob.Size > 0) {
+            auto farBlob = Factory.SerializeFar(envelope.MessageId, std::move(envelope.Blob));
+            OutputBuffer.insert(OutputBuffer.end(), (char*)farBlob.Data.get(), (char*)farBlob.Data.get() + farBlob.Size);
+        }
     }
 
     void StartConnect() override {
@@ -60,25 +70,12 @@ public:
 private:
     TFuture<void> DoDrain() {
         try {
-            while (!OutgoingMessages.empty()) {
-                auto envelope = std::move(OutgoingMessages.front());
-                OutgoingMessages.pop();
-
-                TSendData data{
-                    .Sender = envelope.Sender,
-                    .Recipient = envelope.Recipient,
-                    .MessageId = envelope.MessageId,
-                    .Size = envelope.Blob.Size
-                };
-                co_await TByteWriter(Socket).Write(&data, sizeof(data));
-                if (envelope.Blob.Size > 0) {
-                    auto farBlob = Factory.SerializeFar(envelope.MessageId, std::move(envelope.Blob));
-                    co_await TByteWriter(Socket).Write(farBlob.Data.get(), farBlob.Size);
-                }
+            if (OutputBuffer.empty()) {
+                co_return;
             }
-            Connected = true;
+            co_await TByteWriter(Socket).Write(OutputBuffer.data(), OutputBuffer.size());
+            OutputBuffer.clear();
             co_return;
-
         } catch (const std::exception& ex) {
             std::cerr << "Error during draining: " << ex.what() << "\n";
             Connect();
@@ -136,7 +133,7 @@ private:
     TResolver& Resolver;
     std::function<TSocket(TAddress&)> SocketFactory;
     THostPort HostPort;
-    std::queue<TEnvelope> OutgoingMessages;
+    std::vector<char> OutputBuffer;
 };
 
 } // namespace NActors
