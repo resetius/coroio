@@ -6,6 +6,8 @@ set(SOURCES
     node.cpp
     messages.hpp
     messages.cpp
+    queue.hpp
+    queue.cpp
 )
 
 add_library(coroio_actors ${SOURCES})
