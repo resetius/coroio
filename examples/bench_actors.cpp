@@ -33,7 +33,7 @@ public:
             co_return;
         }
 
-        ctx->Send_(Ring_[(Idx_ + 1)%N_], TNext{});
+        ctx->Send(Ring_[(Idx_ + 1)%N_], TNext{});
 
         if (Idx_ == 0) {
             --Remain_;
@@ -55,7 +55,7 @@ private:
                     << (double)(N_ * M_) / secs
                     << " msg/s\n";
         for (auto& idx : Ring_) {
-            ctx->Send_(idx, TPoison{});
+            ctx->Send(idx, TPoison{});
         }
     }
 

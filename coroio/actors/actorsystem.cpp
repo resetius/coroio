@@ -9,15 +9,6 @@ TActorSystem::~TActorSystem() {
     }
 }
 
-void TActorContext::Send(TActorId to, TMessage::TPtr message)
-{
-    ActorSystem->Send(Self(), to, std::move(message));
-}
-
-void TActorContext::Forward(TActorId to, TMessage::TPtr message) {
-    ActorSystem->Send(Sender(), to, std::move(message));
-}
-
 void TActorContext::Send(TActorId to, uint32_t messageId, TBlob blob)
 {
     ActorSystem->Send(Self(), to, messageId, std::move(blob));
@@ -52,51 +43,6 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     Actors[id] = std::move(state);
 
     return actorId;
-}
-
-// TODO: remove
-void TActorSystem::Send(TActorId sender, TActorId recipient, TMessage::TPtr message) {
-    if (recipient.NodeId() != NodeId_) {
-        auto& maybeRemote = Nodes[recipient.NodeId()];
-        if (!maybeRemote.Node) {
-            std::cerr << "Cannot send message to actor on different node: " << recipient.ToString() << "\n";
-            return;
-        }
-        maybeRemote.Node->Send(TEnvelope{
-            .Sender = sender,
-            .Recipient = recipient,
-            .Message = std::move(message)
-        });
-        if (maybeRemote.Pending) {
-            maybeRemote.Pending.resume();
-        }
-        return;
-    }
-    auto to = recipient.ActorId();
-    if (to == 0 || to >= Actors.size()) {
-        std::cerr << "Cannot send message to actor with id: " << to << "\n";
-        return;
-    }
-    auto& state = Actors[to];
-    if (recipient.Cookie() != state.Cookie) {
-        std::cerr << "Message cookie mismatch for actor with id: " << to << "\n";
-        return;
-    }
-    auto& mailbox = state.Mailbox;
-    if (!mailbox) {
-        return;
-    }
-    mailbox->push(TEnvelope{
-        .Sender = sender,
-        .Recipient = recipient,
-        .Message = std::move(message)
-    });
-    if (!state.Flags.IsReady && !state.Pending.raw()) {
-        state.Flags.IsReady = 1;
-        ReadyActors.push({to});
-    }
-
-    MaybeNotify();
 }
 
 void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId, TBlob blob)
@@ -192,9 +138,7 @@ TFuture<void> TActorSystem::WaitExecute() {
 
         while (!mailbox->empty()) {
             auto envelope = std::move(mailbox->front()); mailbox->pop();
-            auto messageId = envelope.Message
-                ? envelope.Message->MessageId
-                : envelope.MessageId;
+            auto messageId = envelope.MessageId;
             if (messageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
                 CleanupActors.emplace_back(actorId);
                 break;
@@ -202,9 +146,7 @@ TFuture<void> TActorSystem::WaitExecute() {
             auto ctx = std::unique_ptr<TActorContext>(
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
-            auto future = envelope.Message
-                ? actor->Receive(std::move(envelope.Message), std::move(ctx)).Accept(pendingLambda) // TODO: remove
-                : actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx)).Accept(pendingLambda);
+            auto future = actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx)).Accept(pendingLambda);
             if (!future.done()) {
                 Actors[actorId].Pending = std::move(future);
                 break;

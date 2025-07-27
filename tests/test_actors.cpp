@@ -42,9 +42,9 @@ public:
     TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
-        ctx->Send_(ctx->Sender(), TPingMessage{});
+        ctx->Send(ctx->Sender(), TPingMessage{});
         if (counter == 4) {
-            ctx->Send_(ctx->Self(), TPoison{});
+            ctx->Send(ctx->Self(), TPoison{});
         }
         co_return;
     }
@@ -57,9 +57,9 @@ class TPongActor : public IActor {
 public:
     TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Ping message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
-        ctx->Send_(ctx->Sender(), TPongMessage{});
+        ctx->Send(ctx->Sender(), TPongMessage{});
         if (counter == 5) {
-            ctx->Send_(ctx->Self(), TPoison{});
+            ctx->Send(ctx->Self(), TPoison{});
         }
         co_return;
     }
@@ -68,26 +68,13 @@ public:
     int counter = 0;
 };
 
-struct TPingMessageOld : public TMessage {
-    TPingMessageOld() {
-        MessageId = 10;
-    }
-};
-
-struct TPongMessageOld : public TMessage {
-    TPongMessageOld() {
-        MessageId = 20;
-    }
-};
-
-
 class TAskerActor : public IActor {
     TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Asker Received message from: " << ctx->Sender().ToString() << "\n";
         auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), TPingMessage{});
         std::cerr << "Reply received from " << ctx->Sender().ToString() << ", message: " << result.MessageId << "\n";
 
-        ctx->Send_(ctx->Self(), TPoison{});
+        ctx->Send(ctx->Self(), TPoison{});
         std::cerr << "PoisonPill sent\n";
 
         co_return;
@@ -98,9 +85,9 @@ class TResponderActor : public IActor {
     TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Responder Received message from: " << ctx->Sender().ToString() << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
-        ctx->Send_(ctx->Sender(), TPongMessage{});
+        ctx->Send(ctx->Sender(), TPongMessage{});
 
-        ctx->Send_(ctx->Self(), TPoison{});
+        ctx->Send(ctx->Self(), TPoison{});
         std::cerr << "PoisonPill sent\n";
 
         co_return;

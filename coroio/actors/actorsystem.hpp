@@ -16,14 +16,6 @@ enum class ESystemMessages : uint64_t {
     PoisonPill = 1
 };
 
-class TPoisonPill : public TMessage
-{
-public:
-    TPoisonPill() {
-        MessageId = static_cast<uint64_t>(ESystemMessages::PoisonPill);
-    }
-};
-
 struct TPoison {
     static constexpr uint32_t MessageId = static_cast<uint32_t>(ESystemMessages::PoisonPill);
 };
@@ -74,8 +66,6 @@ public:
 
     TActorId Register(IActor::TPtr actor);
 
-    void Schedule(TMessage::TPtr message, TTime when);
-
     auto Sleep(TTime until) {
         return Poller->Sleep(until);
     }
@@ -85,7 +75,6 @@ public:
         return Poller->Sleep(duration);
     }
 
-    void Send(TActorId sender, TActorId recepient, TMessage::TPtr message);
     void Send(TActorId sender, TActorId recepient, uint32_t messageId, TBlob blob);
 
     template<typename T, typename TQuestion>
@@ -195,9 +184,16 @@ private:
                     std::cerr << "Received message for different node: " << data.Recipient.ToString() << "\n";
                     continue;
                 }
-                auto message = std::make_unique<TMessage>();
-                message->MessageId = data.MessageId;
-                Send(data.Sender, data.Recipient, std::move(message));
+                TBlob blob{};
+                if (data.Size > 0) {
+                    blob.Size = data.Size;
+                    blob.Type = TBlob::PointerType::Far;
+                    blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+                        ::operator delete(ptr);
+                    });
+                    co_await TByteReader(socket).Read(blob.Data.get(), blob.Size);
+                }
+                Send(data.Sender, data.Recipient, data.MessageId, std::move(blob));
             }
         } catch (const std::exception& e) {
             std::cerr << "Error in InboundConnection: " << e.what() << "\n";
@@ -267,8 +263,7 @@ TFuture<void> TAsk<T>::Receive(uint32_t messageId, TBlob blob, TActorContext::TP
     State->MessageId = messageId;
     State->Blob = std::move(blob);
     State->Handle.resume();
-    auto command = std::make_unique<TPoisonPill>();
-    ctx->Send(ctx->Self(), std::move(command));
+    ctx->Send(ctx->Self(), TPoison{});
     co_return;
 }
 
