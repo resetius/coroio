@@ -11,18 +11,8 @@
 using namespace NNet;
 using namespace NNet::NActors;
 
-class TPingMessage : public TMessage {
-public:
-    TPingMessage() {
-        MessageId = 10;
-    }
-};
-
-class TPongMessage : public TMessage {
-public:
-    TPongMessage() {
-        MessageId = 20;
-    }
+struct TPingMessage {
+    static constexpr uint32_t MessageId = 100;
 };
 
 class TPingActor : public IActor {
@@ -35,7 +25,7 @@ public:
         , NodeIds(nodeIds)
     { }
 
-    TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) override {
+    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
         //std::cerr << "Received message of type " << message->MessageId << " from: " << ctx->Sender().ToString() << ", message: " << Counter++ << "\n";
 
         if (IsFirstNode && RemainingMessages == TotalMessages) {
@@ -48,8 +38,7 @@ public:
         }
 
         auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
-        auto next = std::make_unique<TPingMessage>();
-        ctx->Send(nextActorId, std::move(next));
+        ctx->Send(nextActorId, TPingMessage{});
 
         // co_await ctx->Sleep(std::chrono::milliseconds(1000));
         if (IsFirstNode) {
@@ -64,18 +53,12 @@ public:
                             << " msg/s\n";
 
                 for (auto nodeId : NodeIds) {
-                    auto poison = std::make_unique<TPoisonPill>();
                     auto actorId = TActorId{nodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
                     std::cerr << "Sending poison pill to actor: " << actorId << "\n";
-                    ctx->Send(actorId, std::move(poison));
+                    ctx->Send(actorId, TPoison{});
                 }
             }
         }
-        co_return;
-    }
-
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        // TODO: implement
         co_return;
     }
 
@@ -113,12 +96,24 @@ public:
     std::vector<uint64_t> NodeIds;
 };
 
+// TODO: remove me
+struct TAllocator {
+    void* Acquire(size_t size) {
+        return ::operator new(size);
+    }
+
+    void Release(void* ptr) {
+        ::operator delete(ptr);
+    }
+};
+
 int main(int argc, char** argv) {
     //using Poller = TSelect;
     using Poller = TDefaultPoller;
     TInitializer init;
     TLoop<Poller> loop;
     TResolver<TPollerBase> resolver(loop.Poller());
+    TAllocator alloc; // TODO: remove
 
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<Poller::TSocket, TResolver<TPollerBase>>>>
@@ -199,8 +194,8 @@ int main(int argc, char** argv) {
             auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
             co_await sys.Sleep(std::chrono::milliseconds(delay));
             std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
-            auto pingMessage = std::make_unique<TPingMessage>();
-            sys.Send(from, to, std::move(pingMessage));
+            auto pingMessage = SerializePodNear(TPingMessage{}, alloc);
+            sys.Send(from, to, TPingMessage::MessageId, std::move(pingMessage));
             co_return;
         }();
     }

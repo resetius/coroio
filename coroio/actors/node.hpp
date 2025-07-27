@@ -22,6 +22,7 @@ struct TSendData {
     TActorId Sender;
     TActorId Recipient;
     uint64_t MessageId;
+    uint32_t Size;
 };
 
 template<typename TSocket, typename TResolver>
@@ -66,9 +67,15 @@ private:
                 TSendData data{
                     .Sender = envelope.Sender,
                     .Recipient = envelope.Recipient,
-                    .MessageId = envelope.Message->MessageId
+                    .MessageId = envelope.MessageId,
+                    .Size = envelope.Blob.Size
                 };
                 co_await TByteWriter(Socket).Write(&data, sizeof(data));
+                if (envelope.Blob.Size > 0) {
+                    // TODO: serialize far by message id
+                    // TODO: serialization factory?
+                    co_await TByteWriter(Socket).Write(envelope.Blob.Data.get(), envelope.Blob.Size);
+                }
             }
             Connected = true;
             co_return;

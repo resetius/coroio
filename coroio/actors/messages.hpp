@@ -10,8 +10,8 @@ namespace NActors {
 
 struct TBlob {
     using TRawPtr = std::shared_ptr<void>;
-    TRawPtr Data;
-    uint32_t Size;
+    TRawPtr Data = nullptr;
+    uint32_t Size = 0;
     enum class PointerType {
         Near,  // Pointer to the object (for actor communication)
         Far    // Serialized representation (for network transmission)

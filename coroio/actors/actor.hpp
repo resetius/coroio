@@ -48,23 +48,11 @@ private:
     uint64_t Cookie_ = 0;
 };
 
-// TODO: remove
-class TMessage
-{
-public:
-    using TPtr = std::unique_ptr<TMessage>;
-
-    uint64_t MessageId;
-};
-
 class TEnvelope
 {
 public:
     TActorId Sender;
     TActorId Recipient;
-
-    TMessage::TPtr Message = nullptr; // TODO: remove
-
     uint32_t MessageId;
     TBlob Blob;
 };
@@ -83,7 +71,7 @@ public:
     void Send(TActorId to, uint32_t messageId, TBlob blob);
     void Forward(TActorId to, uint32_t messageId, TBlob blob);
     template<typename T>
-    void Send_(TActorId to, T&& message) {
+    void Send(TActorId to, T&& message) {
         // TODO: remove
         struct TAllocator {
             void* Acquire(size_t size) {
@@ -99,7 +87,7 @@ public:
         Send(to, T::MessageId, std::move(blob));
     }
     template<typename T>
-    void Forward_(TActorId to, T&& message) {
+    void Forward(TActorId to, T&& message) {
         // TODO: remove
         struct TAllocator {
             void* Acquire(size_t size) {
@@ -114,10 +102,7 @@ public:
         auto blob = SerializeNear(std::forward<T>(message), Alloc);
         Forward(to, T::MessageId, std::move(blob));
     }
-    void Send(TActorId to, TMessage::TPtr message); // TODO: remove
-    void Forward(TActorId to, TMessage::TPtr message); // TODO: remove
 
-    TFuture<void> PipeTo(uint64_t to, TFuture<TMessage::TPtr> future);
     TFuture<void> Sleep(TTime until);
     template<typename Rep, typename Period>
     TFuture<void> Sleep(std::chrono::duration<Rep,Period> duration);
@@ -149,7 +134,6 @@ public:
     IActor() = default;
     virtual ~IActor() = default;
 
-    virtual TFuture<void> Receive(TMessage::TPtr message, TActorContext::TPtr ctx) { co_return; } // TODO: remove me
     virtual TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
 
