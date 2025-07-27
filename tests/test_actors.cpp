@@ -11,6 +11,7 @@
 #include <coroio/all.hpp>
 #include <coroio/actors/actorsystem.hpp>
 #include <coroio/actors/messages.hpp>
+#include <coroio/actors/messages_factory.hpp>
 #include <coroio/actors/queue.hpp>
 
 extern "C" {
@@ -149,7 +150,7 @@ void test_serialize_zero_size(void**) {
     auto deserialized = DeserializeNear<TEmptyMessage>(blob);
     assert_true(deserialized == TEmptyMessage{});
 
-    auto farBlob = SerializeFar<TEmptyMessage>(blob, allocator);
+    auto farBlob = SerializeFar<TEmptyMessage>(blob);
     assert_true(farBlob.Data.get() == blob.Data.get());
     assert_true(farBlob.Size == 0);
 
@@ -158,6 +159,7 @@ void test_serialize_zero_size(void**) {
 }
 
 struct TPodMessage {
+    static constexpr TMessageId MessageId = 42;
     int field1;
     double field2;
     char field3;
@@ -171,6 +173,7 @@ void test_serialize_pod(void**) {
 
     // Serialize
     auto blob = NNet::NActors::SerializeNear(std::move(msg), allocator);
+    assert_true(blob.Size == sizeof(TPodMessage));
 
     // Deserialize
     auto& deserialized = NNet::NActors::DeserializeNear<TPodMessage>(blob);
@@ -180,16 +183,21 @@ void test_serialize_pod(void**) {
     assert_true(deserialized.field4 == 4.0);
     assert_true(deserialized.field5 == 5.0);
 
-    auto farBlob = NNet::NActors::SerializeFar<TPodMessage>(blob, allocator);
+    auto farBlob = SerializeFar<TPodMessage>(blob);
     assert_true(farBlob.Data.get() == blob.Data.get());
 
-    auto& deserializedFar = NNet::NActors::DeserializeFar<TPodMessage>(farBlob);
+    auto& deserializedFar = DeserializeFar<TPodMessage>(farBlob);
     assert_true(deserializedFar.field1 == 1);
     assert_true(deserializedFar.field2 == 2.0);
     assert_true(deserializedFar.field3 == 'c');
     assert_true(deserializedFar.field4 == 4.0);
     assert_true(deserializedFar.field5 == 5.0);
 }
+
+struct TWrappedString {
+    static constexpr TMessageId MessageId = 43;
+    std::string Value;
+};
 
 namespace NNet::NActors {
 
@@ -203,23 +211,66 @@ void DeserializeFromStream<std::string>(std::string& obj, std::istringstream& is
     obj = iss.str();
 }
 
+template<>
+void SerializeToStream<TWrappedString>(const TWrappedString& obj, std::ostringstream& oss) {
+    oss << obj.Value;
+}
+
+template<>
+void DeserializeFromStream<TWrappedString>(TWrappedString& obj, std::istringstream& iss) {
+    obj.Value = iss.str();
+}
+
 } // namespace NNet::NActors
 
 void test_serialize_non_pod(void**) {
     TAllocator allocator;
     std::string str = "Hello, World!";
     auto size = str.size();
-    NNet::NActors::TBlob blob = NNet::NActors::SerializeNear<std::string>(std::move(str), allocator);
+    auto blob = SerializeNear<std::string>(std::move(str), allocator);
 
-    std::string& deserialized = NNet::NActors::DeserializeNear<std::string>(blob);
+    std::string& deserialized = DeserializeNear<std::string>(blob);
     assert_string_equal(deserialized.c_str(), "Hello, World!");
 
-    auto farBlob = NNet::NActors::SerializeFar<std::string>(blob, allocator);
+    auto farBlob = SerializeFar<std::string>(blob);
     assert_true(farBlob.Data.get() != blob.Data.get());
     assert_true(farBlob.Size == size);
 
-    std::string deserializedFar = NNet::NActors::DeserializeFar<std::string>(farBlob);
+    std::string deserializedFar = DeserializeFar<std::string>(farBlob);
     assert_string_equal(deserializedFar.c_str(), "Hello, World!");
+}
+
+void test_serialize_messages_factory(void**) {
+    TMessagesFactory factory;
+    TAllocator alloc;
+
+    factory.RegisterSerializer<TPodMessage>();
+
+    auto blob = SerializeNear(TPodMessage{1, 2.0, 'c', 4.0, 5.0}, alloc);
+    auto blobSize = blob.Size;
+    auto farBlob = factory.SerializeFar(TPodMessage::MessageId, std::move(blob));
+    assert_true(farBlob.Size == blobSize);
+
+    auto& mes = DeserializeFar<TPodMessage>(farBlob);
+    assert_true(mes.field1 == 1);
+    assert_true(mes.field2 == 2.0);
+    assert_true(mes.field3 == 'c');
+    assert_true(mes.field4 == 4.0);
+    assert_true(mes.field5 == 5.0);
+}
+
+void test_serialize_messages_factory_non_pod(void**) {
+    TMessagesFactory factory;
+    TAllocator alloc;
+
+    factory.RegisterSerializer<TWrappedString>();
+
+    auto blob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
+    auto blobSize = blob.Size;
+    auto farBlob = factory.SerializeFar(TWrappedString::MessageId, std::move(blob));
+
+    auto mes = DeserializeFar<TWrappedString>(farBlob);
+    assert_string_equal(mes.Value.c_str(), "Hello, World!");
 }
 
 void test_unbounded_vector_queue(void**) {
@@ -267,6 +318,8 @@ int main() {
         cmocka_unit_test(test_serialize_zero_size),
         cmocka_unit_test(test_serialize_pod),
         cmocka_unit_test(test_serialize_non_pod),
+        cmocka_unit_test(test_serialize_messages_factory),
+        cmocka_unit_test(test_serialize_messages_factory_non_pod),
         cmocka_unit_test(test_unbounded_vector_queue)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);

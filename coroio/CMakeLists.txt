@@ -44,4 +44,4 @@ else()
     target_compile_options(coroio PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-target_compile_features(coroio PUBLIC cxx_std_20)
+target_compile_features(coroio PUBLIC cxx_std_23)

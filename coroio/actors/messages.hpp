@@ -92,8 +92,8 @@ void SerializeToStream(const T& obj, std::ostringstream& oss)
     static_assert(sizeof(T) == 0, "Serialization not implemented for this type");
 }
 
-template<typename T, typename TAllocator>
-TBlob SerializeFar(TBlob blob, TAllocator& alloc)
+template<typename T>
+TBlob SerializeFar(TBlob blob)
 {
     if constexpr (is_pod_v<T>) {
         blob.Type = TBlob::PointerType::Far;

@@ -102,6 +102,7 @@ int main(int argc, char** argv) {
     TInitializer init;
     TLoop<Poller> loop;
     TResolver<TPollerBase> resolver(loop.Poller());
+    TMessagesFactory factory;
 
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<Poller::TSocket, TResolver<TPollerBase>>>>
@@ -121,6 +122,7 @@ int main(int argc, char** argv) {
                 int port = std::stoi(hostPortNode.substr(colon1 + 1, colon2 - colon1 - 1));
                 int nodeId = std::stoi(hostPortNode.substr(colon2 + 1));
                 nodes.emplace_back(nodeId, std::make_unique<TNode<Poller::TSocket, TResolver<TPollerBase>>>(
+                    factory,
                     resolver,
                     [&](const TAddress& addr) {
                         return Poller::TSocket(loop.Poller(), addr.Domain());
