@@ -49,7 +49,6 @@ public:
         co_return;
     }
 
-    TAllocator alloc; // TODO: remove
     int counter = 0;
 };
 
@@ -64,7 +63,6 @@ public:
         co_return;
     }
 
-    TAllocator alloc; // TODO: remove
     int counter = 0;
 };
 
@@ -98,17 +96,13 @@ void test_ping_pong(void**) {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
-    TAllocator alloc; // TODO: remove
 
     auto pingActorId = actorSystem.Register(std::move(std::make_unique<TPingActor>()));
     auto pongActorId = actorSystem.Register(std::move(std::make_unique<TPongActor>()));
     std::cerr << "PingActor: " << pingActorId.ToString() << "\n";
     std::cerr << "PongActor: " << pongActorId.ToString() << "\n";
 
-    {
-        auto blob = SerializeNear(TPingMessage{}, alloc);
-        actorSystem.Send(pingActorId, pongActorId, TPingMessage::MessageId, std::move(blob));
-    }
+    actorSystem.Send(pingActorId, pongActorId, TPingMessage{});
 
     actorSystem.Serve();
     actorSystem.MaybeNotify();
@@ -122,17 +116,13 @@ void test_ask_respond(void**) {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
-    TAllocator alloc; // TODO: remove
 
     auto askerActorId = actorSystem.Register(std::move(std::make_unique<TAskerActor>()));
     auto responderActorId = actorSystem.Register(std::move(std::make_unique<TResponderActor>()));
     std::cerr << "AskerActor: " << askerActorId.ToString() << "\n";
     std::cerr << "ResponderActor: " << responderActorId.ToString() << "\n";
 
-    {
-        auto blob = SerializeNear(TPingMessage{}, alloc);
-        actorSystem.Send(responderActorId, askerActorId, TPingMessage::MessageId, std::move(blob));
-    }
+    actorSystem.Send(responderActorId, askerActorId, TPingMessage{});
 
     actorSystem.Serve();
     actorSystem.MaybeNotify();
