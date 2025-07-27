@@ -147,9 +147,9 @@ TFuture<void> TActorSystem::WaitExecute() {
             auto ctx = std::unique_ptr<TActorContext>(
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
-            auto future = actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx)).Accept(pendingLambda);
+            auto future = actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx));
             if (!future.done()) {
-                Actors[actorId].Pending = std::move(future);
+                Actors[actorId].Pending = std::move(future.Accept(pendingLambda));
                 break;
             }
         }
