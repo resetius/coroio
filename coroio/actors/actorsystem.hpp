@@ -12,12 +12,12 @@
 namespace NNet {
 namespace NActors {
 
-enum class ESystemMessages : uint64_t {
+enum class ESystemMessages : TMessageId {
     PoisonPill = 1
 };
 
 struct TPoison {
-    static constexpr uint32_t MessageId = static_cast<uint32_t>(ESystemMessages::PoisonPill);
+    static constexpr TMessageId MessageId = static_cast<TMessageId>(ESystemMessages::PoisonPill);
 };
 
 template<typename T>
@@ -25,19 +25,19 @@ class TAskState
 {
 public:
     THandle Handle = nullptr;
-    uint32_t MessageId = 0;
+    TMessageId MessageId = 0;
     TBlob Blob;
 };
 
 struct TActorInternalState
 {
-    uint64_t Cookie = 0;
+    TCookie Cookie = 0;
     std::unique_ptr<TUnboundedVectorQueue<TEnvelope>> Mailbox;
     TFuture<void> Pending;
     IActor::TPtr Actor;
 
     struct TFlags {
-        uint64_t IsReady : 1 = 0;
+        uint32_t IsReady : 1 = 0;
     } Flags = {};
 };
 
@@ -48,7 +48,7 @@ public:
         : State(state)
     { }
 
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override;
+    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
 
 private:
     std::shared_ptr<TAskState<T>> State;
@@ -75,7 +75,7 @@ public:
         return Poller->Sleep(duration);
     }
 
-    void Send(TActorId sender, TActorId recepient, uint32_t messageId, TBlob blob);
+    void Send(TActorId sender, TActorId recepient, TMessageId messageId, TBlob blob);
     template<typename T>
     void Send(TActorId sender, TActorId recepient, T&& message) {
         auto blob = SerializeNear(std::forward<T>(message), GetPodAllocator());
@@ -193,7 +193,7 @@ private:
         }
     }
 
-    void ShutdownActor(uint64_t actorId) {
+    void ShutdownActor(TLocalActorId actorId) {
         if (actorId < Actors.size()) {
             AliveActors--;
             Actors[actorId] = {};
@@ -240,21 +240,21 @@ private:
 
     TPollerBase* Poller;
 
-    TUnboundedVectorQueue<uint64_t> ReadyActors;
+    TUnboundedVectorQueue<TLocalActorId> ReadyActors;
     std::vector<TActorInternalState> Actors;
     int AliveActors = 0;
 
     std::vector<TFuture<void>> CleanupMessages;
-    std::vector<uint64_t> CleanupActors;
-    std::stack<uint64_t, std::vector<uint64_t>> FreeActorIds;
+    std::vector<TLocalActorId> CleanupActors;
+    std::stack<TLocalActorId, std::vector<TLocalActorId>> FreeActorIds;
 
     TArenaAllocator<TActorContext> ContextAllocator;
 
     TPodAllocator PodAllocator;
 
-    uint64_t NextActorId_ = 1;
-    uint64_t NextCookie_ = 1;
-    uint64_t NodeId_ = 1;
+    TLocalActorId NextActorId_ = 1;
+    TCookie NextCookie_ = 1;
+    TNodeId NodeId_ = 1;
     THandle ExecuteAwait_{};
 
     struct TNodeState {
@@ -269,7 +269,7 @@ private:
 };
 
 template<typename T>
-TFuture<void> TAsk<T>::Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) {
+TFuture<void> TAsk<T>::Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
     State->MessageId = messageId;
     State->Blob = std::move(blob);
     State->Handle.resume();

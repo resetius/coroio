@@ -11,7 +11,7 @@ using namespace NNet;
 using namespace NNet::NActors;
 
 struct TNext {
-    static constexpr uint32_t MessageId = 100;
+    static constexpr TMessageId MessageId = 100;
 };
 
 class TRingActor : public IActor {
@@ -24,7 +24,7 @@ public:
       , Ring_(r)
     { }
 
-    TFuture<void> Receive(uint32_t messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         if (Idx_ == 0 && Remain_ == M_) [[unlikely]] {
             StartTime_ = std::chrono::steady_clock::now();
         }
