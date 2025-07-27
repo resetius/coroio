@@ -33,7 +33,7 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
 
     TActorInternalState state = TActorInternalState {
         .Cookie = cookie,
-        .Mailbox = std::make_unique<std::queue<TEnvelope>>(),
+        .Mailbox = std::make_unique<TUnboundedVectorQueue<TEnvelope>>(),
         .Actor = std::move(actor)
     };
 
@@ -78,7 +78,7 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId,
     if (!mailbox) {
         return;
     }
-    mailbox->push(TEnvelope{
+    mailbox->Push(TEnvelope{
         .Sender = sender,
         .Recipient = recipient,
         .MessageId = messageId,
@@ -86,20 +86,20 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, uint32_t messageId,
     });
     if (!state.Flags.IsReady && !state.Pending.raw()) {
         state.Flags.IsReady = 1;
-        ReadyActors.push({to});
+        ReadyActors.Push(uint64_t{to});
     }
 
     MaybeNotify();
 }
 
 TFuture<void> TActorSystem::WaitExecute() {
-    if (ReadyActors.empty()) {
+    if (ReadyActors.Empty()) {
         co_await SuspendExecution();
     }
 
-    while (!ReadyActors.empty()) {
-        auto actorId = ReadyActors.front();
-        ReadyActors.pop();
+    while (!ReadyActors.Empty()) {
+        auto actorId = ReadyActors.Front();
+        ReadyActors.Pop();
         if (actorId >= Actors.size()) {
             std::cerr << "Actor with id: " << actorId << " does not exist\n";
             continue;
@@ -127,17 +127,18 @@ TFuture<void> TActorSystem::WaitExecute() {
 
                 // if Sent to actorId was called, we need to check if it has any messages in mailbox
                 auto& mailbox = Actors[actorId].Mailbox;
-                if (!mailbox->empty()) {
+                if (!mailbox->Empty()) {
                     Actors[actorId].Flags.IsReady = 1;
-                    ReadyActors.push({actorId});
+                    ReadyActors.Push(uint64_t{actorId});
                 }
 
                 MaybeNotify();
             }
         };
 
-        while (!mailbox->empty()) {
-            auto envelope = std::move(mailbox->front()); mailbox->pop();
+        while (!mailbox->Empty()) {
+            auto envelope = std::move(mailbox->Front());
+            mailbox->Pop();
             auto messageId = envelope.MessageId;
             if (messageId == static_cast<uint64_t>(ESystemMessages::PoisonPill)) {
                 CleanupActors.emplace_back(actorId);
@@ -153,7 +154,7 @@ TFuture<void> TActorSystem::WaitExecute() {
             }
         }
 
-        if (mailbox->empty()) {
+        if (mailbox->Empty()) {
             Actors[actorId].Flags.IsReady = 0;
         }
     }

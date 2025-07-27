@@ -2,11 +2,11 @@
 
 #include "actor.hpp"
 #include "node.hpp"
+#include "queue.hpp"
 
 #include <coroio/arena.hpp>
 #include <coroio/sockutils.hpp>
 
-#include <queue>
 #include <stack>
 
 namespace NNet {
@@ -32,7 +32,7 @@ public:
 struct TActorInternalState
 {
     uint64_t Cookie = 0;
-    std::unique_ptr<std::queue<TEnvelope>> Mailbox;
+    std::unique_ptr<TUnboundedVectorQueue<TEnvelope>> Mailbox;
     TFuture<void> Pending;
     IActor::TPtr Actor;
 
@@ -240,13 +240,13 @@ private:
 
     TPollerBase* Poller;
 
-    std::queue<uint64_t> ReadyActors;
+    TUnboundedVectorQueue<uint64_t> ReadyActors;
     std::vector<TActorInternalState> Actors;
     int AliveActors = 0;
 
     std::vector<TFuture<void>> CleanupMessages;
     std::vector<uint64_t> CleanupActors;
-    std::stack<uint64_t> FreeActorIds;
+    std::stack<uint64_t, std::vector<uint64_t>> FreeActorIds;
 
     TArenaAllocator<TActorContext> ContextAllocator;
 

@@ -65,7 +65,7 @@ private:
     }
 
     std::vector<char*> Pools_;
-    std::stack<void*> FreePages_;
+    std::stack<void*, std::vector<void*>> FreePages_;
     int AllocatedObjects_ = 0;
 };
 

@@ -11,6 +11,7 @@
 #include <coroio/all.hpp>
 #include <coroio/actors/actorsystem.hpp>
 #include <coroio/actors/messages.hpp>
+#include <coroio/actors/queue.hpp>
 
 extern "C" {
 #include <cmocka.h>
@@ -221,6 +222,44 @@ void test_serialize_non_pod(void**) {
     assert_string_equal(deserializedFar.c_str(), "Hello, World!");
 }
 
+void test_unbounded_vector_queue(void**) {
+    NNet::NActors::TUnboundedVectorQueue<int> queue(8);
+
+    for (int i = 0; i < 10; ++i) {
+        queue.Push(int(i));
+    }
+
+    assert_true(queue.Size() == 10);
+    assert_false(queue.Empty());
+
+    assert_true(queue.Front() == 0);
+
+    for (int i = 0; i < 10; ++i) {
+        assert_true(queue.Front() == i);
+        queue.Pop();
+    }
+
+    assert_true(queue.Size() == 0);
+    assert_true(queue.Empty());
+
+
+    for (int j = 5; j < 15; ++j) {
+        for (int i = 0; i < j; ++i) {
+            queue.Push(int(i));
+        }
+
+        assert_true(queue.Size() == j);
+
+        for (int i = 0; i < j; ++i) {
+            assert_true(queue.Front() == i);
+            queue.Pop();
+        }
+
+        assert_true(queue.Size() == 0);
+        assert_true(queue.Empty());
+    }
+}
+
 int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
@@ -228,6 +267,7 @@ int main() {
         cmocka_unit_test(test_serialize_zero_size),
         cmocka_unit_test(test_serialize_pod),
         cmocka_unit_test(test_serialize_non_pod),
+        cmocka_unit_test(test_unbounded_vector_queue)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
