@@ -70,11 +70,11 @@ public:
 private:
     TFuture<void> DoDrain() {
         try {
-            if (OutputBuffer.empty()) {
-                co_return;
+            while (!OutputBuffer.empty()) {
+                SendBuffer.swap(OutputBuffer);
+                co_await TByteWriter(Socket).Write(SendBuffer.data(), SendBuffer.size());
+                SendBuffer.clear();
             }
-            co_await TByteWriter(Socket).Write(OutputBuffer.data(), OutputBuffer.size());
-            OutputBuffer.clear();
             co_return;
         } catch (const std::exception& ex) {
             std::cerr << "Error during draining: " << ex.what() << "\n";
@@ -134,6 +134,7 @@ private:
     std::function<TSocket(TAddress&)> SocketFactory;
     THostPort HostPort;
     std::vector<char> OutputBuffer;
+    std::vector<char> SendBuffer;
 };
 
 } // namespace NActors
