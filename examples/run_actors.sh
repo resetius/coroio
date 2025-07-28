@@ -1,6 +1,7 @@
 #!/bin/bash
 
 N=${1:-10}  # Number of nodes
+INFL=${2:-2} # Inflight
 BASE_PORT=2001
 
 NODE_ARGS=""
@@ -21,4 +22,4 @@ done
 
 # Run first node in foreground
 echo "Starting node 1 in foreground"
-./examples/ping_actors --node-id 1 $NODE_ARGS
+./examples/ping_actors --inflight $INFL --node-id 1 $NODE_ARGS
