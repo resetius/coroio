@@ -26,8 +26,6 @@ public:
     { }
 
     TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        //std::cerr << "Received message of type " << message->MessageId << " from: " << ctx->Sender().ToString() << ", message: " << Counter++ << "\n";
-
         if (IsFirstNode && RemainingMessages == TotalMessages) {
             std::cout << "Starting pinging...\n";
             StartTime = std::chrono::steady_clock::now();
@@ -40,7 +38,6 @@ public:
         auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
         ctx->Send(nextActorId, TPingMessage{});
 
-        // co_await ctx->Sleep(std::chrono::milliseconds(1000));
         if (IsFirstNode) {
             --RemainingMessages;
             PrintProgress();
@@ -86,7 +83,6 @@ public:
         }
     }
 
-    int Counter = 1;
     bool IsFirstNode;
     int TotalMessages;
     int RemainingMessages;
@@ -110,6 +106,7 @@ int main(int argc, char** argv) {
     TNodeId myNodeId = 1;
     int port = 0;
     int delay = 5000;
+    int inflight = 2;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -138,8 +135,10 @@ int main(int argc, char** argv) {
             myNodeId = std::stoi(argv[++i]);
         } else if (!strcmp(argv[i], "--delay") && i + 1 < argc) {
             delay = std::stoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--inflight") && i + 1 < argc) {
+            inflight = std::stoi(argv[++i]);
         } else if (!strcmp(argv[i], "--help")) {
-            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms]\n";
+            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n]\n";
             return 0;
         } else {
             std::cerr << "Unknown argument: " << argv[i] << "\n";
@@ -182,9 +181,12 @@ int main(int argc, char** argv) {
         auto firstPing = [&]() -> TVoidTask {
             auto from = TActorId{nodeIds.back(), pingActorId.ActorId(), pingActorId.Cookie()};
             auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
+            auto maxPings = inflight;
             co_await sys.Sleep(std::chrono::milliseconds(delay));
             std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
-            sys.Send(from, to, TPingMessage{});
+            for (int i = 0; i < maxPings; ++i) {
+                sys.Send(from, to, TPingMessage{});
+            }
             co_return;
         }();
     }
