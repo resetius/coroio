@@ -136,7 +136,10 @@ struct TFutureBase {
     TFutureBase& operator=(const TFutureBase&) = delete;
     TFutureBase& operator=(TFutureBase&& other) {
         if (this != &other) {
-            std::swap(Coro, other.Coro);
+            if (Coro) {
+                Coro.destroy();
+            }
+            Coro = std::exchange(other.Coro, nullptr);
         }
         return *this;
     }
