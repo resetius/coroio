@@ -60,6 +60,7 @@
 #include <memory>
 #include <functional>
 #include <exception>
+#include <utility>
 
 #include "promises.hpp"
 #include "poller.hpp"
