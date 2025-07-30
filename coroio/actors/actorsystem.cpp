@@ -78,7 +78,7 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessageId messageI
     }
     auto& state = Actors[to];
     if (recipient.Cookie() != state.Cookie) {
-        std::cerr << "Message cookie mismatch for actor with id: " << to << "\n";
+        // std::cerr << "Message cookie mismatch for actor with id: " << to << "\n";
         return;
     }
     auto& mailbox = state.Mailbox;

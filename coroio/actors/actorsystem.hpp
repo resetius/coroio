@@ -170,6 +170,8 @@ private:
     template<typename TSocket>
     TVoidTask InboundConnection(TSocket socket) {
         TStructReader<TSendData, TSocket> reader(socket);
+        static constexpr auto BatchSize = 16;
+        uint64_t message = 0;
 
         try {
             while (true) {
@@ -188,6 +190,9 @@ private:
                     co_await TByteReader(socket).Read(blob.Data.get(), blob.Size);
                 }
                 Send(data.Sender, data.Recipient, data.MessageId, std::move(blob));
+                if (++message % BatchSize == 0) {
+                    co_await Poller->Yield();
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "Error in InboundConnection: " << e.what() << "\n";
