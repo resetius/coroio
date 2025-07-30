@@ -118,7 +118,7 @@ public:
         return TAskAwaiter{state};
     }
 
-    void MaybeNotify();
+    void YieldNotify();
 
     size_t ActorsSize() const;
 
@@ -140,7 +140,8 @@ public:
 
 private:
     void GcIterationSync();
-    TFuture<void> WaitExecute();
+    void ExecuteSync();
+    void DrainReadyNodes();
 
     TVoidTask OutboundServe(int id) {
         Nodes[id].Node->StartConnect();
@@ -209,13 +210,6 @@ private:
         ContextAllocator.Deallocate(ptr);
     }
 
-    TFuture<void> SuspendExecution() {
-        ExecuteAwait_ = co_await Self();
-        co_await std::suspend_always();
-        ExecuteAwait_ = {};
-        co_return;
-    }
-
     TFuture<void> SuspendExecution(int nodeId) {
         Nodes[nodeId].Pending = co_await Self();
         co_await std::suspend_always();
@@ -255,13 +249,18 @@ private:
     TLocalActorId NextActorId_ = 1;
     TCookie NextCookie_ = 1;
     TNodeId NodeId_ = 1;
-    THandle ExecuteAwait_{};
+    THandle YieldCoroutine_{};
+    bool IsYielding_ = true;
 
     struct TNodeState {
         std::unique_ptr<INode> Node;
         THandle Pending;
+        struct TFlags {
+            uint32_t IsReady : 1 = 0;
+        } Flags = {};
     };
     std::vector<TNodeState> Nodes;
+    TUnboundedVectorQueue<TNodeId> ReadyNodes;
 
     std::vector<THandle> Handles;
 
