@@ -9,6 +9,10 @@
 
 #include <stack>
 
+#ifdef Yield
+#undef Yield
+#endif
+
 namespace NNet {
 namespace NActors {
 
