@@ -107,7 +107,6 @@ void test_ping_pong(void**) {
     actorSystem.Send(pingActorId, pongActorId, TPingMessage{});
 
     actorSystem.Serve();
-    actorSystem.MaybeNotify();
 
     while (actorSystem.ActorsSize() > 0) {
         loop.Step();
@@ -127,7 +126,6 @@ void test_ask_respond(void**) {
     actorSystem.Send(responderActorId, askerActorId, TPingMessage{});
 
     actorSystem.Serve();
-    actorSystem.MaybeNotify();
 
     while (actorSystem.ActorsSize() > 0) {
         loop.Step();

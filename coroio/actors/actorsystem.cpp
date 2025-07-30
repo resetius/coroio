@@ -1,5 +1,9 @@
 #include <coroio/actors/actorsystem.hpp>
 
+#ifdef Yield
+#undef Yield
+#endif
+
 namespace NNet {
 namespace NActors {
 
@@ -59,9 +63,12 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessageId messageI
             .MessageId = messageId,
             .Blob = std::move(blob)
         });
-        if (maybeRemote.Pending) {
-            maybeRemote.Pending.resume();
+        if (maybeRemote.Flags.IsReady == 0) {
+            maybeRemote.Flags.IsReady = 1;
+            ReadyNodes.Push(recipient.NodeId());
         }
+
+        YieldNotify();
         return;
     }
     auto to = recipient.ActorId();
@@ -89,14 +96,10 @@ void TActorSystem::Send(TActorId sender, TActorId recipient, TMessageId messageI
         ReadyActors.Push(uint64_t{to});
     }
 
-    MaybeNotify();
+    YieldNotify();
 }
 
-TFuture<void> TActorSystem::WaitExecute() {
-    if (ReadyActors.Empty()) {
-        co_await SuspendExecution();
-    }
-
+void TActorSystem::ExecuteSync() {
     while (!ReadyActors.Empty()) {
         auto actorId = ReadyActors.Front();
         ReadyActors.Pop();
@@ -132,7 +135,7 @@ TFuture<void> TActorSystem::WaitExecute() {
                     ReadyActors.Push(TLocalActorId{actorId});
                 }
 
-                MaybeNotify();
+                YieldNotify();
             }
         };
 
@@ -156,9 +159,10 @@ TFuture<void> TActorSystem::WaitExecute() {
 
         if (mailbox->Empty()) {
             Actors[actorId].Flags.IsReady = 0;
+        } else {
+            ReadyActors.Push(TLocalActorId{actorId});
         }
     }
-    co_return;
 }
 
 void TActorSystem::GcIterationSync() {
@@ -169,20 +173,46 @@ void TActorSystem::GcIterationSync() {
     CleanupActors.clear();
 }
 
+void TActorSystem::DrainReadyNodes() {
+    while (!ReadyNodes.Empty()) {
+        auto nodeId = ReadyNodes.Front();
+        ReadyNodes.Pop();
+        if (nodeId >= Nodes.size()) {
+            std::cerr << "Node with id: " << nodeId << " does not exist\n";
+            continue;
+        }
+        auto& nodeState = Nodes[nodeId];
+        if (!nodeState.Node) {
+            std::cerr << "Node with id: " << nodeId << " is not registered\n";
+            continue;
+        }
+        nodeState.Flags.IsReady = 0;
+        if (nodeState.Pending) {
+            nodeState.Pending.resume();
+        }
+    }
+}
+
 void TActorSystem::Serve()
 {
-    Handles.emplace_back([](TActorSystem* self) -> TVoidTask {
+    YieldCoroutine_ = [](TActorSystem* self) -> TVoidTask {
         while (true) {
-            co_await self->WaitExecute();
-        }
-    }(this));
+            if (self->ReadyActors.Empty()) {
+                self->IsYielding_ = false;
+                co_await std::suspend_always{};
+            }
+            self->IsYielding_ = true;
+            co_await self->Poller->Yield();
 
-    Handles.emplace_back([](TActorSystem* self) -> TVoidTask {
-        while (true) {
-            co_await self->Sleep(std::chrono::milliseconds(1000));
+            self->ExecuteSync();
+            self->DrainReadyNodes();
             self->GcIterationSync();
         }
-    }(this));
+    }(this);
+
+    Handles.emplace_back(YieldCoroutine_);
+
+    YieldNotify();
 }
 
 void TActorSystem::AddNode(int id, std::unique_ptr<INode> node)
@@ -201,9 +231,9 @@ size_t TActorSystem::ActorsSize() const {
     return AliveActors;
 }
 
-void TActorSystem::MaybeNotify() {
-    if (ExecuteAwait_) {
-        ExecuteAwait_.resume();
+void TActorSystem::YieldNotify() {
+    if (IsYielding_ == false) {
+        YieldCoroutine_.resume();
     }
 }
 

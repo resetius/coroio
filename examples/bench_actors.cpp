@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
     }
 
     sys.Serve();
-    sys.MaybeNotify();
+
     while (sys.ActorsSize() > 0) {
         loop.Step();
     }
