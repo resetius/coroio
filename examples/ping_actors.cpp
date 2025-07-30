@@ -26,8 +26,9 @@ public:
     { }
 
     TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        if (IsFirstNode && RemainingMessages == TotalMessages) {
+        if (IsFirstNode && !TimerStarted) {
             std::cout << "Starting pinging...\n";
+            TimerStarted = true;
             StartTime = std::chrono::steady_clock::now();
         }
 
@@ -39,7 +40,9 @@ public:
         ctx->Send(nextActorId, TPingMessage{});
 
         if (IsFirstNode) {
-            --RemainingMessages;
+            if (ctx->Sender()) {
+                --RemainingMessages;
+            }
             PrintProgress();
 
             if (RemainingMessages == 0) {
@@ -84,6 +87,7 @@ public:
     }
 
     bool IsFirstNode;
+    bool TimerStarted = false;
     int TotalMessages;
     int RemainingMessages;
     TNodeId NextNodeId;
@@ -179,7 +183,7 @@ int main(int argc, char** argv) {
 
     if (myNodeId == nodeIds.front()) {
         auto firstPing = [&]() -> TVoidTask {
-            auto from = TActorId{nodeIds.back(), pingActorId.ActorId(), pingActorId.Cookie()};
+            auto from = TActorId{0, 0, 0};
             auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
             auto maxPings = inflight;
             co_await sys.Sleep(std::chrono::milliseconds(delay));
