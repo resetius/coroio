@@ -23,6 +23,16 @@ void TActorContext::Forward(TActorId to, TMessageId messageId, TBlob blob)
     ActorSystem->Send(Sender(), to, messageId, std::move(blob));
 }
 
+TEvent TActorContext::Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
+{
+    return ActorSystem->Schedule(when, sender, recipient, messageId, std::move(blob));
+}
+
+void TActorContext::Cancel(TEvent event)
+{
+    ActorSystem->Cancel(event);
+}
+
 TActorId TActorSystem::Register(IActor::TPtr actor) {
     AliveActors++;
     TLocalActorId id = 0;
@@ -259,7 +269,7 @@ void TActorSystem::YieldNotify() {
     }
 }
 
-TActorSystem::TEvent TActorSystem::Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
+TEvent TActorSystem::Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
 {
     auto timerId = Poller->AddTimer(when, ScheduleCoroutine_);
     DelayedMessages.push({

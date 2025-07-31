@@ -86,7 +86,6 @@ public:
         Send(sender, recepient, T::MessageId, std::move(blob));
     }
 
-    using TEvent = std::pair<unsigned, TTime>;
     TEvent Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
     template<typename T>
     TEvent Schedule(TTime when, TActorId sender, TActorId recipient, T&& message) {
@@ -334,6 +333,12 @@ template<typename T>
 inline void TActorContext::Forward(TActorId to, T&& message) {
     auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
     Forward(to, T::MessageId, std::move(blob));
+}
+
+template<typename T>
+inline TEvent TActorContext::Schedule(TTime when, TActorId sender, TActorId recipient, T&& message) {
+    auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
+    return Schedule(when, sender, recipient, T::MessageId, std::move(blob));
 }
 
 inline void* TActorContext::operator new(size_t size, TActorSystem* actorSystem) {
