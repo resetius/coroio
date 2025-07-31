@@ -139,12 +139,13 @@ void TActorSystem::ExecuteSync() {
             }
         };
 
+        bool poisoned = false;
         while (!mailbox->Empty()) {
             auto envelope = std::move(mailbox->Front());
             mailbox->Pop();
             auto messageId = envelope.MessageId;
             if (messageId == static_cast<TMessageId>(ESystemMessages::PoisonPill)) [[unlikely]] {
-                CleanupActors.emplace_back(actorId);
+                CleanupActors.emplace_back(actorId); poisoned = true;
                 break;
             }
             auto ctx = std::unique_ptr<TActorContext>(
@@ -157,7 +158,7 @@ void TActorSystem::ExecuteSync() {
             }
         }
 
-        if (mailbox->Empty()) {
+        if (mailbox->Empty() || poisoned) {
             Actors[actorId].Flags.IsReady = 0;
         } else {
             ReadyActors.Push(TLocalActorId{actorId});
@@ -210,6 +211,27 @@ void TActorSystem::Serve()
         }
     }(this);
 
+    ScheduleCoroutine_ = [](TActorSystem* self) -> TVoidTask {
+        while (true) {
+            co_await std::suspend_always{};
+
+            auto now = TClock::now();
+            unsigned prevId = 0;
+            bool first = true;
+            while (!self->DelayedMessages.empty() && self->DelayedMessages.top().When <= now) {
+                auto delayed = std::move(self->DelayedMessages.top());
+                self->DelayedMessages.pop();
+                if ((first || prevId != delayed.TimerId) && delayed.valid) { // skip removed timers
+                    self->Send(delayed.Sender, delayed.Recipient, delayed.MessageId, std::move(delayed.Blob));
+                }
+
+                first = false;
+                prevId = delayed.TimerId;
+            }
+        }
+    }(this);
+
+    Handles.emplace_back(ScheduleCoroutine_);
     Handles.emplace_back(YieldCoroutine_);
 
     YieldNotify();
@@ -236,6 +258,30 @@ void TActorSystem::YieldNotify() {
         YieldCoroutine_.resume();
     }
 }
+
+TActorSystem::TEvent TActorSystem::Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
+{
+    auto timerId = Poller->AddTimer(when, ScheduleCoroutine_);
+    DelayedMessages.push({
+        .When = when,
+        .TimerId = timerId,
+        .Sender = sender,
+        .Recipient = recipient,
+        .MessageId = messageId,
+        .Blob = blob
+    });
+    return {timerId, when};
+}
+
+void TActorSystem::Cancel(TEvent event) {
+    DelayedMessages.push({
+        .When = event.second,
+        .TimerId = event.first,
+        .valid = false
+    });
+    Poller->RemoveTimer(event.first, event.second);
+}
+
 
 } // namespace NNet
 } // namespace NActors
