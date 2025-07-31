@@ -62,6 +62,8 @@ public:
     TBlob Blob;
 };
 
+using TEvent = std::pair<unsigned, TTime>;
+
 class TActorContext
 {
 public:
@@ -79,6 +81,10 @@ public:
     void Send(TActorId to, T&& message);
     template<typename T>
     void Forward(TActorId to, T&& message);
+    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
+    template<typename T>
+    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, T&& message);
+    void Cancel(TEvent event);
 
     TFuture<void> Sleep(TTime until);
     template<typename Rep, typename Period>
