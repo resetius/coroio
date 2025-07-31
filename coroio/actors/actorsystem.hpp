@@ -86,6 +86,15 @@ public:
         Send(sender, recepient, T::MessageId, std::move(blob));
     }
 
+    using TEvent = std::pair<unsigned, TTime>;
+    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
+    template<typename T>
+    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, T&& message) {
+        auto blob = SerializeNear(std::forward<T>(message), GetPodAllocator());
+        return Schedule(when, sender, recipient, T::MessageId, std::move(blob));
+    }
+    void Cancel(TEvent event);
+
     template<typename T, typename TQuestion>
     auto Ask(TActorId recepient, TQuestion&& message) {
         class TAskAwaiter
@@ -259,6 +268,7 @@ private:
     TCookie NextCookie_ = 1;
     TNodeId NodeId_ = 1;
     THandle YieldCoroutine_{};
+    THandle ScheduleCoroutine_{};
     bool IsYielding_ = true;
 
     struct TNodeState {
@@ -270,6 +280,22 @@ private:
     };
     std::vector<TNodeState> Nodes;
     TUnboundedVectorQueue<TNodeId> ReadyNodes;
+
+    struct TDelayed {
+        TTime When;
+        unsigned TimerId = 0;
+        bool valid = true;
+        TActorId Sender;
+        TActorId Recipient;
+        TMessageId MessageId;
+        TBlob Blob;
+
+        bool operator<(const TDelayed& other) const {
+            return std::tie(When, TimerId, valid) > std::tie(other.When, other.TimerId, other.valid);
+        }
+    };
+
+    std::priority_queue<TDelayed> DelayedMessages;
 
     std::vector<THandle> Handles;
 

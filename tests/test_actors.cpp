@@ -132,6 +132,66 @@ void test_ask_respond(void**) {
     }
 }
 
+class TSingleShotActor : public IActor {
+public:
+    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << "\n";
+        ctx->Send(ctx->Sender(), TPingMessage{});
+        ctx->Send(ctx->Self(), TPoison{});
+        co_return;
+    }
+};
+
+void test_schedule(void**) {
+    TLoop<TDefaultPoller> loop;
+
+    TActorSystem actorSystem(&loop.Poller());
+
+    auto pingActorId = actorSystem.Register(std::move(std::make_unique<TSingleShotActor>()));
+    std::cerr << "PingActor: " << pingActorId.ToString() << "\n";
+
+    auto now = std::chrono::steady_clock::now();
+    auto later = now + std::chrono::milliseconds(1000);
+
+    actorSystem.Serve();
+    actorSystem.Schedule(later, pingActorId, pingActorId, TPingMessage{});
+
+    while (actorSystem.ActorsSize() > 0) {
+        loop.Step();
+    }
+
+    auto elapsed = std::chrono::steady_clock::now() - now;
+    std::cerr << "Elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms\n";
+    assert_true(elapsed >= std::chrono::milliseconds(1000));
+}
+
+void test_schedule_cancel(void**) {
+    TLoop<TDefaultPoller> loop;
+
+    TActorSystem actorSystem(&loop.Poller());
+
+    auto pingActorId = actorSystem.Register(std::move(std::make_unique<TSingleShotActor>()));
+    std::cerr << "PingActor: " << pingActorId.ToString() << "\n";
+
+    auto now = std::chrono::steady_clock::now();
+    auto later = now + std::chrono::milliseconds(1000);
+
+    actorSystem.Serve();
+    auto timer = actorSystem.Schedule(later, pingActorId, pingActorId, TPingMessage{});
+    actorSystem.Cancel(timer);
+    later = now + std::chrono::milliseconds(10);
+
+    actorSystem.Schedule(later, pingActorId, pingActorId, TPingMessage{});
+
+    while (actorSystem.ActorsSize() > 0) {
+        loop.Step();
+    }
+
+    auto elapsed = std::chrono::steady_clock::now() - now;
+    std::cerr << "Elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms\n";
+    assert_true(elapsed >= std::chrono::milliseconds(10) && elapsed < std::chrono::milliseconds(1000));
+}
+
 struct TEmptyMessage {
     bool operator==(const TEmptyMessage&) const = default;
 };
@@ -313,6 +373,8 @@ int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
         cmocka_unit_test(test_ask_respond),
+        cmocka_unit_test(test_schedule),
+        cmocka_unit_test(test_schedule_cancel),
         cmocka_unit_test(test_serialize_zero_size),
         cmocka_unit_test(test_serialize_pod),
         cmocka_unit_test(test_serialize_non_pod),
