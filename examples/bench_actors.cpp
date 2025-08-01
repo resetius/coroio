@@ -25,8 +25,9 @@ public:
     { }
 
     TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        if (Idx_ == 0 && Remain_ == M_) [[unlikely]] {
+        if (Idx_ == 0 && !TimerStarted_) [[unlikely]] {
             StartTime_ = std::chrono::steady_clock::now();
+            TimerStarted_ = true;
         }
 
         if (Idx_ == 0 && Remain_ == 0) [[unlikely]] {
@@ -36,8 +37,10 @@ public:
         ctx->Send(Ring_[(Idx_ + 1)%N_], TNext{});
 
         if (Idx_ == 0) {
-            --Remain_;
-            PrintProgress();
+            if (ctx->Sender()) {
+                --Remain_;
+                PrintProgress();
+            }
 
             if (Remain_ == 0) {
                 ShutdownRing(ctx);
@@ -83,6 +86,7 @@ private:
         }
     }
 
+    bool TimerStarted_ = false;
     size_t Idx_;
     size_t N_;
     size_t Remain_;
@@ -95,6 +99,7 @@ private:
 int main(int argc, char** argv) {
     size_t N = 2; // Number of actors
     size_t M = 100; // Messages
+    size_t B = 1; // Batch size
     std::string mode = "throughput";
 
     TLoop<TDefaultPoller> loop;
@@ -110,6 +115,10 @@ int main(int argc, char** argv) {
             if (i + 1 < argc) {
                 M = std::stoul(argv[++i]);
             }
+        } else if (std::string(argv[i]) == "--batch") {
+            if (i + 1 < argc) {
+                B = std::stoul(argv[++i]);
+            }
         } else if (std::string(argv[i]) == "--mode") {
             if (i + 1 < argc) {
                 mode = argv[++i];
@@ -122,7 +131,9 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < N; ++i) {
             ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, N, M, ringIds));
         }
-        sys.Send(ringIds[0], ringIds[0], TNext{});
+        for (int i = 0; i < B; i++) {
+            sys.Send(TActorId{}, ringIds[0], TNext{});
+        }
     } else {
         // Unsupported yet
     }
