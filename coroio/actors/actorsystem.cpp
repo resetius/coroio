@@ -185,9 +185,13 @@ void TActorSystem::Serve()
             self->IsYielding_ = true;
             co_await self->Poller->Yield();
 
-            self->ExecuteSync();
-            self->DrainReadyNodes();
-            self->GcIterationSync();
+            try {
+                self->ExecuteSync();
+                self->DrainReadyNodes();
+                self->GcIterationSync();
+            } catch (const std::exception& ex) {
+                std::cerr << "Error during actor system execution: " << ex.what() << "\n";
+            }
         }
     }(this);
 
@@ -242,6 +246,7 @@ void TActorSystem::YieldNotify() {
 TEvent TActorSystem::Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
 {
     auto timerId = Poller->AddTimer(when, ScheduleCoroutine_);
+
     DelayedMessages.push({
         .When = when,
         .TimerId = timerId,

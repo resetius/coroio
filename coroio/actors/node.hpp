@@ -60,7 +60,7 @@ public:
 
     void Drain() override {
         StartConnect();
-        if (!Drainer.raw() || Drainer.done()) {
+        if (Connected && (!Drainer.raw() || Drainer.done())) {
             Drainer = DoDrain();
         }
     }
