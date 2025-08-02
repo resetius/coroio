@@ -25,7 +25,7 @@ public:
         , NodeIds(nodeIds)
     { }
 
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         if (IsFirstNode && !TimerStarted) {
             std::cout << "Starting pinging...\n";
             TimerStarted = true;
@@ -33,7 +33,7 @@ public:
         }
 
         if (IsFirstNode && RemainingMessages == 0) {
-            co_return;
+            return;
         }
 
         auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
@@ -59,7 +59,7 @@ public:
                 }
             }
         }
-        co_return;
+        return;
     }
 
     void PrintProgress() {

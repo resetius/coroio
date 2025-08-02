@@ -1,5 +1,6 @@
 set(SOURCES
     actor.hpp
+    actor.cpp
     actorsystem.hpp
     actorsystem.cpp
     node.hpp
