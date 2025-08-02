@@ -152,8 +152,6 @@ public:
 
 class IBehavior {
 public:
-    using TPtr = std::unique_ptr<IBehavior>;
-
     virtual ~IBehavior() = default;
     virtual void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
@@ -229,8 +227,8 @@ private:
 
 class IBehaviorActor : public IActor {
 public:
-    void Become(IBehavior::TPtr behavior) {
-        CurrentBehavior_ = std::move(behavior);
+    void Become(IBehavior* behavior) {
+        CurrentBehavior_ = behavior;
     }
 
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
@@ -238,7 +236,7 @@ public:
     }
 
 private:
-    IBehavior::TPtr CurrentBehavior_;
+    IBehavior* CurrentBehavior_;
 };
 
 } // namespace NActors
