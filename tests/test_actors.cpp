@@ -39,9 +39,9 @@ struct TAllocator {
     }
 };
 
-class TPingActor : public IActor {
+class TPingActor : public ICoroActor {
 public:
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
         ctx->Send(ctx->Sender(), TPingMessage{});
@@ -56,20 +56,19 @@ public:
 
 class TPongActor : public IActor {
 public:
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Ping message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
         ctx->Send(ctx->Sender(), TPongMessage{});
         if (counter == 5) {
             ctx->Send(ctx->Self(), TPoison{});
         }
-        co_return;
     }
 
     int counter = 0;
 };
 
-class TAskerActor : public IActor {
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+class TAskerActor : public ICoroActor {
+    TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Asker Received message from: " << ctx->Sender().ToString() << "\n";
         auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), TPingMessage{});
         std::cerr << "Reply received from " << ctx->Sender().ToString() << ", message: " << result.MessageId << "\n";
@@ -81,8 +80,8 @@ class TAskerActor : public IActor {
     }
 };
 
-class TResponderActor : public IActor {
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+class TResponderActor : public ICoroActor {
+    TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Responder Received message from: " << ctx->Sender().ToString() << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
         ctx->Send(ctx->Sender(), TPongMessage{});
@@ -134,11 +133,10 @@ void test_ask_respond(void**) {
 
 class TSingleShotActor : public IActor {
 public:
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << "\n";
         ctx->Send(ctx->Sender(), TPingMessage{});
         ctx->Send(ctx->Self(), TPoison{});
-        co_return;
     }
 };
 

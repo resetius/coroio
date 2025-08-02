@@ -131,26 +131,6 @@ void TActorSystem::ExecuteSync() {
 
         Actors[actorId].Flags.IsReady = 0;
 
-        auto pendingLambda = [this, actorId]() {
-            // if we were in pending
-            // we need to try restart ActorSystem loop
-            auto& pending = Actors[actorId].Pending;
-            if (pending.raw()) {
-                CleanupMessages.emplace_back(std::move(pending)); // we cannot delete coroutine from itself, need to do "gc"
-                pending = {};
-                Actors[actorId].Flags.IsReady = 0;
-
-                // if Sent to actorId was called, we need to check if it has any messages in mailbox
-                auto& mailbox = Actors[actorId].Mailbox;
-                if (!mailbox->Empty()) {
-                    Actors[actorId].Flags.IsReady = 1;
-                    ReadyActors.Push(TLocalActorId{actorId});
-                }
-
-                YieldNotify();
-            }
-        };
-
         while (!mailbox->Empty()) {
             auto envelope = std::move(mailbox->Front());
             mailbox->Pop();
@@ -162,9 +142,8 @@ void TActorSystem::ExecuteSync() {
             auto ctx = std::unique_ptr<TActorContext>(
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
-            auto future = actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx));
-            if (!future.done()) [[unlikely]] {
-                Actors[actorId].Pending = std::move(future.Accept(pendingLambda));
+            actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx));
+            if (Actors[actorId].Pending.raw()) [[unlikely]] {
                 break;
             }
         }
@@ -283,6 +262,33 @@ void TActorSystem::Cancel(TEvent event) {
     Poller->RemoveTimer(event.first, event.second);
 }
 
+void TActorSystem::AddPendingFuture(TLocalActorId actorId, TFuture<void>&& future)
+{
+    assert(!Actors[actorId].Pending.raw() && "Actor already has a pending future");
+    assert(actorId < Actors.size() && "ActorId out of range");
+
+    auto pendingLambda = [this, actorId]() {
+        // if we were in pending
+        // we need to try restart ActorSystem loop
+        auto& pending = Actors[actorId].Pending;
+        if (pending.raw()) {
+            CleanupMessages.emplace_back(std::move(pending)); // we cannot delete coroutine from itself, need to do "gc"
+            pending = {};
+            Actors[actorId].Flags.IsReady = 0;
+
+            // if Sent to actorId was called, we need to check if it has any messages in mailbox
+            auto& mailbox = Actors[actorId].Mailbox;
+            if (!mailbox->Empty()) {
+                Actors[actorId].Flags.IsReady = 1;
+                ReadyActors.Push(TLocalActorId{actorId});
+            }
+
+            YieldNotify();
+        }
+    };
+
+    Actors[actorId].Pending = std::move(future.Accept(pendingLambda));
+}
 
 } // namespace NNet
 } // namespace NActors

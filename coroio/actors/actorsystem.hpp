@@ -52,7 +52,7 @@ public:
         : State(state)
     { }
 
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
 
 private:
     std::shared_ptr<TAskState<T>> State;
@@ -154,6 +154,7 @@ private:
     void GcIterationSync();
     void ExecuteSync();
     void DrainReadyNodes();
+    void AddPendingFuture(TLocalActorId id, TFuture<void>&& future);
 
     TVoidTask OutboundServe(int id) {
         Nodes[id].Node->StartConnect();
@@ -301,12 +302,11 @@ private:
 };
 
 template<typename T>
-TFuture<void> TAsk<T>::Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
+void TAsk<T>::Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
     State->MessageId = messageId;
     State->Blob = std::move(blob);
     State->Handle.resume();
     ctx->Send(ctx->Self(), TPoison{});
-    co_return;
 }
 
 inline TFuture<void> TActorContext::Sleep(TTime until) {

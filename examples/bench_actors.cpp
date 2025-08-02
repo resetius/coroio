@@ -24,14 +24,14 @@ public:
       , Ring_(r)
     { }
 
-    TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         if (Idx_ == 0 && !TimerStarted_) [[unlikely]] {
             StartTime_ = std::chrono::steady_clock::now();
             TimerStarted_ = true;
         }
 
         if (Idx_ == 0 && Remain_ == 0) [[unlikely]] {
-            co_return;
+            return;
         }
 
         ctx->Send(Ring_[(Idx_ + 1)%N_], TNext{});
@@ -47,7 +47,7 @@ public:
             }
         }
 
-        co_return;
+        return;
     }
 
 private:

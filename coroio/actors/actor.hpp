@@ -92,6 +92,21 @@ public:
     template<typename T, typename TQuestion>
     TFuture<T> Ask(TActorId recipient, TQuestion&& question);
 
+    struct TAsync {
+        TAsync(TActorSystem* actorSystem, TLocalActorId actorId)
+            : ActorSystem_(actorSystem)
+            , ActorId_(actorId)
+        { }
+
+        void Commit(TFuture<void>&& future);
+
+    private:
+        TLocalActorId ActorId_;
+        TActorSystem* ActorSystem_;
+    };
+
+    TAsync StartAsync();
+
     static void* operator new(size_t size, TActorSystem* actorSystem);
     static void operator delete(void* ptr);
 
@@ -117,7 +132,14 @@ public:
     IActor() = default;
     virtual ~IActor() = default;
 
-    virtual TFuture<void> Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
+    virtual void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
+};
+
+class ICoroActor : public IActor {
+public:
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
+
+    virtual TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
 
 } // namespace NActors
