@@ -129,6 +129,8 @@ void TActorSystem::ExecuteSync() {
             continue;
         }
 
+        Actors[actorId].Flags.IsReady = 0;
+
         auto pendingLambda = [this, actorId]() {
             // if we were in pending
             // we need to try restart ActorSystem loop
@@ -149,13 +151,12 @@ void TActorSystem::ExecuteSync() {
             }
         };
 
-        bool poisoned = false;
         while (!mailbox->Empty()) {
             auto envelope = std::move(mailbox->Front());
             mailbox->Pop();
             auto messageId = envelope.MessageId;
             if (messageId == static_cast<TMessageId>(ESystemMessages::PoisonPill)) [[unlikely]] {
-                CleanupActors.emplace_back(actorId); poisoned = true;
+                ShutdownActor(actorId);
                 break;
             }
             auto ctx = std::unique_ptr<TActorContext>(
@@ -167,21 +168,11 @@ void TActorSystem::ExecuteSync() {
                 break;
             }
         }
-
-        if (mailbox->Empty() || poisoned) {
-            Actors[actorId].Flags.IsReady = 0;
-        } else {
-            ReadyActors.Push(TLocalActorId{actorId});
-        }
     }
 }
 
 void TActorSystem::GcIterationSync() {
     CleanupMessages.clear();
-    for (auto actorId : CleanupActors) {
-        ShutdownActor(actorId);
-    }
-    CleanupActors.clear();
 }
 
 void TActorSystem::DrainReadyNodes() {

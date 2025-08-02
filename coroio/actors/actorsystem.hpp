@@ -41,7 +41,7 @@ struct TActorInternalState
     IActor::TPtr Actor;
 
     struct TFlags {
-        uint32_t IsReady : 1 = 0;
+        uint32_t IsReady : 1 = 0; // Is the actor exists in ReadyActors queue
     } Flags = {};
 };
 
@@ -256,7 +256,6 @@ private:
     int AliveActors = 0;
 
     std::vector<TFuture<void>> CleanupMessages;
-    std::vector<TLocalActorId> CleanupActors;
     std::stack<TLocalActorId, std::vector<TLocalActorId>> FreeActorIds;
 
     TArenaAllocator<TActorContext> ContextAllocator;
