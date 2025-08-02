@@ -25,11 +25,13 @@ struct TSendData {
     uint32_t Size;
 };
 
-template<typename TSocket, typename TResolver>
+template<typename TPoller, typename TResolver>
 class TNode : public INode {
 public:
-    TNode(TMessagesFactory& factory, TResolver& resolver, const std::function<TSocket(const TAddress&)>& socketFactory, const THostPort& hostPort)
-        : Factory(factory)
+    using TSocket = typename TPoller::TSocket;
+    TNode(TPoller& poller, TMessagesFactory& factory, TResolver& resolver, const std::function<TSocket(const TAddress&)>& socketFactory, const THostPort& hostPort)
+        : Poller(poller)
+        , Factory(factory)
         , Resolver(resolver)
         , SocketFactory(socketFactory)
         , HostPort(hostPort)
@@ -118,7 +120,7 @@ private:
                 Connected = false;
             }
             if (!Connected) {
-                co_await Socket.Poller()->Sleep(std::chrono::milliseconds(1000));
+                co_await Poller.Sleep(std::chrono::milliseconds(1000));
             }
         }
         co_return;
@@ -129,6 +131,7 @@ private:
     TFuture<void> Connector;
     TSocket Socket;
 
+    TPoller& Poller;
     TMessagesFactory& Factory;
     TResolver& Resolver;
     std::function<TSocket(TAddress&)> SocketFactory;
