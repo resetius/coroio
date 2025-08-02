@@ -126,9 +126,9 @@ void DeserializeFromStream(T& obj, std::istringstream& iss) {
 }
 
 template<typename T>
-auto DeserializeFar(const TBlob& blob) -> std::conditional_t<is_pod_v<T>, T&, T> {
+auto DeserializeFar(const TBlob& blob) -> std::conditional_t<is_pod_v<T> && (sizeof_data<T>()>0), T&, T> {
     if constexpr (is_pod_v<T>) {
-        return *reinterpret_cast<T*>(blob.Data.get());
+        return DeserializeNear<T>(blob);
     } else {
         std::istringstream iss(std::string(reinterpret_cast<const char*>(blob.Data.get()), blob.Size));
         T obj;
