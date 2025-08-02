@@ -179,14 +179,16 @@ private:
     bool TryHandleMessage(TMessageId messageId, TBlob& blob, TActorContext::TPtr& ctx) {
         if (TMessage::MessageId == messageId) {
             if (blob.Type == TBlob::PointerType::Near) {
+                auto&& mes = std::move(DeserializeNear<TMessage>(blob));
                 HandleMessage<TMessage>(
-                    std::move(DeserializeNear<TMessage>(blob)),
+                    std::move(mes),
                     std::move(blob),
                     std::move(ctx)
                 );
             } else {
+                auto&& mes = DeserializeFar<TMessage>(blob);
                 HandleMessage<TMessage>(
-                    std::move(DeserializeFar<TMessage>(blob)),
+                    std::move(mes),
                     std::move(blob),
                     std::move(ctx)
                 );
