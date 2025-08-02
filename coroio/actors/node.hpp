@@ -21,8 +21,8 @@ public:
 struct TSendData {
     TActorId Sender;
     TActorId Recipient;
-    TMessageId MessageId;
-    uint32_t Size;
+    TMessageId MessageId = 0;
+    uint32_t Size = 0;
 };
 
 template<typename TPoller, typename TResolver>
@@ -38,16 +38,19 @@ public:
     { }
 
     void Send(TEnvelope&& envelope) override {
+        auto blob = std::move(envelope.Blob);
+        if (blob.Size > 0) {
+            blob = Factory.SerializeFar(envelope.MessageId, std::move(blob));
+        }
         TSendData data{
             .Sender = envelope.Sender,
             .Recipient = envelope.Recipient,
             .MessageId = envelope.MessageId,
-            .Size = envelope.Blob.Size
+            .Size = blob.Size
         };
         OutputBuffer.insert(OutputBuffer.end(), (char*)&data, (char*)&data + sizeof(data));
-        if (envelope.Blob.Size > 0) {
-            auto farBlob = Factory.SerializeFar(envelope.MessageId, std::move(envelope.Blob));
-            OutputBuffer.insert(OutputBuffer.end(), (char*)farBlob.Data.get(), (char*)farBlob.Data.get() + farBlob.Size);
+        if (blob.Size > 0) {
+            OutputBuffer.insert(OutputBuffer.end(), (char*)blob.Data.get(), (char*)blob.Data.get() + blob.Size);
         }
     }
 

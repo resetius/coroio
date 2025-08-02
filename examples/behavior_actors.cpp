@@ -35,13 +35,14 @@ void DeserializeFromStream<TMessage>(TMessage& obj, std::istringstream& iss) {
 } // namespace NNet::NActors
 
 struct TBehaviorActor : public IBehaviorActor {
-    struct TRichBehavior1 : public TBehavior<TRichBehavior1, TPing, TMessage> {
-        TRichBehavior1(TBehaviorActor* parent)
+    struct TRichBehavior : public TBehavior<TRichBehavior, TPing, TMessage> {
+        TRichBehavior(TBehaviorActor* parent, const std::string& message)
             : Parent(parent)
+            , Message(message)
         { }
 
         void Receive(TPing&& message, TBlob blob, TActorContext::TPtr ctx) {
-            TMessage msg{"hello"};
+            TMessage msg{Message};
 
             std::cout << "Sending message: " << msg.Text << "\n";
             auto nodeId = Parent->NodeIds.front();
@@ -54,22 +55,30 @@ struct TBehaviorActor : public IBehaviorActor {
         }
         void Receive(TMessage&& message, TBlob blob, TActorContext::TPtr ctx) {
             std::cout << "Received message: " << message.Text << "\n";
+            Parent->Become(Parent->Behaviors[++Parent->Index % Parent->Behaviors.size()]);
         }
         void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
             std::cerr << "Unknown message received: " << messageId << "\n";
         }
 
         TBehaviorActor* Parent;
+        std::string Message;
     };
 
     TBehaviorActor(int myIdx, const std::vector<TNodeId>& nodeIds)
         : NodeIds(nodeIds)
+        , Hello(this, "Hello")
+        , World(this, "World!")
     {
         std::swap(NodeIds[myIdx], NodeIds[0]);
-        Become(std::move(std::make_unique<TRichBehavior1>(this)));
+        Become(&Hello);
     }
 
     std::vector<TNodeId> NodeIds;
+    TRichBehavior Hello;
+    TRichBehavior World;
+    int Index = 0;
+    std::vector<IBehavior*> Behaviors = {&Hello, &World};
 };
 
 int main(int argc, char** argv) {
