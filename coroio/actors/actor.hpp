@@ -122,6 +122,14 @@ private:
     TActorSystem* ActorSystem = nullptr;
 
     friend class TActorSystem;
+    friend class TMockActorContext;
+};
+
+class TMockActorContext : public TActorContext {
+public:
+    TMockActorContext(TActorId sender, TActorId self, TActorSystem* actorSystem)
+        : TActorContext(sender, self, actorSystem)
+    { }
 };
 
 class IActor {
@@ -140,6 +148,95 @@ public:
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
 
     virtual TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
+};
+
+class IBehavior {
+public:
+    using TPtr = std::unique_ptr<IBehavior>;
+
+    virtual ~IBehavior() = default;
+    virtual void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
+};
+
+template<typename TBaseBehavior, typename... TMessages>
+class TBehavior : public IBehavior
+{
+public:
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        bool handled = (TryHandleMessage<TMessages>(
+            messageId,
+            blob,
+            ctx
+        ) || ...);
+
+        if (!handled) {
+            static_cast<TBaseBehavior*>(this)->HandleUnknownMessage(messageId, std::move(blob), std::move(ctx));
+        }
+    }
+
+private:
+    template<typename TMessage>
+    bool TryHandleMessage(TMessageId messageId, TBlob& blob, TActorContext::TPtr& ctx) {
+        if (TMessage::MessageId == messageId) {
+            if (blob.Type == TBlob::PointerType::Near) {
+                HandleMessage<TMessage>(
+                    std::move(DeserializeNear<TMessage>(blob)),
+                    std::move(blob),
+                    std::move(ctx)
+                );
+            } else {
+                HandleMessage<TMessage>(
+                    std::move(DeserializeFar<TMessage>(blob)),
+                    std::move(blob),
+                    std::move(ctx)
+                );
+            }
+            return true;
+        }
+        return false;
+    }
+
+    template<typename TMessage>
+    void HandleMessage(TMessage&& message, TBlob blob, TActorContext::TPtr ctx)
+    {
+        using ReturnType = decltype(static_cast<TBaseBehavior*>(this)->Receive(
+            std::declval<TMessage>(),
+            std::declval<TBlob>(),
+            std::declval<TActorContext::TPtr>()
+        ));
+
+        if constexpr (std::is_same_v<ReturnType, void>) {
+            static_cast<TBaseBehavior*>(this)->Receive(
+                std::move(message),
+                std::move(blob),
+                std::move(ctx)
+            );
+        } else {
+            auto async = ctx->StartAsync();
+            auto future = static_cast<TBaseBehavior*>(this)->Receive(
+                std::move(message),
+                std::move(blob),
+                std::move(ctx)
+            );
+            if (!future.done()) {
+                async.Commit(std::move(future));
+            }
+        }
+    }
+};
+
+class IBehaviorActor : public IActor {
+public:
+    void Become(IBehavior::TPtr behavior) {
+        CurrentBehavior_ = std::move(behavior);
+    }
+
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        CurrentBehavior_->Receive(messageId, std::move(blob), std::move(ctx));
+    }
+
+private:
+    IBehavior::TPtr CurrentBehavior_;
 };
 
 } // namespace NActors
