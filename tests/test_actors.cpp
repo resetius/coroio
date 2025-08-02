@@ -367,6 +367,47 @@ void test_unbounded_vector_queue(void**) {
     }
 }
 
+struct TRichBehavior : public TBehavior<TRichBehavior, TWrappedString, TPodMessage> {
+    TPodMessage PodReceived;
+    TWrappedString StrReceived;
+
+    void Receive(TWrappedString&& message, TBlob blob, TActorContext::TPtr ctx) {
+        StrReceived = std::move(message);
+    }
+
+    TFuture<void> Receive(TPodMessage&& message, TBlob blob, TActorContext::TPtr ctx) {
+        PodReceived = std::move(message);
+        co_return;
+    }
+
+    void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
+        std::cerr << "Unknown message received: " << messageId << "\n";
+    }
+};
+
+void test_behavior(void**) {
+    TAllocator alloc;
+    TActorSystem actorSystem(nullptr);
+    auto behavior = std::unique_ptr<IBehavior>(new TRichBehavior());
+    auto strNearBlob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
+
+    TActorContext::TPtr ctx;
+    ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
+    behavior->Receive(TWrappedString::MessageId, strNearBlob, std::move(ctx));
+
+    auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
+    ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
+    behavior->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+
+    auto& richBehavior = static_cast<TRichBehavior&>(*behavior);
+    assert_true(richBehavior.StrReceived.Value == "Hello, World!");
+    assert_true(richBehavior.PodReceived.field1 == 42);
+    assert_true(richBehavior.PodReceived.field2 == 3.14);
+    assert_true(richBehavior.PodReceived.field3 == 'x');
+    assert_true(richBehavior.PodReceived.field4 == 2.71);
+    assert_true(richBehavior.PodReceived.field5 == 1.618);
+}
+
 int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
@@ -378,7 +419,8 @@ int main() {
         cmocka_unit_test(test_serialize_non_pod),
         cmocka_unit_test(test_serialize_messages_factory),
         cmocka_unit_test(test_serialize_messages_factory_non_pod),
-        cmocka_unit_test(test_unbounded_vector_queue)
+        cmocka_unit_test(test_unbounded_vector_queue),
+        cmocka_unit_test(test_behavior)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
