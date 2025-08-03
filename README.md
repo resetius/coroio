@@ -281,7 +281,7 @@ Performance comparison using different event notification mechansims in Libevent
 
 * CPU Apple M1
 * MacBook Air M1 16G
-* MacOS 15.5
+* MacOS 12.6.3
 
 <img src="/bench/bench_M1.png?raw=true" width="400"/><img src="/bench/bench_M1_100.png?raw=true" width="400"/>
 
@@ -317,7 +317,7 @@ class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Ac
 
 * CPU Apple M1
 * MacBook Air M1 16G
-* MacOS 12.6.3
+* MacOS 15.5
 
 **Local ring (100 actors, 1024 batch size):**
 - Akka: 26,931,469 msg/s
