@@ -120,8 +120,9 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssi
     p += 5; size -= 5; if (size <= 0) { throw std::runtime_error("Not enough data"); }
     for (int i = 0; i < ntohs (header->ancount); i++)
     {
-        uint16_t* compression = (uint16_t*)p; p += 2; size -= 2; if (size <= 0) { throw std::runtime_error("Not enough data"); }
-        if (! ((ntohs(*compression) & 0xC000) == 0xC000)) {
+        uint16_t compression; memcpy(&compression, p, 2);
+        p += 2; size -= 2; if (size <= 0) { throw std::runtime_error("Not enough data"); }
+        if (! ((ntohs(compression) & 0xC000) == 0xC000)) {
             // skip full name
             while (*p) {
                 p++; size--; if (size <= 0) { throw std::runtime_error("Not enough data"); }
@@ -136,13 +137,13 @@ void ParsePacket(uint16_t* xid, std::vector<TAddress>& addresses, char* buf, ssi
             sockaddr_in addr;
             addr.sin_port = 0,
             addr.sin_family = AF_INET;
-            addr.sin_addr = *(in_addr*)(record+1);
+            memcpy(&addr.sin_addr, record+1, sizeof(in_addr));
             addresses.emplace_back(TAddress{addr});
         } else if (addrLen == 16) {
             sockaddr_in6 addr;
             addr.sin6_port = 0,
             addr.sin6_family = AF_INET6;
-            addr.sin6_addr = *(in6_addr*)(record+1);
+            memcpy(&addr.sin6_addr, record+1, sizeof(in6_addr));
             addresses.emplace_back(TAddress{addr});
         }
         p += sizeof(TDnsRecordA);
