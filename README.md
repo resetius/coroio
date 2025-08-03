@@ -191,13 +191,16 @@ public:
 
 // Behavior-based actor with typed message handling
 class BehaviorCounterActor : public IBehaviorActor,
-                           public TBehavior<BehaviorCounterActor, IncrementMessage, GetCountMessage> {
+                             public TBehavior<BehaviorCounterActor,
+                                            IncrementMessage,
+                                            GetCountMessage>
+{
 private:
     int counter_ = 0;
 
 public:
     BehaviorCounterActor() {
-        Become(this); // Set initial behavior
+        Become(this); 
     }
 
     void Receive(IncrementMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
