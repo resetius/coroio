@@ -158,16 +158,16 @@ using namespace NNet::NActors;
 
 // Define message types
 struct IncrementMessage {
-    static constexpr TMessageId MessageId = 1;
+    static constexpr TMessageId MessageId = 100;
     int value;
 };
 
 struct GetCountMessage {
-    static constexpr TMessageId MessageId = 2;
+    static constexpr TMessageId MessageId = 101;
 };
 
 struct CountResponseMessage {
-    static constexpr TMessageId MessageId = 3;
+    static constexpr TMessageId MessageId = 102;
     int count;
 };
 
