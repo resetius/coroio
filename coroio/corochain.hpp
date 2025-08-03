@@ -56,7 +56,7 @@
 
 #include <coroutine>
 #include <optional>
-#include <variant>
+#include <expected>
 #include <memory>
 #include <functional>
 #include <exception>
@@ -108,11 +108,11 @@ struct TPromise: public TPromiseBase<T> {
     }
 
     void unhandled_exception() {
-        ErrorOr = std::current_exception();
+        ErrorOr = std::unexpected(std::current_exception());
     }
 
     /// Optional container that holds either the result or an exception.
-    std::optional<std::variant<T, std::exception_ptr>> ErrorOr;
+    std::optional<std::expected<T, std::exception_ptr>> ErrorOr;
 };
 
 /**
@@ -148,7 +148,7 @@ struct TFutureBase {
     ~TFutureBase() { if (Coro) { Coro.destroy(); } }
 
     bool await_ready() const {
-        return Coro.promise().ErrorOr != std::nullopt;
+        return Coro.promise().ErrorOr.has_value();
     }
 
     bool done() const {
@@ -182,10 +182,10 @@ template<typename T>
 struct TFuture : public TFutureBase<T> {
     T await_resume() {
         auto& errorOr = *this->Coro.promise().ErrorOr;
-        if (auto* res = std::get_if<T>(&errorOr)) {
-            return std::move(*res);
+        if (errorOr.has_value()) {
+            return std::move(errorOr.value());
         } else {
-            std::rethrow_exception(std::get<std::exception_ptr>(errorOr));
+            std::rethrow_exception(errorOr.error());
         }
     }
 
