@@ -334,27 +334,3 @@ class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Ac
 
 ### Official Site
 [Official Site](https://coroio.dev/)
-}
-```
-
-### Performance Results
-
-* CPU Apple M1
-* MacBook Air M1 16G
-* MacOS 12.6.3
-
-**Local ring (100 actors, 1024 batch size):**
-- Akka: 26,931,469 msg/s
-- Coroio: 61,189,300 msg/s
-
-**Distributed ring (10 actors, 1024 batch size):**
-- Akka: 3,627 msg/s
-- Coroio: 357,996 msg/s
-
-### Projects Using coroio
-
-- **miniraft-cpp**: A minimal implementation of the Raft consensus algorithm, leveraging coroio for efficient and asynchronous I/O operations. [View on GitHub](https://github.com/resetius/miniraft-cpp).
-
-
-### Official Site
-[Official Site](https://coroio.dev/)
