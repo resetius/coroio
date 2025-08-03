@@ -35,6 +35,9 @@ This library leverages C++ coroutines for asynchronous programming, providing ef
    - **`TByteReader`** and **`TByteWriter`**: Ensure the specified number of bytes is read or written, useful for guaranteed data transmission.
    - **`TLineReader`**: Facilitates line-by-line reading, simplifying the handling of text-based protocols or file inputs.
 
+5. **Actor System**:
+   - Actor-based concurrency model for message-passing systems with typed behaviors and async processing.
+
 #### Supported Operating Systems
 
 The library supports the following operating systems:
@@ -140,6 +143,117 @@ int main() {
 
 5. **Processing Loop**:
    - The loop continues reading lines from standard input and echoes back the server's response until the input stream ends.
+
+### Actor System Example
+
+The actor system provides message-passing concurrency with typed behaviors. Here's a simple counter actor example:
+
+```cpp
+#include <coroio/all.hpp>
+#include <coroio/actors/actor.hpp>
+#include <iostream>
+
+using namespace NNet;
+using namespace NNet::NActors;
+
+// Define message types
+struct IncrementMessage {
+    static constexpr TMessageId MessageId = 1;
+    int value;
+};
+
+struct GetCountMessage {
+    static constexpr TMessageId MessageId = 2;
+};
+
+struct CountResponseMessage {
+    static constexpr TMessageId MessageId = 3;
+    int count;
+};
+
+// Simple synchronous actor
+class CounterActor : public IActor {
+private:
+    int counter_ = 0;
+
+public:
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        if (messageId == IncrementMessage::MessageId) {
+            auto message = DeserializeNear<IncrementMessage>(blob);
+            counter_ += message.value;
+            std::cout << "Counter incremented by " << message.value
+                     << ", new value: " << counter_ << "\n";
+        } else if (messageId == GetCountMessage::MessageId) {
+            ctx->Send(ctx->Sender(), CountResponseMessage{counter_});
+        }
+    }
+};
+
+// Behavior-based actor with typed message handling
+class BehaviorCounterActor : public IBehaviorActor,
+                           public TBehavior<BehaviorCounterActor, IncrementMessage, GetCountMessage> {
+private:
+    int counter_ = 0;
+
+public:
+    BehaviorCounterActor() {
+        Become(this); // Set initial behavior
+    }
+
+    void Receive(IncrementMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
+        counter_ += msg.value;
+        std::cout << "Behavior counter: " << counter_ << "\n";
+    }
+
+    TFuture<void> Receive(GetCountMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
+        // Async response with delay
+        co_await ctx->Sleep(std::chrono::milliseconds(100));
+        ctx->Send(ctx->Sender(), CountResponseMessage{counter_});
+    }
+
+    void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
+        std::cout << "Unknown message: " << messageId << "\n";
+    }
+};
+
+template<typename TPoller>
+TFuture<void> actorExample(TPoller& poller) {
+    TActorSystem actorSystem;
+
+    // Register actors
+    auto counterActor = actorSystem.Register(std::make_unique<CounterActor>());
+    auto behaviorActor = actorSystem.Register(std::make_unique<BehaviorCounterActor>());
+
+    // Send messages
+    actorSystem.Send(counterActor, IncrementMessage{5});
+    actorSystem.Send(counterActor, IncrementMessage{10});
+    actorSystem.Send(behaviorActor, IncrementMessage{3});
+
+    // Request-response pattern would require additional setup
+    // This is a basic fire-and-forget example
+
+    co_return;
+}
+```
+
+#### Key Points of the Actor Example
+
+1. **Message Definition**:
+   - Each message type has a unique `MessageId` constant for identification.
+   - Messages are serialized/deserialized automatically by the system.
+
+2. **Simple Actor**:
+   - `CounterActor` inherits from `IActor` and implements synchronous message handling.
+   - All message processing happens in the `Receive` method with manual message type checking.
+
+3. **Behavior-Based Actor**:
+   - `BehaviorCounterActor` uses typed behaviors for cleaner message handling.
+   - Each message type gets its own `Receive` method with automatic deserialization.
+   - Supports both synchronous (`void`) and asynchronous (`TFuture<void>`) message handlers.
+
+4. **Actor System**:
+   - Actors are registered with the system and receive unique IDs.
+   - Messages are sent using actor IDs and message objects.
 
 ## Benchmark
 
