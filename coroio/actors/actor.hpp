@@ -91,7 +91,7 @@
  *         co_await ctx->Sleep(std::chrono::milliseconds(100));
  *
  *         auto result = co_await processAsync(msg.data);
- *         ctx->Send(ctx->Sender(), ResultMessage{result}, SerializeNear(ResultMessage{result}));
+ *         ctx->Send(ctx->Sender(), ResultMessage{result});
  *     }
  *
  *     void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {

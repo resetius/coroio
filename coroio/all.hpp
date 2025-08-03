@@ -88,12 +88,13 @@ using TDefaultPoller = TPoll;
  *
  * @section features_sec Key Features
  *
- * The library’s core functionality is exposed through a few high-level classes:
+ * The library's core functionality is exposed through a few high-level classes:
  * - @ref TSocket and @ref TPollerDrivenSocket for asynchronous networking.
  * - @ref TFileHandle and @ref TPollerDrivenFileHandle for asynchronous file I/O.
  * - @ref TLineReader for efficient, line-based input.
  * - @ref TByteReader and @ref TByteWriter for byte-level I/O.
  * - @ref TResolver and @ref TResolvConf for DNS resolution.
+ * - Actor-based concurrency model for message-passing systems (see @ref NNet::NActors::IActor).
  *
  * In addition to these, the library supports multiple polling mechanisms for asynchronous operations:
  *
@@ -137,6 +138,43 @@ using TDefaultPoller = TPoll;
  *         std::cout << "Exception: " << ex.what() << "\n";
  *     }
  *
+ *     co_return;
+ * }
+ * @endcode
+ *
+ * @section actor_example_sec Example: Simple Actor
+ *
+ * The following example demonstrates basic actor usage for message processing:
+ *
+ * @code{.cpp}
+ * struct TCounterMessage {
+ *     static constexpr TMessageId MessageId = 1;
+ *     int value;
+ * };
+ *
+ * class TCounterActor : public IActor {
+ * private:
+ *     int counter = 0;
+ *
+ * public:
+ *     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+ *         if (messageId == TCounterMessage::MessageId) {
+ *             auto message = DeserializeNear<TCounterMessage>(blob);
+ *             counter += message.value;
+ *             std::cout << "Counter: " << counter << "\n";
+ *         }
+ *     }
+ * };
+ *
+ * template<typename TPoller>
+ * TFuture<void> actorExample(TPoller& poller) {
+ *     TActorSystem actorSystem;
+ *     auto actorId = actorSystem.Register(std::make_unique<TCounterActor>());
+ *     
+ *     actorSystem.Send(actorId, TCounterMessage{5});
+ *     actorSystem.Send(actorId, TCounterMessage{10});
+ *     actorSystem.Send(actorId, TCounterMessage{-3});
+ *     
  *     co_return;
  * }
  * @endcode
