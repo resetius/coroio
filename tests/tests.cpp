@@ -8,6 +8,7 @@
 #include <signal.h>
 
 #include <coroio/all.hpp>
+#include <coroio/ws/utils.hpp>
 
 #include <unordered_set>
 

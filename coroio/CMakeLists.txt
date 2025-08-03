@@ -8,24 +8,24 @@ set(SOURCES
   init.cpp
   socket.cpp
   sockutils.cpp
-  poll.cpp
-  select.cpp
-  epoll.cpp
-  uring.cpp
-  kqueue.cpp
   resolver.cpp
   ssl.cpp
-  iocp.cpp
-  ws.cpp
   win32_pipe.cpp
-  utils.cpp
+  backends/poll.cpp
+  backends/select.cpp
+  backends/epoll.cpp
+  backends/uring.cpp
+  backends/kqueue.cpp
+  backends/iocp.cpp
+  ws/ws.cpp
+  ws/utils.cpp
 )
 
 if (WIN32)
   list(APPEND SOURCES
-    wepoll.c
+    backends/wepoll.c
   )
-  set_source_files_properties(wepoll.c PROPERTIES COMPILE_FLAGS "-w")
+  set_source_files_properties(backends/wepoll.c PROPERTIES COMPILE_FLAGS "-w")
 endif ()
 
 add_library(coroio ${SOURCES})

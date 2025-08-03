@@ -1,5 +1,5 @@
 #include <coroio/all.hpp>
-#include <coroio/ws.hpp>
+#include <coroio/ws/ws.hpp>
 #include <coroio/resolver.hpp>
 
 #include <regex>
