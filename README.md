@@ -200,7 +200,7 @@ private:
 
 public:
     BehaviorCounterActor() {
-        Become(this); 
+        Become(this);
     }
 
     void Receive(IncrementMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
@@ -287,11 +287,11 @@ Performance comparison using different event notification mechansims in Libevent
 
 ## Actor Benchmark
 
-The actor benchmark measures message-passing throughput in a ring topology where actors forward messages to the next actor in the ring.
+The actor benchmark measures message-passing throughput in a ring topology where actors forward messages to the next actor in the ring, counting messages that pass through the first actor (seed messages are not counted).
 
-### Local Ring Actor Benchmark
-
-This benchmark creates a ring of actors within a single process, measuring pure message-passing performance:
+The benchmark runs in two modes:
+- **Local mode**: 100 actors created within a single process
+- **Distributed mode**: 10 separate processes, each containing 1 actor
 
 ```scala
 class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Actor {
@@ -313,27 +313,27 @@ class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Ac
 }
 ```
 
-### Distributed Ring Actor Benchmark
+### Performance Results
 
-This benchmark distributes actors across network nodes, measuring distributed message-passing performance:
+* CPU Apple M1
+* MacBook Air M1 16G
+* MacOS 12.6.3
 
-```scala
-class PingActor(isFirstNode: Boolean, totalMessages: Int, nextConfig: NodeConfig) extends Actor {
-  private var remaining = totalMessages
-  private var nextRef: ActorRef = _
+**Local ring (100 actors, 1024 batch size):**
+- Akka: 26,931,469 msg/s
+- Coroio: 61,189,300 msg/s
 
-  def receive: Receive = {
-    case PingMessage =>
-      if (!(isFirstNode && remaining == 0)) {
-        nextRef ! PingMessage
+**Distributed ring (10 actors, 1024 batch size):**
+- Akka: 3,627 msg/s
+- Coroio: 357,996 msg/s
 
-        if (isFirstNode) {
-          if (sender() != context.system.deadLetters) {
-            remaining -= 1
-          }
-        }
-      }
-  }
+### Projects Using coroio
+
+- **miniraft-cpp**: A minimal implementation of the Raft consensus algorithm, leveraging coroio for efficient and asynchronous I/O operations. [View on GitHub](https://github.com/resetius/miniraft-cpp).
+
+
+### Official Site
+[Official Site](https://coroio.dev/)
 }
 ```
 
