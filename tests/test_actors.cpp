@@ -408,6 +408,69 @@ void test_behavior(void**) {
     assert_true(richBehavior.PodReceived.field5 == 1.618);
 }
 
+struct TMyActor : public IBehaviorActor,
+                  public TBehavior<TMyActor, TWrappedString, TPodMessage> {
+
+    TPodMessage PodReceived;
+    TWrappedString StrReceived;
+
+    struct TEmptyBehavior : public TBehavior<TEmptyBehavior> {
+        void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
+            std::cerr << "EmptyBehavior received unknown message: " << messageId << "\n";
+        }
+    };
+
+    TEmptyBehavior EmptyBehavior;
+
+    TMyActor() {
+        Become(this);
+    }
+
+    void Receive(TWrappedString&& message, TBlob blob, TActorContext::TPtr ctx) {
+        StrReceived = std::move(message);
+    }
+    TFuture<void> Receive(TPodMessage&& message, TBlob blob, TActorContext::TPtr ctx) {
+        PodReceived = std::move(message);
+        Become(&EmptyBehavior);
+        co_return;
+    }
+    void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {}
+};
+
+void test_behavior_actor(void**) {
+    TAllocator alloc;
+    TActorSystem actorSystem(nullptr);
+
+    IActor::TPtr actor = std::make_unique<TMyActor>();
+
+    TActorContext::TPtr ctx;
+    ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
+    auto strNearBlob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
+    actor->Receive(TWrappedString::MessageId, strNearBlob, std::move(ctx));
+
+    auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
+    ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
+    actor->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+
+    auto check = [&] () {
+        auto& myActor = static_cast<TMyActor&>(*actor);
+        assert_true(myActor.StrReceived.Value == "Hello, World!");
+        assert_true(myActor.PodReceived.field1 == 42);
+        assert_true(myActor.PodReceived.field2 == 3.14);
+        assert_true(myActor.PodReceived.field3 == 'x');
+        assert_true(myActor.PodReceived.field4 == 2.71);
+        assert_true(myActor.PodReceived.field5 == 1.618);
+    };
+
+    check();
+
+    podNearBlob = SerializeNear(TPodMessage{41, 1.14, 'y', 1.71, 2.618}, alloc);
+    ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
+    actor->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+
+    check();
+}
+
 int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
@@ -420,7 +483,8 @@ int main() {
         cmocka_unit_test(test_serialize_messages_factory),
         cmocka_unit_test(test_serialize_messages_factory_non_pod),
         cmocka_unit_test(test_unbounded_vector_queue),
-        cmocka_unit_test(test_behavior)
+        cmocka_unit_test(test_behavior),
+        cmocka_unit_test(test_behavior_actor)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
