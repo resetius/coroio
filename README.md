@@ -285,6 +285,72 @@ Performance comparison using different event notification mechansims in Libevent
 
 <img src="/bench/bench_M1.png?raw=true" width="400"/><img src="/bench/bench_M1_100.png?raw=true" width="400"/>
 
+## Actor Benchmark
+
+The actor benchmark measures message-passing throughput in a ring topology where actors forward messages to the next actor in the ring.
+
+### Local Ring Actor Benchmark
+
+This benchmark creates a ring of actors within a single process, measuring pure message-passing performance:
+
+```scala
+class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Actor {
+  private var remain = M
+
+  def receive: Receive = {
+    case Next =>
+      if (!(idx == 0 && remain == 0)) {
+        // Forward the message to the next actor
+        ring((idx + 1) % N) ! Next
+
+        if (idx == 0) {
+          if (sender() != context.system.deadLetters) {
+            remain -= 1
+          }
+        }
+      }
+  }
+}
+```
+
+### Distributed Ring Actor Benchmark
+
+This benchmark distributes actors across network nodes, measuring distributed message-passing performance:
+
+```scala
+class PingActor(isFirstNode: Boolean, totalMessages: Int, nextConfig: NodeConfig) extends Actor {
+  private var remaining = totalMessages
+  private var nextRef: ActorRef = _
+
+  def receive: Receive = {
+    case PingMessage =>
+      if (!(isFirstNode && remaining == 0)) {
+        nextRef ! PingMessage
+
+        if (isFirstNode) {
+          if (sender() != context.system.deadLetters) {
+            remaining -= 1
+          }
+        }
+      }
+  }
+}
+```
+
+### Performance Results
+
+* CPU Apple M1
+* MacBook Air M1 16G
+* MacOS 12.6.3
+
+**Local ring (100 actors, 1024 batch size):**
+- Akka: 26,931,469 msg/s
+- Coroio: 61,189,300 msg/s
+
+**Distributed ring (10 actors, 1024 batch size):**
+- Akka: 3,627 msg/s
+- Coroio: 357,996 msg/s
+
 ### Projects Using coroio
 
 - **miniraft-cpp**: A minimal implementation of the Raft consensus algorithm, leveraging coroio for efficient and asynchronous I/O operations. [View on GitHub](https://github.com/resetius/miniraft-cpp).
