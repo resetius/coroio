@@ -320,8 +320,8 @@ class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Ac
 * MacOS 15.5
 
 **Local ring (100 actors, 1024 batch size):**
-- Akka: 26,931,469 msg/s
-- Coroio: 61,189,300 msg/s
+- Akka: 269,314 msg/s
+- Coroio: 611,893 msg/s
 
 **Distributed ring (10 actors, 1024 batch size):**
 - Akka: 3,627 msg/s
