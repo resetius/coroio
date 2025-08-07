@@ -16,11 +16,10 @@ struct TNext {
 
 class TRingActor : public IActor {
 public:
-    TRingActor(size_t idx, size_t n, size_t m, std::vector<TActorId>& r)
+    TRingActor(size_t idx, size_t totalMessages, std::vector<TActorId>& r)
       : Idx_(idx)
-      , N_(n)
-      , Remain_(m)
-      , M_(m)
+      , Remain_(totalMessages)
+      , TotalMessages_(totalMessages)
       , Ring_(r)
     { }
 
@@ -34,7 +33,7 @@ public:
             return;
         }
 
-        ctx->Send(Ring_[(Idx_ + 1)%N_], TNext{});
+        ctx->Send(Ring_[(Idx_ + 1)%Ring_.size()], TNext{});
 
         if (Idx_ == 0) {
             if (ctx->Sender()) {
@@ -55,7 +54,7 @@ private:
         auto now = std::chrono::steady_clock::now();
         double secs = std::chrono::duration<double>(now - StartTime_).count();
         std::cout << "\nRing throughput: "
-                    << (double)(N_ * M_) / secs
+                    << (double)(TotalMessages_) / secs
                     << " msg/s\n";
         for (auto& idx : Ring_) {
             ctx->Send(idx, TPoison{});
@@ -63,8 +62,8 @@ private:
     }
 
     void PrintProgress() {
-        size_t processed = M_ - Remain_;
-        int percent = int((processed * 100) / M_);
+        size_t processed = TotalMessages_ - Remain_;
+        int percent = int((processed * 100) / TotalMessages_);
         if (percent != LastPercent_) {
             LastPercent_ = percent;
             const int barWidth = 50;
@@ -88,18 +87,17 @@ private:
 
     bool TimerStarted_ = false;
     size_t Idx_;
-    size_t N_;
     size_t Remain_;
-    size_t M_;
+    size_t TotalMessages_;
     std::vector<TActorId>& Ring_;
     std::chrono::steady_clock::time_point StartTime_;
     int LastPercent_ = -1;
 };
 
 int main(int argc, char** argv) {
-    size_t N = 2; // Number of actors
-    size_t M = 100; // Messages
-    size_t B = 1; // Batch size
+    size_t numActors = 2; // Number of actors
+    size_t totalMessages = 100; // Messages
+    size_t batchSize = 1; // Batch size
     std::string mode = "throughput";
 
     TLoop<TDefaultPoller> loop;
@@ -109,15 +107,15 @@ int main(int argc, char** argv) {
     for (int i = 0; i < argc; ++i) {
         if (std::string(argv[i]) == "--actors") {
             if (i + 1 < argc) {
-                N = std::stoul(argv[++i]);
+                numActors = std::stoul(argv[++i]);
             }
         } else if (std::string(argv[i]) == "--messages") {
             if (i + 1 < argc) {
-                M = std::stoul(argv[++i]);
+                totalMessages = std::stoul(argv[++i]);
             }
         } else if (std::string(argv[i]) == "--batch") {
             if (i + 1 < argc) {
-                B = std::stoul(argv[++i]);
+                batchSize = std::stoul(argv[++i]);
             }
         } else if (std::string(argv[i]) == "--mode") {
             if (i + 1 < argc) {
@@ -126,16 +124,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (mode == "throughput") {
-        ringIds.resize(N);
-        for (size_t i = 0; i < N; ++i) {
-            ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, N, M, ringIds));
-        }
-        for (int i = 0; i < B; i++) {
-            sys.Send(TActorId{}, ringIds[0], TNext{});
-        }
-    } else {
-        // Unsupported yet
+    ringIds.resize(numActors);
+    for (size_t i = 0; i < numActors; ++i) {
+        ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, totalMessages, ringIds));
+    }
+    for (int i = 0; i < batchSize; i++) {
+        sys.Send(TActorId{}, ringIds[0], TNext{});
     }
 
     sys.Serve();
