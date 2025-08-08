@@ -3,6 +3,8 @@ set(SOURCES
     actor.cpp
     actorsystem.hpp
     actorsystem.cpp
+    envelope_reader.hpp
+    envelope_reader.cpp
     node.hpp
     node.cpp
     messages.hpp
