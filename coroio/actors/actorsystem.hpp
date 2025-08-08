@@ -192,9 +192,11 @@ private:
         try {
             while (true) {
                 auto size = co_await socket.ReadSome(buffer, ReadSize);
-                if (size <= 0) {
-                    // TODO: handle disconnection
+                if (size < 0) {
                     continue;
+                }
+                if (size == 0) {
+                    throw std::runtime_error("Socket closed");
                 }
                 envelopeReader.Push(buffer, size);
                 while (auto envelope = envelopeReader.Pop()) {
