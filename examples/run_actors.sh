@@ -22,4 +22,4 @@ done
 
 # Run first node in foreground
 echo "Starting node 1 in foreground"
-./examples/ping_actors --inflight $INFL --node-id 1 $NODE_ARGS
+./examples/ping_actors --inflight $INFL --messages 10000000 --node-id 1 $NODE_ARGS
