@@ -111,6 +111,7 @@ int main(int argc, char** argv) {
     int port = 0;
     int delay = 5000;
     int inflight = 2;
+    int messages = 100000;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -142,8 +143,10 @@ int main(int argc, char** argv) {
             delay = std::stoi(argv[++i]);
         } else if (!strcmp(argv[i], "--inflight") && i + 1 < argc) {
             inflight = std::stoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--messages") && i + 1 < argc) {
+            messages = std::stoi(argv[++i]);
         } else if (!strcmp(argv[i], "--help")) {
-            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n]\n";
+            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n]\n";
             return 0;
         } else {
             std::cerr << "Unknown argument: " << argv[i] << "\n";
@@ -172,7 +175,7 @@ int main(int argc, char** argv) {
     int nextIdx = (myIdx + 1) % nodeIds.size();
     TNodeId nextNodeId = nodeIds[nextIdx];
 
-    auto pingActor = std::make_unique<TPingActor>(myNodeId == nodeIds.front(), 100000, nextNodeId, nodeIds);
+    auto pingActor = std::make_unique<TPingActor>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds);
     auto pingActorId = sys.Register(std::move(pingActor));
 
     TAddress address{"::", port};

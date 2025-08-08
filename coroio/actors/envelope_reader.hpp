@@ -19,6 +19,12 @@ public:
     void Push(const char* buf, size_t size);
 
     std::optional<TEnvelope> Pop();
+    bool Empty() const {
+        return Messages.empty();
+    }
+    size_t Size() const {
+        return Buffer.size();
+    }
 
 private:
     void Process();

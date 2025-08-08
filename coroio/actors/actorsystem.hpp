@@ -183,32 +183,35 @@ private:
 
     template<typename TSocket>
     TVoidTask InboundConnection(TSocket socket) {
-        static constexpr auto BatchSize = 16;
-        static constexpr size_t ReadSize = 1024;
-        char buffer[ReadSize] = {0};
+        static constexpr size_t ReadSize = 1024 * 1024;
+        static constexpr size_t InflightBytes = 1024 * 1024; // 1MB
+        std::vector<char> buffer(ReadSize);
         TEnvelopeReader envelopeReader;
         uint64_t message = 0;
 
         try {
             while (true) {
-                auto size = co_await socket.ReadSome(buffer, ReadSize);
-                if (size < 0) {
-                    continue;
+                if (envelopeReader.Size() > InflightBytes && !envelopeReader.Empty()) {
+                    co_await Poller->Yield();
+                } else {
+                    auto size = co_await socket.ReadSome(buffer.data(), ReadSize);
+                    if (size < 0) {
+                        continue;
+                    }
+                    if (size == 0) {
+                        throw std::runtime_error("Socket closed");
+                    }
+
+                    envelopeReader.Push(buffer.data(), size);
                 }
-                if (size == 0) {
-                    throw std::runtime_error("Socket closed");
-                }
-                envelopeReader.Push(buffer, size);
+
                 while (auto envelope = envelopeReader.Pop()) {
-                    if (envelope->Recipient.NodeId() != NodeId_) {
+                    if (envelope->Recipient.NodeId() != NodeId_) [[unlikely]] {
                         std::cerr << "Received message for different node: " << envelope->Recipient.ToString() << "\n";
                         continue;
                     }
 
                     Send(envelope->Sender, envelope->Recipient, envelope->MessageId, std::move(envelope->Blob));
-                    if (++message % BatchSize == 0) {
-                        co_await Poller->Yield();
-                    }
                 }
             }
         } catch (const std::exception& e) {
