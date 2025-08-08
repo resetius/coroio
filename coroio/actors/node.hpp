@@ -1,6 +1,7 @@
 #pragma once
 
 #include "actor.hpp"
+#include "envelope_reader.hpp"
 #include "messages_factory.hpp"
 
 #include <coroio/address.hpp>
@@ -16,13 +17,6 @@ public:
     virtual void StartConnect() = 0;
     virtual void Drain() = 0;
     virtual THostPort GetHostPort() const = 0;
-};
-
-struct TSendData {
-    TActorId Sender;
-    TActorId Recipient;
-    TMessageId MessageId = 0;
-    uint32_t Size = 0;
 };
 
 template<typename TPoller, typename TResolver>

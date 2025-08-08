@@ -1,6 +1,7 @@
 #pragma once
 
 #include "actor.hpp"
+#include "envelope_reader.hpp"
 #include "node.hpp"
 #include "queue.hpp"
 
@@ -182,29 +183,30 @@ private:
 
     template<typename TSocket>
     TVoidTask InboundConnection(TSocket socket) {
-        TStructReader<TSendData, TSocket> reader(socket);
         static constexpr auto BatchSize = 16;
+        static constexpr size_t ReadSize = 1024;
+        char buffer[ReadSize] = {0};
+        TEnvelopeReader envelopeReader;
         uint64_t message = 0;
 
         try {
             while (true) {
-                auto data = co_await reader.Read();
-                if (data.Recipient.NodeId() != NodeId_) {
-                    std::cerr << "Received message for different node: " << data.Recipient.ToString() << "\n";
+                auto size = co_await socket.ReadSome(buffer, ReadSize);
+                if (size <= 0) {
+                    // TODO: handle disconnection
                     continue;
                 }
-                TBlob blob{};
-                if (data.Size > 0) {
-                    blob.Size = data.Size;
-                    blob.Type = TBlob::PointerType::Far;
-                    blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
-                        ::operator delete(ptr);
-                    });
-                    co_await TByteReader(socket).Read(blob.Data.get(), blob.Size);
-                }
-                Send(data.Sender, data.Recipient, data.MessageId, std::move(blob));
-                if (++message % BatchSize == 0) {
-                    co_await Poller->Yield();
+                envelopeReader.Push(buffer, size);
+                while (auto envelope = envelopeReader.Pop()) {
+                    if (envelope->Recipient.NodeId() != NodeId_) {
+                        std::cerr << "Received message for different node: " << envelope->Recipient.ToString() << "\n";
+                        continue;
+                    }
+
+                    Send(envelope->Sender, envelope->Recipient, envelope->MessageId, std::move(envelope->Blob));
+                    if (++message % BatchSize == 0) {
+                        co_await Poller->Yield();
+                    }
                 }
             }
         } catch (const std::exception& e) {
