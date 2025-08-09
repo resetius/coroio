@@ -36,7 +36,7 @@ public:
         if (blob.Size > 0) {
             blob = Factory.SerializeFar(envelope.MessageId, std::move(blob));
         }
-        TSendData data{
+        THeader data{
             .Sender = envelope.Sender,
             .Recipient = envelope.Recipient,
             .MessageId = envelope.MessageId,
@@ -103,7 +103,7 @@ private:
                 {
                     auto sender = TActorId(0, 0, 0);
                     auto recipient = TActorId(0, 0, 0);
-                    TSendData data{
+                    THeader data{
                         .Sender = sender,
                         .Recipient = recipient,
                         .MessageId = 0

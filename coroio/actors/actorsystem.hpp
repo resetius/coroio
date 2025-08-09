@@ -183,17 +183,16 @@ private:
 
     template<typename TSocket>
     TVoidTask InboundConnection(TSocket socket) {
-        static constexpr size_t ReadSize = 1024 * 1024;
-        static constexpr size_t InflightBytes = 1024 * 1024; // 1MB
+        static constexpr size_t ReadSize = 512 * 1024;
+        static constexpr size_t InflightBytes = 16 * 1024 * 1024;
+        static constexpr size_t MaxBytesBeforeYield = 2 * 1024 * 1024;
         std::vector<char> buffer(ReadSize);
         TEnvelopeReader envelopeReader;
         uint64_t message = 0;
 
         try {
             while (true) {
-                if (envelopeReader.Size() > InflightBytes && !envelopeReader.Empty()) {
-                    co_await Poller->Yield();
-                } else {
+                if (envelopeReader.Size() < InflightBytes || envelopeReader.NeedMoreData()) {
                     auto size = co_await socket.ReadSome(buffer.data(), ReadSize);
                     if (size < 0) {
                         continue;
@@ -205,13 +204,19 @@ private:
                     envelopeReader.Push(buffer.data(), size);
                 }
 
+                size_t bytesProcessed = 0;
                 while (auto envelope = envelopeReader.Pop()) {
                     if (envelope->Recipient.NodeId() != NodeId_) [[unlikely]] {
                         std::cerr << "Received message for different node: " << envelope->Recipient.ToString() << "\n";
                         continue;
                     }
 
+                    bytesProcessed += envelope->Blob.Size + sizeof(TSendData);
                     Send(envelope->Sender, envelope->Recipient, envelope->MessageId, std::move(envelope->Blob));
+                    if (bytesProcessed >= MaxBytesBeforeYield) {
+                        co_await Poller->Yield();
+                        break;
+                    }
                 }
             }
         } catch (const std::exception& e) {
