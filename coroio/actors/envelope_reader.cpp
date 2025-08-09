@@ -9,10 +9,10 @@ void TEnvelopeReader::Push(const char* buf, size_t size) {
 }
 
 void TEnvelopeReader::Process() {
-    while (Buffer.size() >= sizeof(TSendData)) {
+    while (Buffer.size() >= sizeof(THeader)) {
         if (!HasHeader) {
-            std::copy(Buffer.begin(), Buffer.begin() + sizeof(TSendData), reinterpret_cast<char*>(&Header));
-            Buffer.erase(Buffer.begin(), Buffer.begin() + sizeof(TSendData));
+            std::copy(Buffer.begin(), Buffer.begin() + sizeof(THeader), reinterpret_cast<char*>(&Header));
+            Buffer.erase(Buffer.begin(), Buffer.begin() + sizeof(THeader));
             HasHeader = true;
         }
 

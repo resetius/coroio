@@ -211,13 +211,14 @@ private:
                         continue;
                     }
 
-                    bytesProcessed += envelope->Blob.Size + sizeof(TSendData);
+                    bytesProcessed += envelope->Blob.Size + sizeof(THeader);
                     Send(envelope->Sender, envelope->Recipient, envelope->MessageId, std::move(envelope->Blob));
                     if (bytesProcessed >= MaxBytesBeforeYield) {
-                        co_await Poller->Yield();
                         break;
                     }
                 }
+
+                co_await Poller->Yield();
             }
         } catch (const std::exception& e) {
             std::cerr << "Error in InboundConnection: " << e.what() << "\n";
