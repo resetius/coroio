@@ -186,22 +186,21 @@ private:
         static constexpr size_t ReadSize = 512 * 1024;
         static constexpr size_t InflightBytes = 16 * 1024 * 1024;
         static constexpr size_t MaxBytesBeforeYield = 2 * 1024 * 1024;
-        std::vector<char> buffer(ReadSize);
-        TEnvelopeReader envelopeReader;
+        TZeroCopyEnvelopeReader envelopeReader(InflightBytes);
         uint64_t message = 0;
 
         try {
             while (true) {
                 if (envelopeReader.Size() < InflightBytes || envelopeReader.NeedMoreData()) {
-                    auto size = co_await socket.ReadSome(buffer.data(), ReadSize);
+                    auto buffer = envelopeReader.Acquire(ReadSize);
+                    auto size = co_await socket.ReadSome(buffer.data(), buffer.size());
                     if (size < 0) {
                         continue;
                     }
                     if (size == 0) {
                         throw std::runtime_error("Socket closed");
                     }
-
-                    envelopeReader.Push(buffer.data(), size);
+                    envelopeReader.Commit(size);
                 }
 
                 size_t bytesProcessed = 0;

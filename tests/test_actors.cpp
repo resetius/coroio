@@ -471,6 +471,84 @@ void test_behavior_actor(void**) {
     check();
 }
 
+void test_envelope_reader(void**) {
+    TAllocator alloc;
+    TZeroCopyEnvelopeReader reader(64);
+    assert_true(reader.Size() == 0);
+
+    for (int i = 0; i < 2; ++i) {
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(i),
+        };
+        auto buffer = reader.Acquire(sizeof(THeader));
+        assert_true(buffer.size() == sizeof(THeader));
+        std::memcpy(buffer.data(), &header, sizeof(THeader));
+        reader.Commit(sizeof(THeader));
+    }
+
+    auto envelope = reader.Pop();
+    assert_true(envelope.has_value());
+    assert_true(envelope->Sender == TActorId(1, 1, 1));
+    assert_true(envelope->Recipient == TActorId(1, 2, 2));
+    assert_true(envelope->MessageId == 0);
+    assert_true(envelope->Blob.Size == 0);
+
+    envelope = reader.Pop();
+    assert_true(envelope.has_value());
+    assert_true(envelope->Sender == TActorId(1, 1, 1));
+    assert_true(envelope->Recipient == TActorId(1, 2, 2));
+    assert_true(envelope->MessageId == 1);
+    assert_true(envelope->Blob.Size == 0);
+
+    {
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(2),
+            .Size = 0
+        };
+        auto buffer = reader.Acquire(sizeof(THeader));
+        assert_true(buffer.size() == 16);
+        std::memcpy(buffer.data(), &header, 16);
+        reader.Commit(buffer.size());
+
+        buffer = reader.Acquire(8);
+        assert_true(buffer.size() == 8);
+        std::memcpy(buffer.data(), ((char*)&header) + 16, 8);
+        reader.Commit(buffer.size());
+    }
+
+    envelope = reader.Pop();
+    assert_true(envelope.has_value());
+    assert_true(envelope->Sender == TActorId(1, 1, 1));
+    assert_true(envelope->Recipient == TActorId(1, 2, 2));
+    assert_true(envelope->MessageId == 2);
+    assert_true(envelope->Blob.Size == 0);
+
+    for (int i = 0; i < 10; ++i) {
+        auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
+        auto farBlob = SerializeFar<TWrappedString>(nearBlob);
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(i),
+            .Size = farBlob.Size
+        };
+        reader.Push(reinterpret_cast<const char*>(&header), sizeof(THeader));
+        reader.Push(static_cast<const char*>(farBlob.Data.get()), farBlob.Size);
+    }
+
+    for (int i = 0; i < 10; ++i) {
+        auto envelope = reader.Pop();
+        assert_true(envelope.has_value());
+        assert_true(envelope->MessageId == i);
+        auto&& str = DeserializeFar<TWrappedString>(envelope->Blob);
+        assert_string_equal(str.Value.c_str(), ("Message " + std::to_string(i)).c_str());
+    }
+}
+
 int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
@@ -481,6 +559,7 @@ int main() {
         cmocka_unit_test(test_serialize_pod),
         cmocka_unit_test(test_serialize_non_pod),
         cmocka_unit_test(test_serialize_messages_factory),
+        cmocka_unit_test(test_envelope_reader),
         cmocka_unit_test(test_serialize_messages_factory_non_pod),
         cmocka_unit_test(test_unbounded_vector_queue),
         cmocka_unit_test(test_behavior),
