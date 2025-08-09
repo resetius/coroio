@@ -1,8 +1,10 @@
 #pragma once
 
 #include "actor.hpp"
+#include "queue.hpp"
 
 #include <deque>
+#include <span>
 
 namespace NNet {
 namespace NActors {
@@ -33,6 +35,27 @@ private:
     THeader Header;
     std::queue<TEnvelope> Messages;
     std::deque<char> Buffer;
+};
+
+class TZeroCopyEnvelopeReader {
+public:
+    TZeroCopyEnvelopeReader(size_t capacity = 1024);
+    std::span<char> Acquire(size_t size);
+    void Commit(size_t size);
+    std::optional<TEnvelope> Pop();
+
+private:
+    void EnsureCapacity();
+    void Process();
+
+    size_t Head = 0;
+    size_t Tail = 0;
+    size_t LastIndex = 0;
+
+    bool HasHeader = false;
+    THeader Header;
+    TUnboundedVectorQueue<TEnvelope> Messages;
+    std::vector<char> Data;
 };
 
 } // namespace NActors

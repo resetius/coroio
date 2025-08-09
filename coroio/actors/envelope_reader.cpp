@@ -48,5 +48,49 @@ std::optional<TEnvelope> TEnvelopeReader::Pop() {
     return std::make_optional(std::move(envelope));
 }
 
+TZeroCopyEnvelopeReader::TZeroCopyEnvelopeReader(size_t capacity)
+    : Data(capacity)
+    , LastIndex(Data.size() - 1)
+{}
+
+size_t TZeroCopyEnvelopeReader::Size() {
+    return (Data.size() + Tail - Head) & LastIndex;
+}
+
+void TZeroCopyEnvelopeReader::EnsureCapacity() {
+    if (Size() == Data.size() - 1) [[unlikely]] {
+        std::vector<char> newData(Data.size() * 2);
+        auto size = Size();
+        for (size_t i = 0; i < size; ++i) {
+            newData[i] = std::move(Data[(Head + i) & LastIndex]);
+        }
+        Data = std::move(newData);
+        Head = 0;
+        Tail = size;
+        LastIndex = Data.size() - 1;
+    }
+}
+
+std::span<char> TZeroCopyEnvelopeReader::Acquire(size_t size)
+{
+    EnsureCapacity();
+    size = std::min(size, Data.size() - Size());
+    auto first = std::min(size, Data.size() - Head);
+    if (first) {
+        return {&Data[Head], first};
+    } else {
+        return {&Data[0], size};
+    }
+}
+
+void TZeroCopyEnvelopeReader::Commit(size_t size)
+{
+    Head = (Head + size) & LastIndex;
+    Process();
+}
+
+std::optional<TEnvelope> TZeroCopyEnvelopeReader::Pop()
+{}
+
 } // namespace NActors
 } // namespace NNet
