@@ -140,10 +140,10 @@ public:
     // Use Serve() for local actors and Serve(TSocket) for local and remote actors
     void Serve();
 
-    template<typename TSocket>
+    template<typename TSocket, typename TEnvelopeReader = TZeroCopyEnvelopeReader>
     void Serve(TSocket socket) {
         Serve();
-        Handles.emplace_back(InboundServe(std::move(socket)));
+        Handles.emplace_back(InboundServe<TSocket, TEnvelopeReader>(std::move(socket)));
         for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
             if (Nodes[i].Node) {
                 Handles.emplace_back(OutboundServe(i));
@@ -170,23 +170,23 @@ private:
         }
     }
 
-    template<typename TSocket>
+    template<typename TSocket, typename TEnvelopeReader>
     TVoidTask InboundServe(TSocket socket) {
         std::cerr << "InboundServe started\n";
         while (true) {
             auto client = co_await socket.Accept();
             std::cerr << "Accepted\n";
-            InboundConnection(std::move(client));
+            InboundConnection<TSocket, TEnvelopeReader>(std::move(client));
         }
         co_return;
     }
 
-    template<typename TSocket>
+    template<typename TSocket, typename TEnvelopeReader>
     TVoidTask InboundConnection(TSocket socket) {
         static constexpr size_t ReadSize = 512 * 1024;
         static constexpr size_t InflightBytes = 16 * 1024 * 1024;
         static constexpr size_t MaxBytesBeforeYield = 2 * 1024 * 1024;
-        TZeroCopyEnvelopeReader envelopeReader(InflightBytes);
+        TEnvelopeReader envelopeReader(InflightBytes, /*lowWatermark = */ 1024);
         uint64_t message = 0;
 
         try {
@@ -202,6 +202,8 @@ private:
                     }
                     envelopeReader.Commit(size);
                 }
+
+                //envelopeReader.PrintDebugInfo();
 
                 size_t bytesProcessed = 0;
                 while (auto envelope = envelopeReader.Pop()) {
