@@ -151,5 +151,52 @@ void TZeroCopyEnvelopeReader::Push(const char* p, size_t len)
     }
 }
 
+TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lowWatermark)
+    : ChunkSize(chunkSize)
+    , LowWatermark(lowWatermark)
+    , CurrentChunk(std::make_unique<TChunk>(chunkSize))
+{ }
+
+void TZeroCopyEnvelopeReaderV2::Rotate() {
+    SealedChunks.emplace_back(std::move(CurrentChunk));
+    if (FreeChunks.empty()) {
+        CurrentChunk = std::make_unique<TChunk>(ChunkSize);
+    } else {
+        CurrentChunk = std::move(FreeChunks.back());
+        FreeChunks.pop_back();
+    }
+}
+
+std::span<char> TZeroCopyEnvelopeReaderV2::Acquire(size_t size) {
+    auto buf = CurrentChunk->TryAcquire(size, LowWatermark);
+    if (!buf.empty()) [[unlikely]] {
+        return buf;
+    }
+    Rotate();
+    return CurrentChunk->Acquire(size);
+}
+
+void TZeroCopyEnvelopeReaderV2::Commit(size_t size) {
+    CurrentChunk->Commit(size);
+}
+
+TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size)
+    : Data(size)
+{ }
+
+std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::Acquire(size_t size) {
+    size = std::min(size, Data.size() - Tail);
+    return {&Data[Tail], size};
+}
+
+std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::TryAcquire(size_t size, size_t lowWatermark) {
+    size = std::min(size, Data.size() - Tail);
+    return size < lowWatermark ? std::span<char>{} : Acquire(size);
+}
+
+void TZeroCopyEnvelopeReaderV2::TChunk::Commit(size_t size) {
+    Tail = Tail + size;
+}
+
 } // namespace NActors
 } // namespace NNet

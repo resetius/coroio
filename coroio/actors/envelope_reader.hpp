@@ -66,5 +66,39 @@ private:
     THeader Header;
 };
 
+class TZeroCopyEnvelopeReaderV2 {
+public:
+    TZeroCopyEnvelopeReaderV2(size_t chunkSize = 1024 * 1024, size_t lowWatermark = 64 * 1024);
+
+    std::span<char> Acquire(size_t size);
+    void Commit(size_t size);
+    std::optional<TEnvelope> Pop();
+    size_t Size() const;
+
+    // for testing purposes
+    void Push(const char* p, size_t len);
+
+private:
+    void Rotate();
+
+    struct TChunk {
+        TChunk(size_t size);
+
+        std::span<char> TryAcquire(size_t size, size_t lowWatermark);
+        std::span<char> Acquire(size_t size);
+
+        std::vector<char> Data;
+        size_t Head = 0;
+        size_t Tail = 0;
+        int UseCount = 0;
+    };
+
+    size_t ChunkSize;
+    size_t LowWatermark;
+    std::unique_ptr<TChunk> CurrentChunk;
+    TUnboundedVectorQueue<std::unique_ptr<TChunk>> SealedChunks;
+    std::vector<std::unique_ptr<TChunk>> FreeChunks;
+};
+
 } // namespace NActors
 } // namespace NNet
