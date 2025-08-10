@@ -80,12 +80,16 @@ public:
 
 private:
     void Rotate();
+    void CopyOut(char* buf, size_t size);
 
     struct TChunk {
         TChunk(size_t size);
 
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
         std::span<char> Acquire(size_t size);
+        bool CopyOut(char* buf, size_t size);
+        size_t Size() const;
+        void Clear();
 
         std::vector<char> Data;
         size_t Head = 0;
@@ -95,6 +99,8 @@ private:
 
     size_t ChunkSize;
     size_t LowWatermark;
+    THeader Header;
+    bool HasHeader = false;
     std::unique_ptr<TChunk> CurrentChunk;
     TUnboundedVectorQueue<std::unique_ptr<TChunk>> SealedChunks;
     std::vector<std::unique_ptr<TChunk>> FreeChunks;

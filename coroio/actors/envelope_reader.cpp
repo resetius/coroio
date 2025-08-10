@@ -158,11 +158,16 @@ TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lo
 { }
 
 void TZeroCopyEnvelopeReaderV2::Rotate() {
-    SealedChunks.emplace_back(std::move(CurrentChunk));
+    if (CurrentChunk->Size() > 0) [[likely]] {
+        SealedChunks.emplace_back(std::move(CurrentChunk));
+    } else {
+        FreeChunks.emplace_back(std::move(CurrentChunk));
+    }
     if (FreeChunks.empty()) {
         CurrentChunk = std::make_unique<TChunk>(ChunkSize);
     } else {
         CurrentChunk = std::move(FreeChunks.back());
+        CurrentChunk->Clear();
         FreeChunks.pop_back();
     }
 }
@@ -178,6 +183,10 @@ std::span<char> TZeroCopyEnvelopeReaderV2::Acquire(size_t size) {
 
 void TZeroCopyEnvelopeReaderV2::Commit(size_t size) {
     CurrentChunk->Commit(size);
+}
+
+TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
+    Head = Tail = 0;
 }
 
 TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size)
@@ -196,6 +205,48 @@ std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::TryAcquire(size_t size, size_
 
 void TZeroCopyEnvelopeReaderV2::TChunk::Commit(size_t size) {
     Tail = Tail + size;
+}
+
+bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf, size_t size) {
+    assert (Data.size() - Head >= size);
+    std::memcpy(buf, &Data[Head], size);
+    Head = Head + size;
+    assert (Head <= Tail);
+    return Head == Tail;
+}
+
+size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
+    return Head - Tail;
+}
+
+void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
+
+}
+
+std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
+    if (!HasHeader) {
+        if (SealedChunks.Empty()) {
+            auto&& chunk = SealedChunks.Front();
+            if (chunk->CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader))) {
+                FreeChunks.emplace_back(std::move(chunk));
+                SealedChunks.Pop();
+            }
+            HasHeader = true;
+        } else if (CurrentChunk->Size() >= sizeof(THeader)) {
+            CurrentChunk->CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+            HasHeader = true;
+        }
+    }
+
+    if (HasHeader && Size() >= Header.Size) {
+        TEnvelope envelope;
+        envelope.Sender = Header.Sender;
+        envelope.Recipient = Header.Recipient;
+        envelope.MessageId = Header.MessageId;
+
+        if (Header.Size > 0) {
+        }
+    }
 }
 
 } // namespace NActors
