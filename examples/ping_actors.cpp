@@ -124,6 +124,7 @@ int main(int argc, char** argv) {
     int delay = 5000;
     int inflight = 2;
     int messages = 100000;
+    int readerType = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -167,6 +168,12 @@ int main(int argc, char** argv) {
                 std::cerr << "\n";
                 return -1;
             }
+        } else if (!strcmp(argv[i], "--reader-type") && i + 1 < argc) {
+            readerType = std::stoi(argv[++i]);
+            if (readerType < 0 || readerType > 1) {
+                std::cerr << "Invalid reader type. Use 0 for TZeroCopyEnvelopeReader or 1 for TZeroCopyEnvelopeReaderV2.\n";
+                return -1;
+            }
         } else if (!strcmp(argv[i], "--help")) {
             std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]\n";
             return 0;
@@ -202,7 +209,21 @@ int main(int argc, char** argv) {
     socket.Bind(address);
     socket.Listen();
 
-    sys.Serve(std::move(socket));
+    auto serve = [&]<typename TEnvelopeReader>() {
+        sys.Serve<decltype(socket), TEnvelopeReader>(std::move(socket));
+    };
+
+    switch (readerType) {
+    case 0:
+        serve.template operator()<TZeroCopyEnvelopeReader>();
+        break;
+    case 1:
+        serve.template operator()<TZeroCopyEnvelopeReaderV2>();
+        break;
+    default:
+        std::cerr << "Unsupported reader type: " << readerType << "\n";
+        return -1;
+    }
 
     auto runner = [&]<size_t MessageSize>() {
         using TPingMessageType = TPingMessage<MessageSize>;

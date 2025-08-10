@@ -7,12 +7,17 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <iostream>
+#include <unordered_set>
 
 #include <coroio/all.hpp>
 #include <coroio/actors/actorsystem.hpp>
 #include <coroio/actors/messages.hpp>
 #include <coroio/actors/messages_factory.hpp>
 #include <coroio/actors/queue.hpp>
+#include <coroio/actors/intrusive_list.hpp>
+
+#include "testlib.h"
+#include "perf.h"
 
 extern "C" {
 #include <cmocka.h>
@@ -20,6 +25,12 @@ extern "C" {
 
 using namespace NNet;
 using namespace NNet::NActors;
+
+struct TState {
+    bool usePerf = false;
+    int maxIterations = 1000000;
+    int messageSize = 0;
+};
 
 struct TPingMessage {
     static constexpr TMessageId MessageId = 100;
@@ -206,8 +217,9 @@ void test_serialize_zero_size(void**) {
     auto deserialized = DeserializeNear<TEmptyMessage>(blob);
     assert_true(deserialized == TEmptyMessage{});
 
-    auto farBlob = SerializeFar<TEmptyMessage>(blob);
-    assert_true(farBlob.Data.get() == blob.Data.get());
+    void* ptr = blob.Data.get();
+    auto farBlob = SerializeFar<TEmptyMessage>(std::move(blob));
+    assert_true(farBlob.Data.get() == ptr);
     assert_true(farBlob.Size == 0);
 
     auto deserializedFar = DeserializeFar<TEmptyMessage>(farBlob);
@@ -239,8 +251,9 @@ void test_serialize_pod(void**) {
     assert_true(deserialized.field4 == 4.0);
     assert_true(deserialized.field5 == 5.0);
 
-    auto farBlob = SerializeFar<TPodMessage>(blob);
-    assert_true(farBlob.Data.get() == blob.Data.get());
+    void* ptr = blob.Data.get();
+    auto farBlob = SerializeFar<TPodMessage>(std::move(blob));
+    assert_true(farBlob.Data.get() == ptr);
 
     auto& deserializedFar = DeserializeFar<TPodMessage>(farBlob);
     assert_true(deserializedFar.field1 == 1);
@@ -288,8 +301,9 @@ void test_serialize_non_pod(void**) {
     std::string& deserialized = DeserializeNear<std::string>(blob);
     assert_string_equal(deserialized.c_str(), "Hello, World!");
 
-    auto farBlob = SerializeFar<std::string>(blob);
-    assert_true(farBlob.Data.get() != blob.Data.get());
+    void* ptr = blob.Data.get();
+    auto farBlob = SerializeFar<std::string>(std::move(blob));
+    assert_true(farBlob.Data.get() != ptr);
     assert_true(farBlob.Size == size);
 
     std::string deserializedFar = DeserializeFar<std::string>(farBlob);
@@ -393,11 +407,11 @@ void test_behavior(void**) {
 
     TActorContext::TPtr ctx;
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    behavior->Receive(TWrappedString::MessageId, strNearBlob, std::move(ctx));
+    behavior->Receive(TWrappedString::MessageId, std::move(strNearBlob), std::move(ctx));
 
     auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    behavior->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+    behavior->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     auto& richBehavior = static_cast<TRichBehavior&>(*behavior);
     assert_true(richBehavior.StrReceived.Value == "Hello, World!");
@@ -446,11 +460,11 @@ void test_behavior_actor(void**) {
     TActorContext::TPtr ctx;
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     auto strNearBlob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
-    actor->Receive(TWrappedString::MessageId, strNearBlob, std::move(ctx));
+    actor->Receive(TWrappedString::MessageId, std::move(strNearBlob), std::move(ctx));
 
     auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    actor->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+    actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     auto check = [&] () {
         auto& myActor = static_cast<TMyActor&>(*actor);
@@ -466,7 +480,7 @@ void test_behavior_actor(void**) {
 
     podNearBlob = SerializeNear(TPodMessage{41, 1.14, 'y', 1.71, 2.618}, alloc);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    actor->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+    actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     check();
 }
@@ -529,7 +543,7 @@ void test_envelope_reader(void**) {
 
     for (int i = 0; i < 10; ++i) {
         auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
-        auto farBlob = SerializeFar<TWrappedString>(nearBlob);
+        auto farBlob = SerializeFar<TWrappedString>(std::move(nearBlob));
         THeader header {
             .Sender = TActorId(1, 1, 1),
             .Recipient = TActorId(1, 2, 2),
@@ -549,21 +563,225 @@ void test_envelope_reader(void**) {
     }
 }
 
-int main() {
-    const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_ping_pong),
-        cmocka_unit_test(test_ask_respond),
-        cmocka_unit_test(test_schedule),
-        cmocka_unit_test(test_schedule_cancel),
-        cmocka_unit_test(test_serialize_zero_size),
-        cmocka_unit_test(test_serialize_pod),
-        cmocka_unit_test(test_serialize_non_pod),
-        cmocka_unit_test(test_serialize_messages_factory),
-        cmocka_unit_test(test_envelope_reader),
-        cmocka_unit_test(test_serialize_messages_factory_non_pod),
-        cmocka_unit_test(test_unbounded_vector_queue),
-        cmocka_unit_test(test_behavior),
-        cmocka_unit_test(test_behavior_actor)
+void test_envelope_reader_v2(void**) {
+    TAllocator alloc;
+    TZeroCopyEnvelopeReaderV2 reader(64, 32);
+    assert_true(reader.Size() == 0);
+
+    for (int i = 0; i < 2; ++i) {
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(i),
+        };
+        auto buffer = reader.Acquire(sizeof(THeader));
+        assert_true(buffer.size() == sizeof(THeader));
+        std::memcpy(buffer.data(), &header, sizeof(THeader));
+        reader.Commit(sizeof(THeader));
+    }
+
+    assert_true(reader.Size() == 2*sizeof(THeader));
+
+    assert_true(reader.UsedChunksCount() == 0);
+    auto envelope = reader.Pop();
+    assert_true(reader.UsedChunksCount() == 0);
+
+    assert_true(envelope.has_value());
+    assert_true(envelope->Sender == TActorId(1, 1, 1));
+    assert_true(envelope->Recipient == TActorId(1, 2, 2));
+    assert_true(envelope->MessageId == 0);
+    assert_true(envelope->Blob.Size == 0);
+
+    envelope = reader.Pop();
+    assert_true(reader.UsedChunksCount() == 0);
+
+    assert_true(envelope.has_value());
+    assert_true(envelope->Sender == TActorId(1, 1, 1));
+    assert_true(envelope->Recipient == TActorId(1, 2, 2));
+    assert_true(envelope->MessageId == 1);
+    assert_true(envelope->Blob.Size == 0);
+
+    {
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(2),
+            .Size = 0
+        };
+        auto buffer = reader.Acquire(sizeof(THeader));
+        assert_true(buffer.size() == 24);
+        std::memcpy(buffer.data(), &header, sizeof(THeader));
+        reader.Commit(buffer.size());
+    }
+
+    envelope = reader.Pop();
+    assert_true(reader.UsedChunksCount() == 0);
+    assert_true(envelope.has_value());
+    assert_true(envelope->Sender == TActorId(1, 1, 1));
+    assert_true(envelope->Recipient == TActorId(1, 2, 2));
+    assert_true(envelope->MessageId == 2);
+    assert_true(envelope->Blob.Size == 0);
+
+    for (int i = 0; i < 10; ++i) {
+        auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
+        auto farBlob = SerializeFar<TWrappedString>(std::move(nearBlob));
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(i),
+            .Size = farBlob.Size
+        };
+        reader.Push(reinterpret_cast<const char*>(&header), sizeof(THeader));
+        reader.Push(static_cast<const char*>(farBlob.Data.get()), farBlob.Size);
+    }
+
+    for (int i = 0; i < 10; ++i) {
+        auto envelope = reader.Pop();
+        if (i == 0) {
+            assert_int_equal(reader.UsedChunksCount(), 1);
+        }
+        assert_true(envelope.has_value());
+        assert_true(envelope->MessageId == i);
+        auto&& str = DeserializeFar<TWrappedString>(envelope->Blob);
+        assert_string_equal(str.Value.c_str(), ("Message " + std::to_string(i)).c_str());
+    }
+}
+
+void test_envelope_reader_microbenchmark(void** arg) {
+    TState* state = static_cast<TState*>(*arg);
+    TAllocator alloc;
+    TZeroCopyEnvelopeReader v1;
+    TZeroCopyEnvelopeReaderV2 v2(1024 * 1024 * 1024, 2 * sizeof(THeader));
+    const int maxIterations = state->maxIterations;
+
+    std::vector<char> testBuffer(state->messageSize);
+
+    auto pushLambda = [&](auto& reader) {
+        for (int i = 0; i < maxIterations; ++i) {
+            THeader header {
+                .Sender = TActorId(1, 1, 1),
+                .Recipient = TActorId(1, 2, 2),
+                .MessageId = 1000,
+                .Size = static_cast<uint32_t>(state->messageSize)
+            };
+            reader.Push(reinterpret_cast<const char*>(&header), sizeof(THeader));
+            reader.Push(reinterpret_cast<const char*>(testBuffer.data()), state->messageSize);
+        }
     };
-    return cmocka_run_group_tests(tests, NULL, NULL);
+
+    auto popLambda = [&](auto& reader) {
+        for (int i = 0; i < maxIterations; ++i) {
+            auto envelope = reader.Pop();
+        }
+    };
+
+    TPerfWrapper perf1("v1_pop.data", {});
+
+    auto t1 = std::chrono::steady_clock::now();
+    pushLambda(v1);
+    auto t2 = std::chrono::steady_clock::now();
+    if (state->usePerf) {
+        perf1.Profile([&]() {
+            popLambda(v1);
+        });
+    } else {
+        popLambda(v1);
+    }
+    auto t3 = std::chrono::steady_clock::now();
+
+    auto elapsedV1 = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    auto elapsedV1Pop = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+    std::cerr << "V1 Push: " << elapsedV1 << " ms, Pop: " << elapsedV1Pop << " ms\n";
+
+    TPerfWrapper perf2("v2_pop.data", {});
+
+    auto t4 = std::chrono::steady_clock::now();
+    pushLambda(v2);
+    auto t5 = std::chrono::steady_clock::now();
+    if (state->usePerf) {
+        perf2.Profile([&]() {
+            popLambda(v2);
+        });
+    } else {
+        popLambda(v2);
+    }
+    auto t6 = std::chrono::steady_clock::now();
+
+    auto elapsedV2 = std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count();
+    auto elapsedV2Pop = std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count();
+    std::cerr << "V2 Push: " << elapsedV2 << " ms, Pop: " << elapsedV2Pop << " ms\n";
+}
+
+struct TMyNode : public TIntrusiveListNode<TMyNode> {
+    int Value;
+
+    TMyNode(int value) : Value(value) {}
+};
+
+void test_intrusive_list(void**) {
+    using TList = TIntrusiveList<TMyNode>;
+    TList list;
+
+    for (int i = 0; i < 10; ++i) {
+        list.PushBack(std::make_unique<TMyNode>(i));
+    }
+
+    int i = 0;
+    while (list.Front()) {
+        auto node = list.Erase(list.Front());
+        assert_int_equal(node->Value, i);
+        i++;
+    }
+    assert_true(list.Size() == 0);
+}
+
+int main(int argc, char** argv) {
+    TInitializer init;
+
+    TState state;
+
+    std::vector<CMUnitTest> tests;
+    std::unordered_set<std::string> filters;
+    tests.reserve(500);
+
+    parse_filters(argc, argv, filters);
+
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "--perf")) {
+            state.usePerf = true;
+        } else if (!strcmp(argv[i], "--max-iterations")) {
+            if (i + 1 < argc) {
+                state.maxIterations = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Error: --max-iterations requires a value\n";
+                return 1;
+            }
+        } else if (!strcmp(argv[i], "--message-size")) {
+            if (i + 1 < argc) {
+                state.messageSize = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Error: --message-size requires a value\n";
+                return 1;
+            }
+        }
+    }
+
+    ADD_TEST(cmocka_unit_test, test_ping_pong);
+    ADD_TEST(cmocka_unit_test, test_ask_respond);
+    ADD_TEST(cmocka_unit_test, test_schedule);
+    ADD_TEST(cmocka_unit_test, test_schedule_cancel);
+    ADD_TEST(cmocka_unit_test, test_serialize_zero_size);
+    ADD_TEST(cmocka_unit_test, test_serialize_pod);
+    ADD_TEST(cmocka_unit_test, test_serialize_non_pod);
+    ADD_TEST(cmocka_unit_test, test_serialize_messages_factory);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
+    ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
+    ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
+    ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
+    ADD_TEST(cmocka_unit_test, test_behavior);
+    ADD_TEST(cmocka_unit_test, test_behavior_actor);
+    ADD_TEST(cmocka_unit_test, test_intrusive_list);
+
+    return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }

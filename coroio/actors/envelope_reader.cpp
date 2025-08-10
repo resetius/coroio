@@ -26,9 +26,9 @@ void TEnvelopeReader::Process() {
                 auto& blob = envelope.Blob;
                 blob.Size = Header.Size;
                 blob.Type = TBlob::PointerType::Far;
-                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), TBlobDeleter{[](void* ptr) {
                     ::operator delete(ptr);
-                });
+                }});
                 std::copy(Buffer.begin(), Buffer.begin() + Header.Size, static_cast<char*>(blob.Data.get()));
                 Buffer.erase(Buffer.begin(), Buffer.begin() + Header.Size);
             }
@@ -48,7 +48,7 @@ std::optional<TEnvelope> TEnvelopeReader::Pop() {
     return std::make_optional(std::move(envelope));
 }
 
-TZeroCopyEnvelopeReader::TZeroCopyEnvelopeReader(size_t capacity)
+TZeroCopyEnvelopeReader::TZeroCopyEnvelopeReader(size_t capacity, size_t unused)
     : Data(capacity)
     , LastIndex(Data.size() - 1)
 { }
@@ -116,9 +116,9 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReader::Pop()
             auto& blob = envelope.Blob;
             blob.Size = Header.Size;
             blob.Type = TBlob::PointerType::Far;
-            blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+            blob.Data = TBlob::TRawPtr(::operator new(blob.Size), TBlobDeleter{[](void* ptr) {
                 ::operator delete(ptr);
-            });
+            }});
             CopyOut(static_cast<char*>(blob.Data.get()), Header.Size);
         }
         HasHeader = false;
@@ -148,6 +148,173 @@ void TZeroCopyEnvelopeReader::Push(const char* p, size_t len)
         Commit(buf.size());
         len -= buf.size();
         p += buf.size();
+    }
+}
+
+TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lowWatermark)
+    : ChunkSize(chunkSize)
+    , LowWatermark(lowWatermark)
+    , CurrentChunk(std::make_unique<TChunk>(ChunkSize, this))
+    , SealedChunks(1)
+    , UsedChunks(2)
+{ }
+
+void TZeroCopyEnvelopeReaderV2::Rotate() {
+    if (CurrentChunk->Size() == 0 && CurrentChunk->UseCount == 0) {
+        CurrentChunk->Clear();
+    } else {
+        if (CurrentChunk->Size() == 0) {
+            UsedChunks.PushBack(std::move(CurrentChunk));
+        } else {
+            SealedChunks.PushBack(std::move(CurrentChunk));
+        }
+        if (FreeChunks.empty()) {
+            CurrentChunk = std::make_unique<TChunk>(ChunkSize, this);
+        } else {
+            CurrentChunk = std::move(FreeChunks.back());
+            CurrentChunk->Clear();
+            FreeChunks.pop_back();
+        }
+    }
+}
+
+std::span<char> TZeroCopyEnvelopeReaderV2::Acquire(size_t size) {
+    auto buf = CurrentChunk->TryAcquire(size, LowWatermark);
+    if (!buf.empty()) [[likely]] {
+        return buf;
+    }
+    Rotate();
+    return CurrentChunk->Acquire(size);
+}
+
+void TZeroCopyEnvelopeReaderV2::Commit(size_t size) {
+    CurrentChunk->Commit(size);
+    CurrentSize += size;
+}
+
+void TZeroCopyEnvelopeReaderV2::Push(const char* p, size_t len)
+{
+    while (len != 0) {
+        auto buf = Acquire(len);
+        memcpy(buf.data(), p, buf.size());
+        Commit(buf.size());
+        len -= buf.size();
+        p += buf.size();
+    }
+}
+
+void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
+    Head = Tail = 0;
+}
+
+TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, TZeroCopyEnvelopeReaderV2* parent)
+    : Data(size)
+    , Parent(parent)
+{ }
+
+std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::Acquire(size_t size) {
+    size = std::min(size, Data.size() - Tail);
+    return {&Data[Tail], size};
+}
+
+std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::TryAcquire(size_t size, size_t lowWatermark) {
+    auto resultSize = std::min(size, Data.size() - Tail);
+    if (resultSize == size) {
+        return Acquire(size);
+    }
+    return resultSize < lowWatermark ? std::span<char>{} : Acquire(size);
+}
+
+void TZeroCopyEnvelopeReaderV2::TChunk::Commit(size_t size) {
+    Tail = Tail + size;
+}
+
+bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf, size_t size) {
+    assert (Data.size() - Head >= size);
+    std::memcpy(buf, &Data[Head], size);
+    Head = Head + size;
+    assert (Head <= Tail);
+    return Head == Tail;
+}
+
+size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
+    return Tail - Head;
+}
+
+void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
+    CurrentSize -= size;
+
+    while (!SealedChunks.Empty() && size > 0) {
+        auto* chunk = SealedChunks.Front();
+        auto sizeToCopy = std::min(size, chunk->Size());
+        assert(sizeToCopy > 0);
+        if (chunk->CopyOut(buf, sizeToCopy)) {
+            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
+        }
+        buf += sizeToCopy;
+        size -= sizeToCopy;
+    }
+
+    if (size > 0) {
+        CurrentChunk->CopyOut(buf, size);
+    }
+}
+
+TBlob TZeroCopyEnvelopeReaderV2::ExtractBlob(TChunk& chunk, size_t size) {
+    TBlob blob;
+    blob.Size = size;
+    blob.Type = TBlob::PointerType::Far;
+    ++chunk.UseCount;
+    blob.Data = TBlob::TRawPtr(chunk.Data.data() + chunk.Head, TBlobDeleter{[&chunk](void* ptr) {
+        if (--chunk.UseCount == 0) {
+            auto* self = chunk.Parent;
+            auto ref = self->UsedChunks.Erase(&chunk);
+            if (ref) {
+                self->FreeChunks.emplace_back(std::move(ref));
+            }
+        }
+    }});
+    chunk.Head += size;
+    CurrentSize -= size;
+    return blob;
+}
+
+std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
+    if (!HasHeader && CurrentSize >= sizeof(THeader)) {
+        CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        HasHeader = true;
+    }
+
+    if (HasHeader && CurrentSize >= Header.Size) {
+        TEnvelope envelope;
+        envelope.Sender = Header.Sender;
+        envelope.Recipient = Header.Recipient;
+        envelope.MessageId = Header.MessageId;
+
+        if (Header.Size > 0) {
+            auto& blob = envelope.Blob;
+            if (!SealedChunks.Empty() && SealedChunks.Front()->Size() >= Header.Size) {
+                auto* front = SealedChunks.Front();
+                blob = ExtractBlob(*front, Header.Size);
+                if (front->Size() == 0) {
+                    UsedChunks.PushBack(std::move(SealedChunks.PopFront()));
+                }
+            } else if (SealedChunks.Empty() && CurrentChunk->Size() >= Header.Size) {
+                blob = ExtractBlob(*CurrentChunk, Header.Size);
+            } else {
+                // Discontinuous data, we need to copy it out
+                blob.Size = Header.Size;
+                blob.Type = TBlob::PointerType::Far;
+                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), TBlobDeleter{[](void* ptr) {
+                    ::operator delete(ptr);
+                }});
+                CopyOut(static_cast<char*>(blob.Data.get()), Header.Size);
+            }
+        }
+        HasHeader = false;
+        return std::make_optional(std::move(envelope));
+    } else {
+        return std::nullopt;
     }
 }
 

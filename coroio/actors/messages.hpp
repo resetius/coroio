@@ -4,13 +4,85 @@
 #include <sstream>
 #include <cstring>
 #include <type_traits>
+#include <functional>
 
 namespace NNet {
 namespace NActors {
 
+struct TContextDeleter {
+    TContextDeleter() = default;
+
+    TContextDeleter(void (*func)(void*, void*), void* ctx)
+        : Release(func)
+        , Context(ctx)
+    { }
+
+    void operator()(void* ptr) {
+        Release(Context, ptr);
+    }
+
+    void (*Release)(void*, void*) = nullptr;
+    void* Context = nullptr;
+};
+
+template<typename TLambda>
+struct TLambdaToContextDeleter {
+    static_assert(
+        std::is_empty_v<TLambda> || sizeof(TLambda) <= sizeof(void*),
+        "Lambda must be stateless or capture only one pointer-sized value");
+
+    // Stateless lambda to context deleter conversion
+    template<typename F>
+    static std::enable_if_t<std::is_empty_v<std::decay_t<F>>, TContextDeleter>
+    Convert(F&& lambda) {
+        auto func_ptr = +[](void* /*unused*/, void* ptr) {
+            std::decay_t<F>{}(ptr);
+        };
+        return TContextDeleter{func_ptr, nullptr};
+    }
+
+    template<typename F>
+    static std::enable_if_t<!std::is_empty_v<std::decay_t<F>>, TContextDeleter>
+    Convert(F&& lambda) {
+        void* captured_ptr = ExtractCapturedPointer(lambda);
+
+        auto func_ptr = +[](void* ctx, void* ptr) {
+            using LambdaType = std::decay_t<F>;
+            alignas(LambdaType) char buffer[sizeof(LambdaType)];
+            *reinterpret_cast<void**>(buffer) = ctx;
+            auto* lambda_ptr = reinterpret_cast<LambdaType*>(buffer);
+            (*lambda_ptr)(ptr);
+        };
+
+        return TContextDeleter{func_ptr, captured_ptr};
+    }
+
+private:
+    template<typename F>
+    static void* ExtractCapturedPointer(const F& lambda) {
+        return *reinterpret_cast<void* const*>(&lambda);
+    }
+};
+
+struct TBlobDeleter {
+    TBlobDeleter() = default;
+
+    template<typename TFunc>
+    TBlobDeleter(TFunc&& func)
+        : Release(TLambdaToContextDeleter<TFunc>::Convert(std::forward<TFunc>(func)))
+    { }
+
+    void operator()(void* ptr) {
+        Release(ptr);
+    }
+
+    TContextDeleter Release;
+};
+
 struct TBlob {
-    using TRawPtr = std::shared_ptr<void>;
-    TRawPtr Data = nullptr;
+    using TRawPtr = std::unique_ptr<void, TBlobDeleter>;
+    //using TRawPtr = std::shared_ptr<void>;
+    TRawPtr Data = {};
     uint32_t Size = 0;
     enum class PointerType {
         Near,  // Pointer to the object (for actor communication)
@@ -55,9 +127,9 @@ SerializePodNear(T&& message, TAllocator& alloc)
         auto* data = alloc.Acquire(size);
         new (data) T(std::move(message));
 
-        rawPtr = TBlob::TRawPtr(data, [&alloc](void* ptr) {
+        rawPtr = TBlob::TRawPtr(data, TBlobDeleter{[&alloc](void* ptr) {
             alloc.Release(ptr);
-        });
+        }});
     }
 
     return TBlob{std::move(rawPtr), size, TBlob::PointerType::Near};
@@ -69,9 +141,9 @@ SerializeNonPodNear(T&& message, TAllocator& alloc)
 {
     T* obj = new T(std::forward<T>(message));
 
-    auto rawPtr = TBlob::TRawPtr(obj, [](void* ptr) {
+    auto rawPtr = TBlob::TRawPtr(obj, TBlobDeleter{[](void* ptr) {
         delete reinterpret_cast<T*>(ptr);
-    });
+    }});
 
     return TBlob{std::move(rawPtr), sizeof(T), TBlob::PointerType::Near};
 }
@@ -104,9 +176,9 @@ TBlob SerializeFar(TBlob blob)
         SerializeToStream(*obj, oss);
         void* data = ::operator new(oss.str().size());
         std::memcpy(data, oss.str().data(), oss.str().size());
-        auto rawPtr = TBlob::TRawPtr(data, [](void* ptr) {
+        auto rawPtr = TBlob::TRawPtr(data, TBlobDeleter{[](void* ptr) {
             ::operator delete(ptr);
-        });
+        }});
         return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), TBlob::PointerType::Far};
     }
 }

@@ -203,14 +203,19 @@ void TActorSystem::Serve()
             unsigned prevId = 0;
             bool first = true;
             while (!self->DelayedMessages.empty() && self->DelayedMessages.top().When <= now) {
-                auto delayed = std::move(self->DelayedMessages.top());
+                TBlob blob = std::move(const_cast<TDelayed&>(self->DelayedMessages.top()).Blob);
+                TActorId sender = self->DelayedMessages.top().Sender;
+                TActorId recipient = self->DelayedMessages.top().Recipient;
+                TMessageId messageId = self->DelayedMessages.top().MessageId;
+                auto timerId = self->DelayedMessages.top().TimerId;
+                auto valid = self->DelayedMessages.top().valid;
                 self->DelayedMessages.pop();
-                if ((first || prevId != delayed.TimerId) && delayed.valid) { // skip removed timers
-                    self->Send(delayed.Sender, delayed.Recipient, delayed.MessageId, std::move(delayed.Blob));
+                if ((first || prevId != timerId) && valid) { // skip removed timers
+                    self->Send(sender, recipient, messageId, std::move(blob));
                 }
 
                 first = false;
-                prevId = delayed.TimerId;
+                prevId = timerId;
             }
         }
     }(this);
@@ -253,7 +258,7 @@ TEvent TActorSystem::Schedule(TTime when, TActorId sender, TActorId recipient, T
         .Sender = sender,
         .Recipient = recipient,
         .MessageId = messageId,
-        .Blob = blob
+        .Blob = std::move(blob)
     });
     return {timerId, when};
 }
