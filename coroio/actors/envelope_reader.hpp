@@ -73,14 +73,16 @@ public:
     std::span<char> Acquire(size_t size);
     void Commit(size_t size);
     std::optional<TEnvelope> Pop();
-    size_t Size() const;
+    size_t Size() const {
+        return CurrentSize;
+    }
 
     // for testing purposes
     void Push(const char* p, size_t len);
 
 private:
     void Rotate();
-    size_t CopyOut(char* buf, size_t size);
+    void CopyOut(char* buf, size_t size);
 
     struct TChunk {
         TChunk(size_t size);

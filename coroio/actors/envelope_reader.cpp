@@ -186,6 +186,17 @@ void TZeroCopyEnvelopeReaderV2::Commit(size_t size) {
     CurrentSize += size;
 }
 
+void TZeroCopyEnvelopeReaderV2::Push(const char* p, size_t len)
+{
+    while (len != 0) {
+        auto buf = Acquire(len);
+        memcpy(buf.data(), p, buf.size());
+        Commit(buf.size());
+        len -= buf.size();
+        p += buf.size();
+    }
+}
+
 void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
     Head = Tail = 0;
 }
@@ -217,14 +228,15 @@ bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf, size_t size) {
 }
 
 size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
-    return Head - Tail;
+    return Tail - Head;
 }
 
-size_t TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t psize) {
+void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t psize) {
     size_t size = psize;
-    while (!SealedChunks.Empty()) {
+    while (!SealedChunks.Empty() && size > 0) {
         auto&& chunk = SealedChunks.Front();
         auto sizeToCopy = std::min(size, chunk->Size());
+        assert(sizeToCopy > 0);
         if (chunk->CopyOut(buf, sizeToCopy)) {
             FreeChunks.emplace_back(std::move(chunk));
             SealedChunks.Pop();
@@ -235,20 +247,17 @@ size_t TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t psize) {
 
     if (size > 0) {
         auto sizeToCopy = std::min(size, CurrentChunk->Size());
+        assert(sizeToCopy > 0);
         CurrentChunk->CopyOut(buf, sizeToCopy);
     }
 
     CurrentSize -= psize - size;
-    return psize - size;
 }
 
 std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
-    if (!HasHeader) {
-        auto size = CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
-        assert (size == 0 || size == sizeof(THeader));
-        if (size == sizeof(THeader)) {
-            HasHeader = true;
-        }
+    if (!HasHeader && CurrentSize >= sizeof(THeader)) {
+        CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        HasHeader = true;
     }
 
     if (HasHeader && CurrentSize >= Header.Size) {
