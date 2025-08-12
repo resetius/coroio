@@ -231,8 +231,8 @@ size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
     return Tail - Head;
 }
 
-void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t psize) {
-    size_t size = psize;
+void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
+    CurrentSize -= size;
     while (!SealedChunks.Empty() && size > 0) {
         auto&& chunk = SealedChunks.Front();
         auto sizeToCopy = std::min(size, chunk->Size());
@@ -246,12 +246,8 @@ void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t psize) {
     }
 
     if (size > 0) {
-        auto sizeToCopy = std::min(size, CurrentChunk->Size());
-        assert(sizeToCopy > 0);
-        CurrentChunk->CopyOut(buf, sizeToCopy);
+        CurrentChunk->CopyOut(buf, size);
     }
-
-    CurrentSize -= psize - size;
 }
 
 std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {

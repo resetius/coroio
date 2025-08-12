@@ -76,6 +76,9 @@ public:
     size_t Size() const {
         return CurrentSize;
     }
+    bool NeedMoreData() const {
+        return !HasHeader || Size() < Header.Size;
+    }
 
     // for testing purposes
     void Push(const char* p, size_t len);

@@ -186,7 +186,8 @@ private:
         static constexpr size_t ReadSize = 512 * 1024;
         static constexpr size_t InflightBytes = 16 * 1024 * 1024;
         static constexpr size_t MaxBytesBeforeYield = 2 * 1024 * 1024;
-        TZeroCopyEnvelopeReader envelopeReader(InflightBytes);
+        //TZeroCopyEnvelopeReader envelopeReader(InflightBytes);
+        TZeroCopyEnvelopeReaderV2 envelopeReader(InflightBytes, InflightBytes / 4);
         uint64_t message = 0;
 
         try {
