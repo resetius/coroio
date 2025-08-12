@@ -80,13 +80,14 @@ public:
 
 private:
     void Rotate();
-    void CopyOut(char* buf, size_t size);
+    size_t CopyOut(char* buf, size_t size);
 
     struct TChunk {
         TChunk(size_t size);
 
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
         std::span<char> Acquire(size_t size);
+        void Commit(size_t size);
         bool CopyOut(char* buf, size_t size);
         size_t Size() const;
         void Clear();
@@ -97,8 +98,9 @@ private:
         int UseCount = 0;
     };
 
-    size_t ChunkSize;
-    size_t LowWatermark;
+    const size_t ChunkSize;
+    const size_t LowWatermark;
+    size_t CurrentSize = 0;
     THeader Header;
     bool HasHeader = false;
     std::unique_ptr<TChunk> CurrentChunk;

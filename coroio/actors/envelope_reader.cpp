@@ -154,12 +154,12 @@ void TZeroCopyEnvelopeReader::Push(const char* p, size_t len)
 TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lowWatermark)
     : ChunkSize(chunkSize)
     , LowWatermark(lowWatermark)
-    , CurrentChunk(std::make_unique<TChunk>(chunkSize))
+    , CurrentChunk(std::make_unique<TChunk>(ChunkSize))
 { }
 
 void TZeroCopyEnvelopeReaderV2::Rotate() {
     if (CurrentChunk->Size() > 0) [[likely]] {
-        SealedChunks.emplace_back(std::move(CurrentChunk));
+        SealedChunks.Push(std::move(CurrentChunk));
     } else {
         FreeChunks.emplace_back(std::move(CurrentChunk));
     }
@@ -183,9 +183,10 @@ std::span<char> TZeroCopyEnvelopeReaderV2::Acquire(size_t size) {
 
 void TZeroCopyEnvelopeReaderV2::Commit(size_t size) {
     CurrentChunk->Commit(size);
+    CurrentSize += size;
 }
 
-TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
+void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
     Head = Tail = 0;
 }
 
@@ -219,33 +220,56 @@ size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
     return Head - Tail;
 }
 
-void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
+size_t TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t psize) {
+    size_t size = psize;
+    while (!SealedChunks.Empty()) {
+        auto&& chunk = SealedChunks.Front();
+        auto sizeToCopy = std::min(size, chunk->Size());
+        if (chunk->CopyOut(buf, sizeToCopy)) {
+            FreeChunks.emplace_back(std::move(chunk));
+            SealedChunks.Pop();
+        }
+        buf += sizeToCopy;
+        size -= sizeToCopy;
+    }
 
+    if (size > 0) {
+        auto sizeToCopy = std::min(size, CurrentChunk->Size());
+        CurrentChunk->CopyOut(buf, sizeToCopy);
+    }
+
+    CurrentSize -= psize - size;
+    return psize - size;
 }
 
 std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
     if (!HasHeader) {
-        if (SealedChunks.Empty()) {
-            auto&& chunk = SealedChunks.Front();
-            if (chunk->CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader))) {
-                FreeChunks.emplace_back(std::move(chunk));
-                SealedChunks.Pop();
-            }
-            HasHeader = true;
-        } else if (CurrentChunk->Size() >= sizeof(THeader)) {
-            CurrentChunk->CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        auto size = CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        assert (size == 0 || size == sizeof(THeader));
+        if (size == sizeof(THeader)) {
             HasHeader = true;
         }
     }
 
-    if (HasHeader && Size() >= Header.Size) {
+    if (HasHeader && CurrentSize >= Header.Size) {
         TEnvelope envelope;
         envelope.Sender = Header.Sender;
         envelope.Recipient = Header.Recipient;
         envelope.MessageId = Header.MessageId;
 
         if (Header.Size > 0) {
+            auto& blob = envelope.Blob;
+            blob.Size = Header.Size;
+            blob.Type = TBlob::PointerType::Far;
+            blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+                ::operator delete(ptr);
+            });
+            CopyOut(static_cast<char*>(blob.Data.get()), Header.Size);
         }
+        HasHeader = false;
+        return std::make_optional(std::move(envelope));
+    } else {
+        return std::nullopt;
     }
 }
 
