@@ -158,23 +158,23 @@ TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lo
 { }
 
 void TZeroCopyEnvelopeReaderV2::Rotate() {
-    if (CurrentChunk->Size() > 0) [[likely]] {
-        SealedChunks.Push(std::move(CurrentChunk));
-    } else {
-        FreeChunks.emplace_back(std::move(CurrentChunk));
-    }
-    if (FreeChunks.empty()) {
-        CurrentChunk = std::make_unique<TChunk>(ChunkSize);
-    } else {
-        CurrentChunk = std::move(FreeChunks.back());
+    if (CurrentChunk->Size() == 0) {
         CurrentChunk->Clear();
-        FreeChunks.pop_back();
+    } else {
+        SealedChunks.Push(std::move(CurrentChunk));
+        if (FreeChunks.empty()) {
+            CurrentChunk = std::make_unique<TChunk>(ChunkSize);
+        } else {
+            CurrentChunk = std::move(FreeChunks.back());
+            CurrentChunk->Clear();
+            FreeChunks.pop_back();
+        }
     }
 }
 
 std::span<char> TZeroCopyEnvelopeReaderV2::Acquire(size_t size) {
     auto buf = CurrentChunk->TryAcquire(size, LowWatermark);
-    if (!buf.empty()) [[unlikely]] {
+    if (!buf.empty()) [[likely]] {
         return buf;
     }
     Rotate();

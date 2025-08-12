@@ -82,6 +82,16 @@ public:
 
     // for testing purposes
     void Push(const char* p, size_t len);
+    void PrintDebugInfo() const {
+        std::cerr << "TZeroCopyEnvelopeReaderV2: CurrentSize = " << CurrentSize
+                  << ", Chunks: " << SealedChunks.Size()
+                  << ", FreeChunks: " << FreeChunks.size()
+                  << ", CurrentChunk Size: " << CurrentChunk->Size()
+                  << ", Head: " << CurrentChunk->Head
+                  << ", Tail: " << CurrentChunk->Tail
+                  << ", Ptr: " << static_cast<void*>(CurrentChunk->Data.data())
+                  << "\n";
+    }
 
 private:
     void Rotate();
