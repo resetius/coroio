@@ -5,6 +5,7 @@
 
 #include <deque>
 #include <span>
+#include <list>
 
 namespace NNet {
 namespace NActors {
@@ -94,8 +95,11 @@ public:
     }
 
 private:
+    struct TChunk;
+
     void Rotate();
     void CopyOut(char* buf, size_t size);
+    TBlob ExtractBlob(TChunk& chunk, size_t size);
 
     struct TChunk {
         TChunk(size_t size);
@@ -111,6 +115,7 @@ private:
         size_t Head = 0;
         size_t Tail = 0;
         int UseCount = 0;
+        std::list<std::unique_ptr<TChunk>>::iterator Position;
     };
 
     const size_t ChunkSize;
@@ -121,6 +126,7 @@ private:
     std::unique_ptr<TChunk> CurrentChunk;
     TUnboundedVectorQueue<std::unique_ptr<TChunk>> SealedChunks;
     std::vector<std::unique_ptr<TChunk>> FreeChunks;
+    std::list<std::unique_ptr<TChunk>> UsedChunks;
 };
 
 } // namespace NActors
