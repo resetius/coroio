@@ -94,6 +94,10 @@ public:
                   << "\n";
     }
 
+    int UsedChunksCount() const {
+        return UsedChunks.size();
+    }
+
 private:
     struct TChunk;
 
@@ -115,7 +119,7 @@ private:
         size_t Head = 0;
         size_t Tail = 0;
         int UseCount = 0;
-        std::list<std::unique_ptr<TChunk>>::iterator Position;
+        std::optional<std::list<std::unique_ptr<TChunk>>::iterator> Position;
     };
 
     const size_t ChunkSize;

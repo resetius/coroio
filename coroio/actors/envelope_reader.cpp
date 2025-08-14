@@ -204,6 +204,7 @@ void TZeroCopyEnvelopeReaderV2::Push(const char* p, size_t len)
 
 void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
     Head = Tail = 0;
+    Position.reset();
 }
 
 TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size)
@@ -259,11 +260,12 @@ TBlob TZeroCopyEnvelopeReaderV2::ExtractBlob(TChunk& chunk, size_t size) {
     TBlob blob;
     blob.Size = size;
     blob.Type = TBlob::PointerType::Far;
+    ++chunk.UseCount;
     blob.Data = TBlob::TRawPtr(chunk.Data.data() + chunk.Head, [this, &chunk](void* ptr) {
-        if (--chunk.UseCount == 0) {
-            auto ref = std::move(*chunk.Position);
+        if (--chunk.UseCount == 0 && chunk.Position) {
+            auto ref = std::move(*chunk.Position.value());
             FreeChunks.emplace_back(std::move(ref));
-            UsedChunks.erase(chunk.Position);
+            UsedChunks.erase(chunk.Position.value());
         }
     });
     chunk.Head += size;
@@ -286,7 +288,13 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
         if (Header.Size > 0) {
             auto& blob = envelope.Blob;
             if (!SealedChunks.Empty() && SealedChunks.Front()->Size() >= Header.Size) {
-                blob = ExtractBlob(*SealedChunks.Front(), Header.Size);
+                auto&& front = SealedChunks.Front();
+                blob = ExtractBlob(*front, Header.Size);
+                if (front->Size() == 0) {
+                    auto it = UsedChunks.insert(UsedChunks.end(), std::move(front));
+                    UsedChunks.back()->Position = it;
+                    SealedChunks.Pop();
+                }
             } else if (CurrentChunk->Size() >= Header.Size) {
                 blob = ExtractBlob(*CurrentChunk, Header.Size);
             } else {
