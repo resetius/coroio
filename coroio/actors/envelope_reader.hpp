@@ -2,6 +2,7 @@
 
 #include "actor.hpp"
 #include "queue.hpp"
+#include "intrusive_list.hpp"
 
 #include <deque>
 #include <span>
@@ -95,7 +96,7 @@ public:
     }
 
     int UsedChunksCount() const {
-        return UsedChunks.size();
+        return UsedChunks.Size();
     }
 
 private:
@@ -105,7 +106,7 @@ private:
     void CopyOut(char* buf, size_t size);
     TBlob ExtractBlob(TChunk& chunk, size_t size);
 
-    struct TChunk {
+    struct TChunk : TIntrusiveListNode<TChunk> {
         TChunk(size_t size);
 
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
@@ -119,7 +120,6 @@ private:
         size_t Head = 0;
         size_t Tail = 0;
         int UseCount = 0;
-        std::optional<std::list<std::unique_ptr<TChunk>>::iterator> Position;
     };
 
     const size_t ChunkSize;
@@ -130,7 +130,7 @@ private:
     std::unique_ptr<TChunk> CurrentChunk;
     TUnboundedVectorQueue<std::unique_ptr<TChunk>> SealedChunks;
     std::vector<std::unique_ptr<TChunk>> FreeChunks;
-    std::list<std::unique_ptr<TChunk>> UsedChunks;
+    TIntrusiveList<TChunk> UsedChunks;
 };
 
 } // namespace NActors

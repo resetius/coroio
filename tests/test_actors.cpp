@@ -13,6 +13,7 @@
 #include <coroio/actors/messages.hpp>
 #include <coroio/actors/messages_factory.hpp>
 #include <coroio/actors/queue.hpp>
+#include <coroio/actors/intrusive_list.hpp>
 
 extern "C" {
 #include <cmocka.h>
@@ -634,6 +635,29 @@ void test_envelope_reader_v2(void**) {
     }
 }
 
+struct TMyNode : public TIntrusiveListNode<TMyNode> {
+    int Value;
+
+    TMyNode(int value) : Value(value) {}
+};
+
+void test_intrusive_list(void**) {
+    using TList = TIntrusiveList<TMyNode>;
+    TList list;
+
+    for (int i = 0; i < 10; ++i) {
+        list.PushBack(std::make_unique<TMyNode>(i));
+    }
+
+    int i = 0;
+    while (list.Front()) {
+        auto node = list.Erase(list.Front());
+        assert_int_equal(node->Value, i);
+        i++;
+    }
+    assert_true(list.Size() == 0);
+}
+
 int main() {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_ping_pong),
@@ -649,7 +673,8 @@ int main() {
         cmocka_unit_test(test_serialize_messages_factory_non_pod),
         cmocka_unit_test(test_unbounded_vector_queue),
         cmocka_unit_test(test_behavior),
-        cmocka_unit_test(test_behavior_actor)
+        cmocka_unit_test(test_behavior_actor),
+        cmocka_unit_test(test_intrusive_list)
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
