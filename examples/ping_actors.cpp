@@ -1,6 +1,7 @@
 #include <chrono>
 #include <iostream>
 #include <vector>
+#include <set>
 #include <coroio/all.hpp>
 #include <coroio/resolver.hpp>
 #include <coroio/corochain.hpp>
@@ -11,10 +12,19 @@
 using namespace NNet;
 using namespace NNet::NActors;
 
+template<size_t Size>
 struct TPingMessage {
     static constexpr TMessageId MessageId = 100;
+    char Data[Size] = {};
 };
 
+template<>
+struct TPingMessage<0> {
+    static constexpr TMessageId MessageId = 100;
+    // Empty message, no data
+};
+
+template<size_t Size>
 class TPingActor : public IActor {
 public:
     TPingActor(bool isFirstNode, int total, int nextNodeId, const std::vector<TNodeId>& nodeIds)
@@ -37,7 +47,7 @@ public:
         }
 
         auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
-        ctx->Send(nextActorId, TPingMessage{});
+        ctx->Send(nextActorId, TPingMessage<Size>{});
 
         if (IsFirstNode) {
             if (ctx->Sender()) {
@@ -103,6 +113,8 @@ int main(int argc, char** argv) {
     TLoop<Poller> loop;
     TResolver<TPollerBase> resolver(loop.Poller());
     TMessagesFactory factory;
+    int messageSize = 0;
+    std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
 
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<Poller, TResolver<TPollerBase>>>>
@@ -145,8 +157,18 @@ int main(int argc, char** argv) {
             inflight = std::stoi(argv[++i]);
         } else if (!strcmp(argv[i], "--messages") && i + 1 < argc) {
             messages = std::stoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--message-size") && i + 1 < argc) {
+            messageSize = std::stoi(argv[++i]);
+            if (allowedMessageSizes.find(messageSize) == allowedMessageSizes.end()) {
+                std::cerr << "Invalid message size. Allowed sizes: ";
+                for (int size : allowedMessageSizes) {
+                    std::cerr << size << " ";
+                }
+                std::cerr << "\n";
+                return -1;
+            }
         } else if (!strcmp(argv[i], "--help")) {
-            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n]\n";
+            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]\n";
             return 0;
         } else {
             std::cerr << "Unknown argument: " << argv[i] << "\n";
@@ -175,9 +197,6 @@ int main(int argc, char** argv) {
     int nextIdx = (myIdx + 1) % nodeIds.size();
     TNodeId nextNodeId = nodeIds[nextIdx];
 
-    auto pingActor = std::make_unique<TPingActor>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds);
-    auto pingActorId = sys.Register(std::move(pingActor));
-
     TAddress address{"::", port};
     Poller::TSocket socket(loop.Poller(), address.Domain());
     socket.Bind(address);
@@ -185,18 +204,45 @@ int main(int argc, char** argv) {
 
     sys.Serve(std::move(socket));
 
-    if (myNodeId == nodeIds.front()) {
-        auto firstPing = [&]() -> TVoidTask {
-            auto from = TActorId{0, 0, 0};
-            auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
-            auto maxPings = inflight;
-            co_await sys.Sleep(std::chrono::milliseconds(delay));
-            std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
-            for (int i = 0; i < maxPings; ++i) {
-                sys.Send(from, to, TPingMessage{});
-            }
-            co_return;
-        }();
+    auto runner = [&]<size_t MessageSize>() {
+        using TPingMessageType = TPingMessage<MessageSize>;
+        using TPingActorType = TPingActor<MessageSize>;
+
+        factory.RegisterSerializer<TPingMessageType>();
+        auto pingActor = std::make_unique<TPingActorType>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds);
+        auto pingActorId = sys.Register(std::move(pingActor));
+
+        if (myNodeId == nodeIds.front()) {
+            auto firstPing = [&]() -> TVoidTask {
+                auto from = TActorId{0, 0, 0};
+                auto to = TActorId{myNodeId, pingActorId.ActorId(), pingActorId.Cookie()};
+                auto maxPings = inflight;
+                auto& currentSys = sys;
+                co_await sys.Sleep(std::chrono::milliseconds(delay));
+                std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
+                for (int i = 0; i < maxPings; ++i) {
+                    currentSys.Send(from, to, TPingMessageType{});
+                }
+                co_return;
+            }();
+        }
+    };
+
+    switch (messageSize) {
+    case 0: runner.template operator()<0>(); break;
+    case 8: runner.template operator()<8>(); break;
+    case 16: runner.template operator()<16>(); break;
+    case 32: runner.template operator()<32>(); break;
+    case 64: runner.template operator()<64>(); break;
+    case 128: runner.template operator()<128>(); break;
+    case 256: runner.template operator()<256>(); break;
+    case 512: runner.template operator()<512>(); break;
+    case 1024: runner.template operator()<1024>(); break;
+    case 2048: runner.template operator()<2048>(); break;
+    case 4096: runner.template operator()<4096>(); break;
+    default:
+        std::cerr << "Unsupported message size: " << messageSize << "\n";
+        return -1;
     }
 
     while (sys.ActorsSize() > 0) {
