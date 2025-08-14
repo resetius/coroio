@@ -295,7 +295,7 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
                     UsedChunks.back()->Position = it;
                     SealedChunks.Pop();
                 }
-            } else if (CurrentChunk->Size() >= Header.Size) {
+            } else if (SealedChunks.Empty() && CurrentChunk->Size() >= Header.Size) {
                 blob = ExtractBlob(*CurrentChunk, Header.Size);
             } else {
                 // Discontinuous data, we need to copy it out
