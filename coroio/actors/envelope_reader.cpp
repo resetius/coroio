@@ -215,8 +215,11 @@ std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::Acquire(size_t size) {
 }
 
 std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::TryAcquire(size_t size, size_t lowWatermark) {
-    size = std::min(size, Data.size() - Tail);
-    return size < lowWatermark ? std::span<char>{} : Acquire(size);
+    auto resultSize = std::min(size, Data.size() - Tail);
+    if (resultSize == size) {
+        return Acquire(size);
+    }
+    return resultSize < lowWatermark ? std::span<char>{} : Acquire(size);
 }
 
 void TZeroCopyEnvelopeReaderV2::TChunk::Commit(size_t size) {

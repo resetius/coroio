@@ -635,6 +635,59 @@ void test_envelope_reader_v2(void**) {
     }
 }
 
+struct TTestMessage {
+    static constexpr TMessageId MessageId = 1000;
+    char Data[64];
+};
+
+void test_envelope_reader_microbenchmark(void**) {
+    TAllocator alloc;
+    TZeroCopyEnvelopeReader v1;
+    TZeroCopyEnvelopeReaderV2 v2(1024 * 1024, 2 * sizeof(TTestMessage));
+    const int maxIterations = 10000000;
+
+    TTestMessage testMessage;
+
+    auto pushLambda = [&](auto& reader) {
+        for (int i = 0; i < maxIterations; ++i) {
+            THeader header {
+                .Sender = TActorId(1, 1, 1),
+                .Recipient = TActorId(1, 2, 2),
+                .MessageId = TTestMessage::MessageId,
+                .Size = sizeof(TTestMessage)
+            };
+            reader.Push(reinterpret_cast<const char*>(&header), sizeof(THeader));
+            reader.Push(reinterpret_cast<const char*>(&testMessage), sizeof(TTestMessage));
+        }
+    };
+
+    auto popLambda = [&](auto& reader) {
+        for (int i = 0; i < maxIterations; ++i) {
+            auto envelope = reader.Pop();
+        }
+    };
+
+    auto t1 = std::chrono::steady_clock::now();
+    pushLambda(v1);
+    auto t2 = std::chrono::steady_clock::now();
+    popLambda(v1);
+    auto t3 = std::chrono::steady_clock::now();
+
+    auto elapsedV1 = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    auto elapsedV1Pop = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+    std::cerr << "V1 Push: " << elapsedV1 << " ms, Pop: " << elapsedV1Pop << " ms\n";
+
+    auto t4 = std::chrono::steady_clock::now();
+    pushLambda(v2);
+    auto t5 = std::chrono::steady_clock::now();
+    popLambda(v2);
+    auto t6 = std::chrono::steady_clock::now();
+
+    auto elapsedV2 = std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count();
+    auto elapsedV2Pop = std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count();
+    std::cerr << "V2 Push: " << elapsedV2 << " ms, Pop: " << elapsedV2Pop << " ms\n";
+}
+
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
     int Value;
 
@@ -670,6 +723,7 @@ int main() {
         cmocka_unit_test(test_serialize_messages_factory),
         cmocka_unit_test(test_envelope_reader),
         cmocka_unit_test(test_envelope_reader_v2),
+        cmocka_unit_test(test_envelope_reader_microbenchmark),
         cmocka_unit_test(test_serialize_messages_factory_non_pod),
         cmocka_unit_test(test_unbounded_vector_queue),
         cmocka_unit_test(test_behavior),
