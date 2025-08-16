@@ -84,16 +84,6 @@ public:
 
     // for testing purposes
     void Push(const char* p, size_t len);
-    void PrintDebugInfo() const {
-        std::cerr << "TZeroCopyEnvelopeReaderV2: CurrentSize = " << CurrentSize
-                  << ", Chunks: " << SealedChunks.Size()
-                  << ", FreeChunks: " << FreeChunks.size()
-                  << ", CurrentChunk Size: " << CurrentChunk->Size()
-                  << ", Head: " << CurrentChunk->Head
-                  << ", Tail: " << CurrentChunk->Tail
-                  << ", Ptr: " << static_cast<void*>(CurrentChunk->Data.data())
-                  << "\n";
-    }
 
     int UsedChunksCount() const {
         return UsedChunks.Size();
@@ -128,7 +118,7 @@ private:
     THeader Header;
     bool HasHeader = false;
     std::unique_ptr<TChunk> CurrentChunk;
-    TUnboundedVectorQueue<std::unique_ptr<TChunk>> SealedChunks;
+    TIntrusiveList<TChunk> SealedChunks;
     std::vector<std::unique_ptr<TChunk>> FreeChunks;
     TIntrusiveList<TChunk> UsedChunks;
 };

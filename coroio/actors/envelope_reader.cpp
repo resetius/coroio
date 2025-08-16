@@ -155,6 +155,8 @@ TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lo
     : ChunkSize(chunkSize)
     , LowWatermark(lowWatermark)
     , CurrentChunk(std::make_unique<TChunk>(ChunkSize))
+    , SealedChunks(1)
+    , UsedChunks(2)
 { }
 
 void TZeroCopyEnvelopeReaderV2::Rotate() {
@@ -164,7 +166,7 @@ void TZeroCopyEnvelopeReaderV2::Rotate() {
         if (CurrentChunk->Size() == 0) {
             UsedChunks.PushBack(std::move(CurrentChunk));
         } else {
-            SealedChunks.Push(std::move(CurrentChunk));
+            SealedChunks.PushBack(std::move(CurrentChunk));
         }
         if (FreeChunks.empty()) {
             CurrentChunk = std::make_unique<TChunk>(ChunkSize);
@@ -240,13 +242,13 @@ size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
 
 void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
     CurrentSize -= size;
+
     while (!SealedChunks.Empty() && size > 0) {
-        auto&& chunk = SealedChunks.Front();
+        auto* chunk = SealedChunks.Front();
         auto sizeToCopy = std::min(size, chunk->Size());
         assert(sizeToCopy > 0);
         if (chunk->CopyOut(buf, sizeToCopy)) {
-            FreeChunks.emplace_back(std::move(chunk));
-            SealedChunks.Pop();
+            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
         }
         buf += sizeToCopy;
         size -= sizeToCopy;
@@ -290,11 +292,10 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
         if (Header.Size > 0) {
             auto& blob = envelope.Blob;
             if (!SealedChunks.Empty() && SealedChunks.Front()->Size() >= Header.Size) {
-                auto&& front = SealedChunks.Front();
+                auto* front = SealedChunks.Front();
                 blob = ExtractBlob(*front, Header.Size);
                 if (front->Size() == 0) {
-                    UsedChunks.PushBack(std::move(front));
-                    SealedChunks.Pop();
+                    UsedChunks.PushBack(std::move(SealedChunks.PopFront()));
                 }
             } else if (SealedChunks.Empty() && CurrentChunk->Size() >= Header.Size) {
                 blob = ExtractBlob(*CurrentChunk, Header.Size);

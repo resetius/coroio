@@ -7,6 +7,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <iostream>
+#include <unordered_set>
 
 #include <coroio/all.hpp>
 #include <coroio/actors/actorsystem.hpp>
@@ -21,6 +22,42 @@ extern "C" {
 
 using namespace NNet;
 using namespace NNet::NActors;
+
+namespace {
+
+bool match(const std::string& filter, const std::string& str) {
+    size_t fi = 0, si = 0, star = std::string::npos, match = 0;
+    while (si < str.size()) {
+        if (fi < filter.size() && (filter[fi] == '?' || filter[fi] == str[si])) {
+            fi++; si++;
+        } else if (fi < filter.size() && filter[fi] == '*') {
+            star = fi++;
+            match = si;
+        } else if (star != std::string::npos) {
+            fi = star + 1;
+            si = ++match;
+        } else {
+            return false;
+        }
+    }
+    while (fi < filter.size() && filter[fi] == '*') fi++;
+    return fi == filter.size();
+}
+
+bool match_any(const std::unordered_set<std::string>& filters, const std::string& str) {
+    if (filters.empty()) {
+        return true;
+    }
+
+    for (const auto& filter : filters) {
+        if (match(filter, str)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 struct TPingMessage {
     static constexpr TMessageId MessageId = 100;
@@ -37,6 +74,75 @@ struct TAllocator {
 
     void Release(void* ptr) {
         ::operator delete(ptr);
+    }
+};
+
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <functional>
+
+class TPerfWrapper {
+public:
+    TPerfWrapper(const std::string& outputFile = "perf.data",
+                 const std::vector<std::string>& events = {"cycles", "instructions"})
+        : OutputFile(outputFile), Events(events) {}
+
+    template<typename Func>
+    auto Profile(Func&& func) -> decltype(func()) {
+        pid_t perfPid = StartPerf();
+
+        usleep(100000); // 100ms
+
+        func();
+
+        StopPerf(perfPid);
+    }
+
+private:
+    std::string OutputFile;
+    std::vector<std::string> Events;
+
+    pid_t StartPerf() {
+        pid_t pid = fork();
+        if (pid == 0) {
+            std::vector<char*> args;
+            args.push_back(const_cast<char*>("perf"));
+            args.push_back(const_cast<char*>("record"));
+            args.push_back(const_cast<char*>("-o"));
+            args.push_back(const_cast<char*>(OutputFile.c_str()));
+
+            for (const auto& event : Events) {
+                args.push_back(const_cast<char*>("-e"));
+                args.push_back(const_cast<char*>(event.c_str()));
+            }
+            args.push_back(const_cast<char*>("-F"));
+            args.push_back(const_cast<char*>("9999"));
+            //args.push_back(const_cast<char*>("-g"));
+            //args.push_back(const_cast<char*>("--call-graph=dwarf"));
+            args.push_back(const_cast<char*>("-e"));
+            args.push_back(const_cast<char*>("cache-misses"));
+            args.push_back(const_cast<char*>("-e"));
+            args.push_back(const_cast<char*>("cache-references"));
+
+            args.push_back(const_cast<char*>("-p"));
+            std::string parentPid = std::to_string(getppid());
+            args.push_back(const_cast<char*>(parentPid.c_str()));
+
+            args.push_back(nullptr);
+
+            execvp("perf", args.data());
+            _exit(1);
+        }
+        return pid;
+    }
+
+    void StopPerf(pid_t perfPid) {
+        if (perfPid > 0) {
+            kill(perfPid, SIGTERM);
+            int status;
+            waitpid(perfPid, &status, 0);
+        }
     }
 };
 
@@ -643,8 +749,9 @@ struct TTestMessage {
 void test_envelope_reader_microbenchmark(void**) {
     TAllocator alloc;
     TZeroCopyEnvelopeReader v1;
-    TZeroCopyEnvelopeReaderV2 v2(1024 * 1024, 2 * sizeof(TTestMessage));
-    const int maxIterations = 10000000;
+    TZeroCopyEnvelopeReaderV2 v2(1024 * 1024 * 1024, 2 * sizeof(TTestMessage));
+    const int maxIterations = 100000000;
+    //const int maxIterations = 100;
 
     TTestMessage testMessage;
 
@@ -654,10 +761,10 @@ void test_envelope_reader_microbenchmark(void**) {
                 .Sender = TActorId(1, 1, 1),
                 .Recipient = TActorId(1, 2, 2),
                 .MessageId = TTestMessage::MessageId,
-                .Size = sizeof(TTestMessage)
+                .Size = 0  // sizeof(TTestMessage)
             };
             reader.Push(reinterpret_cast<const char*>(&header), sizeof(THeader));
-            reader.Push(reinterpret_cast<const char*>(&testMessage), sizeof(TTestMessage));
+            // reader.Push(reinterpret_cast<const char*>(&testMessage), sizeof(TTestMessage));
         }
     };
 
@@ -667,9 +774,14 @@ void test_envelope_reader_microbenchmark(void**) {
         }
     };
 
+    TPerfWrapper perf1("v1_pop.data", {});
+
     auto t1 = std::chrono::steady_clock::now();
     pushLambda(v1);
     auto t2 = std::chrono::steady_clock::now();
+    //perf1.Profile([&]() {
+    //    popLambda(v1);
+    //});
     popLambda(v1);
     auto t3 = std::chrono::steady_clock::now();
 
@@ -677,9 +789,15 @@ void test_envelope_reader_microbenchmark(void**) {
     auto elapsedV1Pop = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
     std::cerr << "V1 Push: " << elapsedV1 << " ms, Pop: " << elapsedV1Pop << " ms\n";
 
+    TPerfWrapper perf2("v2_pop.data", {});
+
     auto t4 = std::chrono::steady_clock::now();
     pushLambda(v2);
     auto t5 = std::chrono::steady_clock::now();
+
+    //perf2.Profile([&]() {
+    //    popLambda(v2);
+    //});
     popLambda(v2);
     auto t6 = std::chrono::steady_clock::now();
 
@@ -711,24 +829,61 @@ void test_intrusive_list(void**) {
     assert_true(list.Size() == 0);
 }
 
-int main() {
-    const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_ping_pong),
-        cmocka_unit_test(test_ask_respond),
-        cmocka_unit_test(test_schedule),
-        cmocka_unit_test(test_schedule_cancel),
-        cmocka_unit_test(test_serialize_zero_size),
-        cmocka_unit_test(test_serialize_pod),
-        cmocka_unit_test(test_serialize_non_pod),
-        cmocka_unit_test(test_serialize_messages_factory),
-        cmocka_unit_test(test_envelope_reader),
-        cmocka_unit_test(test_envelope_reader_v2),
-        cmocka_unit_test(test_envelope_reader_microbenchmark),
-        cmocka_unit_test(test_serialize_messages_factory_non_pod),
-        cmocka_unit_test(test_unbounded_vector_queue),
-        cmocka_unit_test(test_behavior),
-        cmocka_unit_test(test_behavior_actor),
-        cmocka_unit_test(test_intrusive_list)
-    };
-    return cmocka_run_group_tests(tests, NULL, NULL);
+int main(int argc, char** argv) {
+    TInitializer init;
+
+    std::vector<CMUnitTest> tests;
+    std::unordered_set<std::string> filters;
+    tests.reserve(500);
+
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--filter")) {
+            if (i + 1 < argc) {
+                std::string filter(argv[++i]);
+                size_t pos = 0;
+                while (pos != std::string::npos) {
+                    size_t next = filter.find(',', pos);
+                    std::string sub = filter.substr(pos, next - pos);
+                    if (!sub.empty()) {
+                        filters.insert(sub);
+                    }
+                    pos = next == std::string::npos
+                        ? next
+                        : next + 1;
+                }
+            }
+        }
+    }
+
+#define ADD_TEST(f, n, ...) \
+    do { \
+        const struct CMUnitTest tmp[] = { \
+            f(n, ##__VA_ARGS__) \
+        }; \
+        for (int i = 0; i < sizeof(tmp) / sizeof(tmp[0]); i++) { \
+            if (match_any(filters, tmp[i].name)) { \
+                tests.emplace_back(tmp[i]); \
+            } \
+        } \
+    } while (0);
+
+    ADD_TEST(cmocka_unit_test, test_ping_pong);
+    ADD_TEST(cmocka_unit_test, test_ask_respond);
+    ADD_TEST(cmocka_unit_test, test_schedule);
+    ADD_TEST(cmocka_unit_test, test_schedule_cancel);
+    ADD_TEST(cmocka_unit_test, test_serialize_zero_size);
+    ADD_TEST(cmocka_unit_test, test_serialize_pod);
+    ADD_TEST(cmocka_unit_test, test_serialize_non_pod);
+    ADD_TEST(cmocka_unit_test, test_serialize_messages_factory);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_microbenchmark);
+    ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
+    ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
+    ADD_TEST(cmocka_unit_test, test_behavior);
+    ADD_TEST(cmocka_unit_test, test_behavior_actor);
+    ADD_TEST(cmocka_unit_test, test_intrusive_list);
+
+    return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
+#undef ADD_TEST
 }
