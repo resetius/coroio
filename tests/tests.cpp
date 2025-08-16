@@ -12,6 +12,8 @@
 
 #include <unordered_set>
 
+#include "testlib.h"
+
 extern "C" {
 #include <cmocka.h>
 }
@@ -31,38 +33,6 @@ static uint32_t rand_(uint32_t* seed) {
 int getport() {
     static int port = 8000;
     return port++;
-}
-
-bool match(const std::string& filter, const std::string& str) {
-    size_t fi = 0, si = 0, star = std::string::npos, match = 0;
-    while (si < str.size()) {
-        if (fi < filter.size() && (filter[fi] == '?' || filter[fi] == str[si])) {
-            fi++; si++;
-        } else if (fi < filter.size() && filter[fi] == '*') {
-            star = fi++;
-            match = si;
-        } else if (star != std::string::npos) {
-            fi = star + 1;
-            si = ++match;
-        } else {
-            return false;
-        }
-    }
-    while (fi < filter.size() && filter[fi] == '*') fi++;
-    return fi == filter.size();
-}
-
-bool match_any(const std::unordered_set<std::string>& filters, const std::string& str) {
-    if (filters.empty()) {
-        return true;
-    }
-
-    for (const auto& filter : filters) {
-        if (match(filter, str)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace
@@ -1327,36 +1297,7 @@ int main(int argc, char* argv[]) {
     std::unordered_set<std::string> filters;
     tests.reserve(500);
 
-    for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--filter")) {
-            if (i + 1 < argc) {
-                std::string filter(argv[++i]);
-                size_t pos = 0;
-                while (pos != std::string::npos) {
-                    size_t next = filter.find(',', pos);
-                    std::string sub = filter.substr(pos, next - pos);
-                    if (!sub.empty()) {
-                        filters.insert(sub);
-                    }
-                    pos = next == std::string::npos
-                        ? next
-                        : next + 1;
-                }
-            }
-        }
-    }
-
-#define ADD_TEST(f, n, ...) \
-    do { \
-        const struct CMUnitTest tmp[] = { \
-            f(n, ##__VA_ARGS__) \
-        }; \
-        for (int i = 0; i < sizeof(tmp) / sizeof(tmp[0]); i++) { \
-            if (match_any(filters, tmp[i].name)) { \
-                tests.emplace_back(tmp[i]); \
-            } \
-        } \
-    } while (0);
+    parse_filters(argc, argv, filters);
 
     ADD_TEST(cmocka_unit_test, test_base64);
     ADD_TEST(cmocka_unit_test, test_sha1);
@@ -1410,5 +1351,4 @@ int main(int argc, char* argv[]) {
 #endif
 
     return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);
-#undef ADD_TEST
 }
