@@ -17,7 +17,7 @@ public:
     void Profile(Func&& func) {
         pid_t perfPid = StartPerf();
 
-        usleep(100000); // 100ms
+        usleep(2000000); // 2000ms
 
         func();
 
