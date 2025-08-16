@@ -9,18 +9,22 @@
 namespace NNet {
 namespace NActors {
 
+template<typename TFunc>
 struct TBlobDeleter {
-    std::function<void(void*)> Release;
+    TBlobDeleter(TFunc&& func)
+        : Release(std::forward<TFunc>(func))
+    { }
 
     void operator()(void* ptr) {
-        if (Release) {
-            Release(ptr);
-        }
+        Release(ptr);
     }
+
+    TFunc Release;
 };
 
 struct TBlob {
-    using TRawPtr = std::unique_ptr<void, TBlobDeleter>;
+    //using TRawPtr = std::unique_ptr<void, TBlobDeleter>;
+    using TRawPtr = std::shared_ptr<void>;
     TRawPtr Data = nullptr;
     uint32_t Size = 0;
     enum class PointerType {
