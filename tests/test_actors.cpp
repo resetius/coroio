@@ -217,8 +217,9 @@ void test_serialize_zero_size(void**) {
     auto deserialized = DeserializeNear<TEmptyMessage>(blob);
     assert_true(deserialized == TEmptyMessage{});
 
-    auto farBlob = SerializeFar<TEmptyMessage>(blob);
-    assert_true(farBlob.Data.get() == blob.Data.get());
+    void* ptr = blob.Data.get();
+    auto farBlob = SerializeFar<TEmptyMessage>(std::move(blob));
+    assert_true(farBlob.Data.get() == ptr);
     assert_true(farBlob.Size == 0);
 
     auto deserializedFar = DeserializeFar<TEmptyMessage>(farBlob);
@@ -250,8 +251,9 @@ void test_serialize_pod(void**) {
     assert_true(deserialized.field4 == 4.0);
     assert_true(deserialized.field5 == 5.0);
 
-    auto farBlob = SerializeFar<TPodMessage>(blob);
-    assert_true(farBlob.Data.get() == blob.Data.get());
+    void* ptr = blob.Data.get();
+    auto farBlob = SerializeFar<TPodMessage>(std::move(blob));
+    assert_true(farBlob.Data.get() == ptr);
 
     auto& deserializedFar = DeserializeFar<TPodMessage>(farBlob);
     assert_true(deserializedFar.field1 == 1);
@@ -299,8 +301,9 @@ void test_serialize_non_pod(void**) {
     std::string& deserialized = DeserializeNear<std::string>(blob);
     assert_string_equal(deserialized.c_str(), "Hello, World!");
 
-    auto farBlob = SerializeFar<std::string>(blob);
-    assert_true(farBlob.Data.get() != blob.Data.get());
+    void* ptr = blob.Data.get();
+    auto farBlob = SerializeFar<std::string>(std::move(blob));
+    assert_true(farBlob.Data.get() != ptr);
     assert_true(farBlob.Size == size);
 
     std::string deserializedFar = DeserializeFar<std::string>(farBlob);
@@ -404,11 +407,11 @@ void test_behavior(void**) {
 
     TActorContext::TPtr ctx;
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    behavior->Receive(TWrappedString::MessageId, strNearBlob, std::move(ctx));
+    behavior->Receive(TWrappedString::MessageId, std::move(strNearBlob), std::move(ctx));
 
     auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    behavior->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+    behavior->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     auto& richBehavior = static_cast<TRichBehavior&>(*behavior);
     assert_true(richBehavior.StrReceived.Value == "Hello, World!");
@@ -457,11 +460,11 @@ void test_behavior_actor(void**) {
     TActorContext::TPtr ctx;
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     auto strNearBlob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
-    actor->Receive(TWrappedString::MessageId, strNearBlob, std::move(ctx));
+    actor->Receive(TWrappedString::MessageId, std::move(strNearBlob), std::move(ctx));
 
     auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    actor->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+    actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     auto check = [&] () {
         auto& myActor = static_cast<TMyActor&>(*actor);
@@ -477,7 +480,7 @@ void test_behavior_actor(void**) {
 
     podNearBlob = SerializeNear(TPodMessage{41, 1.14, 'y', 1.71, 2.618}, alloc);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    actor->Receive(TPodMessage::MessageId, podNearBlob, std::move(ctx));
+    actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     check();
 }
@@ -540,7 +543,7 @@ void test_envelope_reader(void**) {
 
     for (int i = 0; i < 10; ++i) {
         auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
-        auto farBlob = SerializeFar<TWrappedString>(nearBlob);
+        auto farBlob = SerializeFar<TWrappedString>(std::move(nearBlob));
         THeader header {
             .Sender = TActorId(1, 1, 1),
             .Recipient = TActorId(1, 2, 2),
@@ -621,7 +624,7 @@ void test_envelope_reader_v2(void**) {
 
     for (int i = 0; i < 10; ++i) {
         auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
-        auto farBlob = SerializeFar<TWrappedString>(nearBlob);
+        auto farBlob = SerializeFar<TWrappedString>(std::move(nearBlob));
         THeader header {
             .Sender = TActorId(1, 1, 1),
             .Recipient = TActorId(1, 2, 2),

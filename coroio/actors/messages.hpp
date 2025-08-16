@@ -4,12 +4,23 @@
 #include <sstream>
 #include <cstring>
 #include <type_traits>
+#include <functional>
 
 namespace NNet {
 namespace NActors {
 
+struct TBlobDeleter {
+    std::function<void(void*)> Release;
+
+    void operator()(void* ptr) {
+        if (Release) {
+            Release(ptr);
+        }
+    }
+};
+
 struct TBlob {
-    using TRawPtr = std::shared_ptr<void>;
+    using TRawPtr = std::unique_ptr<void, TBlobDeleter>;
     TRawPtr Data = nullptr;
     uint32_t Size = 0;
     enum class PointerType {
@@ -55,9 +66,9 @@ SerializePodNear(T&& message, TAllocator& alloc)
         auto* data = alloc.Acquire(size);
         new (data) T(std::move(message));
 
-        rawPtr = TBlob::TRawPtr(data, [&alloc](void* ptr) {
+        rawPtr = TBlob::TRawPtr(data, TBlobDeleter{[&alloc](void* ptr) {
             alloc.Release(ptr);
-        });
+        }});
     }
 
     return TBlob{std::move(rawPtr), size, TBlob::PointerType::Near};
@@ -69,9 +80,9 @@ SerializeNonPodNear(T&& message, TAllocator& alloc)
 {
     T* obj = new T(std::forward<T>(message));
 
-    auto rawPtr = TBlob::TRawPtr(obj, [](void* ptr) {
+    auto rawPtr = TBlob::TRawPtr(obj, TBlobDeleter{[](void* ptr) {
         delete reinterpret_cast<T*>(ptr);
-    });
+    }});
 
     return TBlob{std::move(rawPtr), sizeof(T), TBlob::PointerType::Near};
 }
@@ -104,9 +115,9 @@ TBlob SerializeFar(TBlob blob)
         SerializeToStream(*obj, oss);
         void* data = ::operator new(oss.str().size());
         std::memcpy(data, oss.str().data(), oss.str().size());
-        auto rawPtr = TBlob::TRawPtr(data, [](void* ptr) {
+        auto rawPtr = TBlob::TRawPtr(data, TBlobDeleter{[](void* ptr) {
             ::operator delete(ptr);
-        });
+        }});
         return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), TBlob::PointerType::Far};
     }
 }

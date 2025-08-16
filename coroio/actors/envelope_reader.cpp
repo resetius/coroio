@@ -26,9 +26,9 @@ void TEnvelopeReader::Process() {
                 auto& blob = envelope.Blob;
                 blob.Size = Header.Size;
                 blob.Type = TBlob::PointerType::Far;
-                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), TBlobDeleter{[](void* ptr) {
                     ::operator delete(ptr);
-                });
+                }});
                 std::copy(Buffer.begin(), Buffer.begin() + Header.Size, static_cast<char*>(blob.Data.get()));
                 Buffer.erase(Buffer.begin(), Buffer.begin() + Header.Size);
             }
@@ -116,9 +116,9 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReader::Pop()
             auto& blob = envelope.Blob;
             blob.Size = Header.Size;
             blob.Type = TBlob::PointerType::Far;
-            blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+            blob.Data = TBlob::TRawPtr(::operator new(blob.Size), TBlobDeleter{[](void* ptr) {
                 ::operator delete(ptr);
-            });
+            }});
             CopyOut(static_cast<char*>(blob.Data.get()), Header.Size);
         }
         HasHeader = false;
@@ -264,14 +264,14 @@ TBlob TZeroCopyEnvelopeReaderV2::ExtractBlob(TChunk& chunk, size_t size) {
     blob.Size = size;
     blob.Type = TBlob::PointerType::Far;
     ++chunk.UseCount;
-    blob.Data = TBlob::TRawPtr(chunk.Data.data() + chunk.Head, [this, &chunk](void* ptr) {
+    blob.Data = TBlob::TRawPtr(chunk.Data.data() + chunk.Head, TBlobDeleter{[this, &chunk](void* ptr) {
         if (--chunk.UseCount == 0) {
             auto ref = UsedChunks.Erase(&chunk);
             if (ref) {
                 FreeChunks.emplace_back(std::move(ref));
             }
         }
-    });
+    }});
     chunk.Head += size;
     CurrentSize -= size;
     return blob;
@@ -303,9 +303,9 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
                 // Discontinuous data, we need to copy it out
                 blob.Size = Header.Size;
                 blob.Type = TBlob::PointerType::Far;
-                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), [](void* ptr) {
+                blob.Data = TBlob::TRawPtr(::operator new(blob.Size), TBlobDeleter{[](void* ptr) {
                     ::operator delete(ptr);
-                });
+                }});
                 CopyOut(static_cast<char*>(blob.Data.get()), Header.Size);
             }
         }
