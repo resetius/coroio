@@ -129,15 +129,7 @@ int TUring::Wait(timespec ts) {
 //        }
 
     struct __kernel_timespec kts = {ts.tv_sec, ts.tv_nsec};
-//        if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &ts, nullptr)) < 0) {
-//            if (-err != ETIME) {
-//                throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
-//            }
-//        }
-
-    Submit();
-
-    if ((err = io_uring_wait_cqe_timeout(&Ring_, &cqe, &kts)) < 0) {
+    if ((err = io_uring_submit_and_wait_timeout(&Ring_, &cqe, 1, &kts, nullptr)) < 0) {
         if (-err != ETIME) {
             throw std::system_error(-err, std::generic_category(), "io_uring_wait_cqe_timeout");
         }

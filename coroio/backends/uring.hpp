@@ -1,6 +1,6 @@
 #pragma once
 
-#if __has_include(<liburing.h>) 
+#if __has_include(<liburing.h>)
 #define HAVE_URING
 
 #include <coroio/base.hpp>
@@ -48,9 +48,6 @@ namespace NNet {
  *
  * // Post an asynchronous read.
  * uringPoller.Read(socketFd, buffer, bufferSize, coroutineHandle);
- *
- * // Submit queued operations.
- * uringPoller.Submit();
  *
  * // Poll for I/O completions.
  * int ret = uringPoller.Wait();
@@ -167,8 +164,6 @@ public:
      * @return An integer result, such as the number of bytes transferred.
      */
     int Result();
-    /// Submits queued I/O requests to the kernel.
-    void Submit();
 
 private:
     /**
@@ -186,6 +181,9 @@ private:
         }
         return r;
     }
+
+    /// Submits queued I/O requests to the kernel.
+    void Submit();
 
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
