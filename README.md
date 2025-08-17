@@ -315,17 +315,24 @@ class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Ac
 
 ### Performance Results
 
-* CPU Apple M1
-* MacBook Air M1 16G
-* MacOS 15.5
+* CPU i5-11400F
+* Ubuntu 25.04
 
 **Local ring (100 actors, 1024 batch size):**
-- Akka: 269,314 msg/s
-- Coroio: 611,893 msg/s
+- Akka: 473,966 msg/s
+- Coroio: 442,151 msg/s
+- Caf: 302,930 msg/s
+- Ydb/actors: 151,972 msg/s
 
-**Distributed ring (10 actors, 1024 batch size):**
-- Akka: 3,627 msg/s
-- Coroio: 357,996 msg/s
+**Distributed ring (10 actors, 1024 batch size, 0 payload size):**
+- Coroio: 1,137,790 msg/s
+- Ydb/actors: 182,525 msg/s
+- Caf: 55,540 msg/s
+- Akka: 5,765 msg/s
+
+**Distributed ring (10 actors, 1024 batch size, 1024 payload size):**
+- Coroio: 860,188 msg/s
+- Ydb/actors: 96,372 msg/s
 
 ### Projects Using coroio
 
