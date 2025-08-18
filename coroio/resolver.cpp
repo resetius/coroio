@@ -249,10 +249,10 @@ TFuture<void> TResolver::ReceiverTask() {
             exception = std::current_exception();
         }
 
-        ResumeWaiters(std::move(TResolveResult {
+        ResumeWaiters(TResolveResult {
             .Addresses = std::move(addresses),
             .Exception = exception
-        }), Inflight[xid]);
+        }, Inflight[xid]);
     }
     co_return;
 }
