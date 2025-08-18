@@ -19,7 +19,7 @@ public:
     virtual THostPort GetHostPort() const = 0;
 };
 
-template<typename TPoller, typename TResolver>
+template<typename TPoller>
 class TNode : public INode {
 public:
     using TSocket = typename TPoller::TSocket;

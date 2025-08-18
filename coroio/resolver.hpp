@@ -55,6 +55,41 @@ enum class EDNSType {
     AAAA = 28, /**< IPv6 address record. */
 };
 
+struct TTypelessSocket {
+    TTypelessSocket() = default;
+
+    template<typename TSocket>
+    TTypelessSocket(TSocket&& sock) {
+        auto socket = std::make_shared<TSocket>(std::move(sock));
+        Connector = [socket](const TAddress& addr, TTime deadline) -> TFuture<void> {
+            co_await socket->Connect(addr, deadline);
+        };
+        Reader = [socket](void* buf, size_t size) -> TFuture<ssize_t> {
+            co_return co_await socket->ReadSome(buf, size);
+        };
+        Writer = [socket](const void* buf, size_t size) -> TFuture<ssize_t> {
+            co_return co_await socket->WriteSome(buf, size);
+        };
+    }
+
+    TFuture<void> Connect(const TAddress& addr, TTime deadline = TTime::max()) {
+        co_await Connector(addr, deadline);
+    }
+
+    TFuture<ssize_t> ReadSome(void* buf, size_t size) {
+        co_return co_await Reader(buf, size);
+    }
+
+    TFuture<ssize_t> WriteSome(const void* buf, size_t size) {
+        co_return co_await Writer(buf, size);
+    }
+
+private:
+    std::function<TFuture<void>(const TAddress& addr, TTime deadline)> Connector;
+    std::function<TFuture<ssize_t>(void* buf, size_t size)> Reader;
+    std::function<TFuture<ssize_t>(const void* buf, size_t size)> Writer;
+};
+
 /**
  * @class TResolver
  * @brief Resolves hostnames into IP addresses using a custom poller.
@@ -80,7 +115,6 @@ enum class EDNSType {
  * // auto addresses = co_await futureAddresses;
  * @endcode
  */
-template<typename TPoller>
 class TResolver {
 public:
     /**
@@ -92,6 +126,7 @@ public:
      * @param poller Reference to a poller used for asynchronous operations.
      * @param defaultType The default DNS record type to use if none is specified in a request.
      */
+    template<typename TPoller>
     TResolver(TPoller& poller, EDNSType defaultType = EDNSType::A);
     /**
      * @brief Constructs a TResolver with a specified DNS configuration.
@@ -103,6 +138,7 @@ public:
      * @param poller Reference to a poller for asynchronous operations.
      * @param defaultType The default DNS record type to use for resolution.
      */
+    template<typename TPoller>
     TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType = EDNSType::A);
     /**
      * @brief Constructs a TResolver using a specific DNS address.
@@ -113,6 +149,7 @@ public:
      * @param poller Reference to a poller used for asynchronous operations.
      * @param defaultType The default DNS record type for resolution.
      */
+    template<typename TPoller>
     TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType = EDNSType::A);
     ~TResolver();
 
@@ -134,7 +171,7 @@ public:
 private:
     TFuture<void> SenderTask();
     TFuture<void> ReceiverTask();
-    TFuture<void> TimeoutsTask();
+    TFuture<void> TimeoutsTask(std::function<TFuture<void>(TTime until)> timeout);
 
     void ResumeSender();
 
@@ -144,8 +181,7 @@ private:
     std::coroutine_handle<> SenderSuspended;
 
     TAddress DnsAddr;
-    TSocket Socket;
-    TPoller& Poller;
+    TTypelessSocket Socket;
     EDNSType DefaultType;
 
     struct TResolveRequest {
@@ -190,13 +226,36 @@ private:
     uint16_t Xid = 1;
 };
 
+template<typename TPoller>
+TResolver::TResolver(TPoller& poller, EDNSType defaultType)
+    : TResolver(TResolvConf(), poller, defaultType)
+{ }
+
+template<typename TPoller>
+TResolver::TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType)
+    : TResolver(conf.Nameservers[0], poller, defaultType)
+{ }
+
+template<typename TPoller>
+TResolver::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType)
+    : DnsAddr(std::move(dnsAddr))
+    , Socket(typename TPoller::TSocket(poller, DnsAddr.Domain(), SOCK_DGRAM))
+    , DefaultType(defaultType)
+{
+    // Start tasks after fields initialization
+    Sender = SenderTask();
+    Receiver = ReceiverTask();
+    Timeouts = TimeoutsTask([&poller](TTime until) -> TFuture<void> {
+        co_await poller.Sleep(until);
+    });
+}
+
 class THostPort {
 public:
     THostPort(const std::string& hostPort);
     THostPort(const std::string& host, int port);
 
-    template<typename T>
-    TFuture<TAddress> Resolve(TResolver<T>& resolver) {
+    TFuture<TAddress> Resolve(TResolver& resolver) {
         char buf[16];
         if (inet_pton(AF_INET, Host.c_str(), buf) == 1 || inet_pton(AF_INET6, Host.c_str(), buf)) {
             co_return TAddress{Host, Port};

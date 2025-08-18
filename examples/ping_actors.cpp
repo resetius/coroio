@@ -111,13 +111,13 @@ int main(int argc, char** argv) {
     using Poller = TDefaultPoller;
     TInitializer init;
     TLoop<Poller> loop;
-    TResolver<TPollerBase> resolver(loop.Poller());
+    TResolver resolver(loop.Poller());
     TMessagesFactory factory;
     int messageSize = 0;
     std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
 
     std::vector<
-        std::tuple<int, std::unique_ptr<TNode<Poller, TResolver<TPollerBase>>>>
+        std::tuple<int, std::unique_ptr<TNode<Poller>>>
     > nodes;
     TNodeId myNodeId = 1;
     int port = 0;
@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
                 std::string host = hostPortNode.substr(0, colon1);
                 int port = std::stoi(hostPortNode.substr(colon1 + 1, colon2 - colon1 - 1));
                 int nodeId = std::stoi(hostPortNode.substr(colon2 + 1));
-                nodes.emplace_back(nodeId, std::make_unique<TNode<Poller, TResolver<TPollerBase>>>(
+                nodes.emplace_back(nodeId, std::make_unique<TNode<Poller>>(
                     loop.Poller(),
                     factory,
                     resolver,
