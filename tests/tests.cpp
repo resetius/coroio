@@ -785,9 +785,9 @@ void test_resolver(void**) {
 
     TLoop loop;
 #ifdef _WIN32
-    TResolver<TPollerBase> resolver(TAddress{"8.8.8.8", 53}, loop.Poller());
+    TResolver resolver(TAddress{"8.8.8.8", 53}, loop.Poller());
 #else
-    TResolver<TPollerBase> resolver(loop.Poller());
+    TResolver resolver(loop.Poller());
 #endif
 
     std::vector<TAddress> addresses;
@@ -812,7 +812,7 @@ void test_resolve_bad_name(void**) {
     using TSocket = typename TPoller::TSocket;
 
     TLoop loop;
-    TResolver<TPollerBase> resolver(loop.Poller());
+    TResolver resolver(loop.Poller());
 
     std::exception_ptr ex;
     TFuture<void> h1 = [](auto& resolver, auto& ex) -> TFuture<void> {

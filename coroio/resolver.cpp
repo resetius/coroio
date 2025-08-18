@@ -182,35 +182,10 @@ void TResolvConf::Load(std::istream& input) {
     }
 }
 
-template<typename TPoller>
-TResolver<TPoller>::TResolver(TPoller& poller, EDNSType defaultType)
-    : TResolver(TResolvConf(), poller, defaultType)
+TResolver::~TResolver()
 { }
 
-template<typename TPoller>
-TResolver<TPoller>::TResolver(const TResolvConf& conf, TPoller& poller, EDNSType defaultType)
-    : TResolver(conf.Nameservers[0], poller, defaultType)
-{ }
-
-template<typename TPoller>
-TResolver<TPoller>::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType)
-    : DnsAddr(std::move(dnsAddr))
-    , Socket(poller, DnsAddr.Domain(), SOCK_DGRAM)
-    , Poller(poller)
-    , DefaultType(defaultType)
-{
-    // Start tasks after fields initialization
-    Sender = SenderTask();
-    Receiver = ReceiverTask();
-    Timeouts = TimeoutsTask();
-}
-
-template<typename TPoller>
-TResolver<TPoller>::~TResolver()
-{ }
-
-template<typename TPoller>
-TFuture<void> TResolver<TPoller>::SenderTask() {
+TFuture<void> TResolver::SenderTask() {
     co_await Socket.Connect(DnsAddr);
     char buf[512];
     while (true) {
@@ -230,8 +205,7 @@ TFuture<void> TResolver<TPoller>::SenderTask() {
     co_return;
 }
 
-template<typename TPoller>
-TFuture<void> TResolver<TPoller>::TimeoutsTask() {
+TFuture<void> TResolver::TimeoutsTask(std::function<TFuture<void>(TTime until)> timeout) {
     while (true) {
         TTime now = TClock::now();
         while (!TimeoutsQueue.empty() && TimeoutsQueue.front().first <= now) {
@@ -239,12 +213,11 @@ TFuture<void> TResolver<TPoller>::TimeoutsTask() {
             ResumeWaiters({.Exception = std::make_exception_ptr(std::runtime_error("Timeout"))}, req);
             TimeoutsQueue.pop();
         }
-        co_await Poller.Sleep(now + std::chrono::milliseconds(100));
+        co_await timeout(now + std::chrono::milliseconds(100));
     }
 }
 
-template<typename TPoller>
-void TResolver<TPoller>::ResumeWaiters(TResolveResult&& result, const TResolveRequest& req) {
+void TResolver::ResumeWaiters(TResolveResult&& result, const TResolveRequest& req) {
     auto maybeWaiting = WaitingAddrs.find(req);
     if (maybeWaiting != WaitingAddrs.end()) {
         Results[req] = std::move(result);
@@ -256,8 +229,7 @@ void TResolver<TPoller>::ResumeWaiters(TResolveResult&& result, const TResolveRe
     }
 }
 
-template<typename TPoller>
-TFuture<void> TResolver<TPoller>::ReceiverTask() {
+TFuture<void> TResolver::ReceiverTask() {
     char buf[512];
     while (true) {
         auto size = co_await Socket.ReadSome(buf, sizeof(buf));
@@ -285,15 +257,13 @@ TFuture<void> TResolver<TPoller>::ReceiverTask() {
     co_return;
 }
 
-template<typename TPoller>
-void TResolver<TPoller>::ResumeSender() {
+void TResolver::ResumeSender() {
     if (SenderSuspended) {
         SenderSuspended.resume();
     }
 }
 
-template<typename TPoller>
-TFuture<std::vector<TAddress>> TResolver<TPoller>::Resolve(const std::string& hostname, EDNSType type) {
+TFuture<std::vector<TAddress>> TResolver::Resolve(const std::string& hostname, EDNSType type) {
     auto handle = co_await Self();
     if (type == EDNSType::DEFAULT) {
         type = DefaultType;
@@ -327,10 +297,5 @@ THostPort::THostPort(const std::string& host, int port)
     : Host(host)
     , Port(port)
 { }
-
-template class TResolver<TPollerBase>;
-#ifdef HAVE_URING
-template class TResolver<TUring>;
-#endif
 
 } // namespace NNet

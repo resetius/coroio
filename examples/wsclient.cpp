@@ -93,7 +93,7 @@ TFuture<void> client(TPoller& poller, const std::string& uri, bool ipv6)
         }
         std::string path = match[4].str();
 
-        TResolver<TPollerBase> resolver(poller);
+        TResolver resolver(poller);
         auto addresses = co_await resolver.Resolve(host,
             ipv6 ? EDNSType::AAAA : EDNSType::A
         );
@@ -117,7 +117,7 @@ TFuture<void> client(TPoller& poller, const std::string& uri, bool ipv6)
             sslSocket.SslSetTlsExtHostName(host);
 
             co_await client(std::move(sslSocket), address, poller, std::move(host), std::move(path));
-        } else 
+        } else
 #endif
         {
             co_await client(std::move(socket), address, poller, std::move(host), std::move(path));

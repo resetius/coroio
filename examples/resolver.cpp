@@ -24,7 +24,7 @@ template<typename TPoller>
 TFuture<void> resolve(TPoller& poller, EDNSType type) {
     TFileHandle input{0, poller}; // stdin
     TLineReader lineReader(input, 4096);
-    TResolver<TPollerBase> resolver(poller);
+    TResolver resolver(poller);
     int inflight = 0;
     while (auto line = co_await lineReader.Read()) {
         inflight++;
