@@ -106,18 +106,17 @@ public:
     std::vector<TNodeId> NodeIds;
 };
 
-int main(int argc, char** argv) {
-    //using Poller = TSelect;
-    using Poller = TDefaultPoller;
+template<typename TPoller>
+int templatedMain(int argc, char** argv) {
     TInitializer init;
-    TLoop<Poller> loop;
+    TLoop<TPoller> loop;
     TResolver resolver(loop.Poller());
     TMessagesFactory factory;
     int messageSize = 0;
     std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
 
     std::vector<
-        std::tuple<int, std::unique_ptr<TNode<Poller>>>
+        std::tuple<int, std::unique_ptr<TNode<TPoller>>>
     > nodes;
     TNodeId myNodeId = 1;
     int port = 0;
@@ -136,12 +135,12 @@ int main(int argc, char** argv) {
                 std::string host = hostPortNode.substr(0, colon1);
                 int port = std::stoi(hostPortNode.substr(colon1 + 1, colon2 - colon1 - 1));
                 int nodeId = std::stoi(hostPortNode.substr(colon2 + 1));
-                nodes.emplace_back(nodeId, std::make_unique<TNode<Poller>>(
+                nodes.emplace_back(nodeId, std::make_unique<TNode<TPoller>>(
                     loop.Poller(),
                     factory,
                     resolver,
                     [&](const TAddress& addr) {
-                        return Poller::TSocket(loop.Poller(), addr.Domain());
+                        return typename TPoller::TSocket(loop.Poller(), addr.Domain());
                     },
                     THostPort(host, port)
                 ));
@@ -177,6 +176,10 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--help")) {
             std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]\n";
             return 0;
+        } else if (!strcmp(argv[i], "--method")) {
+            if (i + 1 < argc) {
+                i++; // skip
+            }
         } else {
             std::cerr << "Unknown argument: " << argv[i] << "\n";
             return -1;
@@ -205,7 +208,7 @@ int main(int argc, char** argv) {
     TNodeId nextNodeId = nodeIds[nextIdx];
 
     TAddress address{"::", port};
-    Poller::TSocket socket(loop.Poller(), address.Domain());
+    typename TPoller::TSocket socket(loop.Poller(), address.Domain());
     socket.Bind(address);
     socket.Listen();
 
@@ -268,5 +271,48 @@ int main(int argc, char** argv) {
 
     while (sys.ActorsSize() > 0) {
         loop.Step();
+    }
+
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    std::string method = "default";
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--method")) {
+            if (i + 1 < argc) {
+                method = argv[++i];
+            }
+        }
+    }
+    std::cerr << "Method: " << method << "\n";
+    if (method == "select") {
+        return templatedMain<TSelect>(argc, argv);
+    }
+    else if (method == "poll") {
+        return templatedMain<TPoll>(argc, argv);
+    }
+#ifdef HAVE_EPOLL
+    else if (method == "epoll") {
+        return templatedMain<TEPoll>(argc, argv);
+    }
+#endif
+#ifdef HAVE_URING
+    else if (method == "uring") {
+        return templatedMain<TUring>(argc, argv);
+    }
+#endif
+#ifdef HAVE_KQUEUE
+    else if (method == "kqueue") {
+        return templatedMain<TKqueue>(argc, argv);
+    }
+#endif
+#ifdef HAVE_IOCP
+    else if (method == "iocp") {
+        return templatedMain<TIOCp>(argc, argv);
+    }
+#endif
+    else {
+        return templatedMain<TDefaultPoller>(argc, argv);
     }
 }
