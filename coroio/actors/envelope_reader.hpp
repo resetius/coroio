@@ -11,13 +11,6 @@
 namespace NNet {
 namespace NActors {
 
-struct THeader {
-    TActorId Sender;
-    TActorId Recipient;
-    TMessageId MessageId = 0;
-    uint32_t Size = 0;
-};
-
 class TEnvelopeReader {
 public:
     TEnvelopeReader(size_t unused1 = 0, size_t unused2 = 0) { }

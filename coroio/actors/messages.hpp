@@ -6,6 +6,8 @@
 #include <type_traits>
 #include <functional>
 
+#include "actorid.hpp"
+
 namespace NNet {
 namespace NActors {
 
@@ -180,6 +182,36 @@ TBlob SerializeFar(TBlob blob)
             ::operator delete(ptr);
         }});
         return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), TBlob::PointerType::Far};
+    }
+}
+
+template<typename T, typename TStream, typename... Args>
+void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, Args&&... args)
+{
+    if constexpr (is_pod_v<T>) {
+        constexpr auto size = sizeof_data<T>() + sizeof(THeader);
+        auto buf = stream.Acquire(size);
+        char* p = static_cast<char*>(buf.data());
+        new (p) THeader {sender, recipient, T::MessageId, sizeof_data<T>()};
+        p += sizeof(THeader);
+        new (p) T(std::forward<Args>(args)...);
+        stream.Commit(size);
+    } else {
+        // TODO: optimize:
+        // 1. estimate size of serialized T
+        // 2. allocate enough space in stream
+        // 3. serialize T to stream
+        // 4. write header with size
+        // 5. commit the whole buffer
+        std::ostringstream oss;
+        SerializeToStream(T(std::forward<Args>(args)...), oss);
+        auto size = oss.str().size() + sizeof(THeader);
+        auto buf = stream.Acquire(size);
+        char* p = static_cast<char*>(buf.data());
+        new (p) THeader {sender, recipient, T::MessageId, static_cast<uint32_t>(oss.str().size())};
+        p += sizeof(THeader);
+        std::memcpy(p, oss.str().data(), oss.str().size());
+        stream.Commit(size);
     }
 }
 
