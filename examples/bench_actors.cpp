@@ -33,7 +33,7 @@ public:
             return;
         }
 
-        ctx->Send(Ring_[(Idx_ + 1)%Ring_.size()], TNext{});
+        ctx->Send<TNext>(Ring_[(Idx_ + 1)%Ring_.size()]);
 
         if (Idx_ == 0) {
             if (ctx->Sender()) {
@@ -57,7 +57,7 @@ private:
                     << (double)(TotalMessages_) / secs
                     << " msg/s\n";
         for (auto& idx : Ring_) {
-            ctx->Send(idx, TPoison{});
+            ctx->Send<TPoison>(idx);
         }
     }
 
@@ -129,7 +129,7 @@ int main(int argc, char** argv) {
         ringIds[i] = sys.Register(std::make_unique<TRingActor>(i, totalMessages, ringIds));
     }
     for (int i = 0; i < batchSize; i++) {
-        sys.Send(TActorId{}, ringIds[0], TNext{});
+        sys.Send<TNext>(TActorId{}, ringIds[0]);
     }
 
     sys.Serve();

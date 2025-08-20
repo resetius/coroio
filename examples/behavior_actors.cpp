@@ -50,8 +50,8 @@ struct TBehaviorActor : public IBehaviorActor {
                 nodeId = Parent->NodeIds[1 + rand() % (Parent->NodeIds.size() - 1)];
             }
             auto nextActorId = TActorId{nodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
-            ctx->Schedule(std::chrono::steady_clock::now() + std::chrono::milliseconds(1000), ctx->Self(), ctx->Self(), TPing{});
-            ctx->Send(nextActorId, std::move(msg));
+            ctx->Schedule<TPing>(std::chrono::steady_clock::now() + std::chrono::milliseconds(1000), ctx->Self(), ctx->Self());
+            ctx->Send<TMessage>(nextActorId, msg);
         }
         void Receive(TMessage&& message, TBlob blob, TActorContext::TPtr ctx) {
             std::cout << "Received message: " << message.Text << "\n";
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
     socket.Listen();
 
     sys.Serve(std::move(socket));
-    sys.Send(TActorId{}, pingActorId, TPing{});
+    sys.Send<TPing>(TActorId{}, pingActorId);
 
     while (sys.ActorsSize() > 0) {
         loop.Step();

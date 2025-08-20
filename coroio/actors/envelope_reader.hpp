@@ -57,6 +57,8 @@ public:
 
 private:
     void EnsureCapacity(size_t size);
+    template<size_t size>
+    void CopyOut(char* buf);
     void CopyOut(char* buf, size_t size);
     void TryReadHeader();
 
@@ -94,6 +96,8 @@ private:
     struct TChunk;
 
     void Rotate();
+    template<size_t size>
+    bool CopyOut(char* buf);
     void CopyOut(char* buf, size_t size);
     TBlob ExtractBlob(TChunk& chunk, size_t size);
 
@@ -103,6 +107,8 @@ private:
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
         std::span<char> Acquire(size_t size);
         void Commit(size_t size);
+        template<size_t size>
+        bool CopyOut(char* buf);
         bool CopyOut(char* buf, size_t size);
         size_t Size() const;
         void Clear();
