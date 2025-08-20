@@ -7,10 +7,19 @@
 #include <coroio/address.hpp>
 #include <coroio/resolver.hpp>
 
+#include <span>
+
 namespace NNet {
 namespace NActors {
 
-class INode {
+class IOutputStream {
+public:
+    virtual ~IOutputStream() = default;
+    virtual std::span<char> Acquire(size_t size) = 0;
+    virtual void Commit(size_t size) = 0;
+};
+
+class INode : public IOutputStream {
 public:
     virtual ~INode() = default;
     virtual void Send(TEnvelope&& envelope) = 0;
@@ -31,6 +40,7 @@ public:
         , HostPort(hostPort)
     { }
 
+    // TODO: remove me, envelope needed only for local actors
     void Send(TEnvelope&& envelope) override {
         auto blob = std::move(envelope.Blob);
         if (blob.Size > 0) {
@@ -42,10 +52,26 @@ public:
             .MessageId = envelope.MessageId,
             .Size = blob.Size
         };
-        OutputBuffer.insert(OutputBuffer.end(), (char*)&data, (char*)&data + sizeof(data));
+        auto buf = Acquire(sizeof(data) + blob.Size);
+        std::memcpy(buf.data(), &data, sizeof(data));
         if (blob.Size > 0) {
-            OutputBuffer.insert(OutputBuffer.end(), (char*)blob.Data.get(), (char*)blob.Data.get() + blob.Size);
+            std::memcpy(buf.data() + sizeof(data), blob.Data.get(), blob.Size);
         }
+        Commit(sizeof(data) + blob.Size);
+    }
+
+    std::span<char> Acquire(size_t size) override {
+        if (UncommittedBytes + size > OutputBuffer.size()) {
+            OutputBuffer.resize(UncommittedBytes + size);
+        }
+        auto buf = std::span<char>(OutputBuffer.data() + UncommittedBytes, size);
+        UncommittedBytes += size;
+        return buf;
+    }
+
+    void Commit(size_t size) override {
+        CommittedBytes += size;
+        UncommittedBytes = CommittedBytes;
     }
 
     void StartConnect() override {
@@ -69,10 +95,11 @@ public:
 private:
     TFuture<void> DoDrain() {
         try {
-            while (!OutputBuffer.empty()) {
+            while (CommittedBytes > 0) {
                 SendBuffer.swap(OutputBuffer);
-                co_await TByteWriter(Socket).Write(SendBuffer.data(), SendBuffer.size());
-                SendBuffer.clear();
+                auto readSize = CommittedBytes;
+                UncommittedBytes = CommittedBytes = 0;
+                co_await TByteWriter(Socket).Write(SendBuffer.data(), readSize);
             }
             co_return;
         } catch (const std::exception& ex) {
@@ -134,6 +161,8 @@ private:
     std::function<TSocket(TAddress&)> SocketFactory;
     THostPort HostPort;
     std::vector<char> OutputBuffer;
+    size_t UncommittedBytes = 0;
+    size_t CommittedBytes = 0;
     std::vector<char> SendBuffer;
 };
 

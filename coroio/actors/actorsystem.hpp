@@ -80,11 +80,26 @@ public:
         return Poller->Sleep(duration);
     }
 
-    void Send(TActorId sender, TActorId recepient, TMessageId messageId, TBlob blob);
+    void Send(TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
     template<typename T, typename... Args>
-    void Send(TActorId sender, TActorId recepient, Args&&... args) {
-        auto blob = SerializeNear<T>(GetPodAllocator(), std::forward<Args>(args)...);
-        Send(sender, recepient, T::MessageId, std::move(blob));
+    void Send(TActorId sender, TActorId recipient, Args&&... args) {
+        if (recipient.NodeId() == NodeId_) {
+            auto blob = SerializeNear<T>(GetPodAllocator(), std::forward<Args>(args)...);
+            Send(sender, recipient, T::MessageId, std::move(blob));
+        } else {
+            auto& maybeRemote = Nodes[recipient.NodeId()];
+            if (!maybeRemote.Node) {
+                std::cerr << "Cannot send message to actor on different node: " << recipient.ToString() << "\n";
+                return;
+            }
+            SerializeFarInplace<T>(*maybeRemote.Node, sender, recipient, std::forward<Args>(args)...);
+            if (maybeRemote.Flags.IsReady == 0) {
+                maybeRemote.Flags.IsReady = 1;
+                ReadyNodes.Push(recipient.NodeId());
+            }
+
+            YieldNotify();
+        }
     }
 
     TEvent Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
@@ -339,13 +354,11 @@ inline TFuture<T> TActorContext::Ask(TActorId recipient, TQuestion&& question) {
 
 template<typename T, typename... Args>
 inline void TActorContext::Send(TActorId to, Args&&... args) {
-    auto blob = SerializeNear<T>(ActorSystem->GetPodAllocator(), std::forward<Args>(args)...);
-    Send(to, T::MessageId, std::move(blob));
+    ActorSystem->Send<T>(Self(), to, std::forward<Args>(args)...);
 }
 template<typename T, typename... Args>
 inline void TActorContext::Forward(TActorId to, Args&&... args) {
-    auto blob = SerializeNear<T>(ActorSystem->GetPodAllocator(), std::forward<Args>(args)...);
-    Forward(to, T::MessageId, std::move(blob));
+    ActorSystem->Send<T>(Sender(), to, std::forward<Args>(args)...);
 }
 
 template<typename T, typename... Args>
