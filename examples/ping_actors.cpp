@@ -47,7 +47,7 @@ public:
         }
 
         auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
-        ctx->Send(nextActorId, TPingMessage<Size>{});
+        ctx->Send<TPingMessage<Size>>(nextActorId);
 
         if (IsFirstNode) {
             if (ctx->Sender()) {
@@ -65,7 +65,7 @@ public:
                 for (auto nodeId : NodeIds) {
                     auto actorId = TActorId{nodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
                     std::cerr << "Sending poison pill to actor: " << actorId << "\n";
-                    ctx->Send(actorId, TPoison{});
+                    ctx->Send<TPoison>(actorId);
                 }
             }
         }
@@ -245,7 +245,7 @@ int templatedMain(int argc, char** argv) {
                 co_await sys.Sleep(std::chrono::milliseconds(delay));
                 std::cerr << "Sending first ping from: " << from.ToString() << " to: " << to.ToString() << "\n";
                 for (int i = 0; i < maxPings; ++i) {
-                    currentSys.Send(from, to, TPingMessageType{});
+                    currentSys.Send<TPingMessageType>(from, to);
                 }
                 co_return;
             }();

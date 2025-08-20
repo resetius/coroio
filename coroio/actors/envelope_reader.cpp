@@ -97,7 +97,7 @@ void TZeroCopyEnvelopeReader::Commit(size_t size)
 
 void TZeroCopyEnvelopeReader::TryReadHeader() {
     if (!HasHeader && Size() >= sizeof(THeader)) {
-        CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        CopyOut<sizeof(THeader)>(reinterpret_cast<char*>(&Header));
         HasHeader = true;
     }
 }
@@ -126,6 +126,20 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReader::Pop()
     } else {
         return std::nullopt;
     }
+}
+
+template<size_t size>
+void TZeroCopyEnvelopeReader::CopyOut(char* buf)
+{
+    if (Data.size() - Head >= size) {
+        std::memcpy(buf, &Data[Head], size);
+    } else {
+        auto first = Data.size() - Head;
+        std::memcpy(buf, &Data[Head], first);
+        std::memcpy(buf + first, &Data[0], size - first);
+    }
+
+    Head = (Head + size) & LastIndex;
 }
 
 void TZeroCopyEnvelopeReader::CopyOut(char* buf, size_t size) {
@@ -229,6 +243,15 @@ void TZeroCopyEnvelopeReaderV2::TChunk::Commit(size_t size) {
     Tail = Tail + size;
 }
 
+template<size_t size>
+bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf) {
+    assert (Data.size() - Head >= size);
+    std::memcpy(buf, &Data[Head], size);
+    Head = Head + size;
+    assert (Head <= Tail);
+    return Head == Tail;
+}
+
 bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf, size_t size) {
     assert (Data.size() - Head >= size);
     std::memcpy(buf, &Data[Head], size);
@@ -239,6 +262,26 @@ bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf, size_t size) {
 
 size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
     return Tail - Head;
+}
+
+template<size_t size>
+bool TZeroCopyEnvelopeReaderV2::CopyOut(char* buf) {
+    if (!SealedChunks.Empty()) {
+        auto* chunk = SealedChunks.Front();
+        if (chunk->Size() < size) [[unlikely]] {
+            return false;
+        }
+        if (chunk->CopyOut<size>(buf)) {
+            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
+        }
+    } else {
+        if (CurrentChunk->Size() < size) [[unlikely]] {
+            return false;
+        }
+        CurrentChunk->CopyOut<size>(buf);
+    }
+    CurrentSize -= size;
+    return true;
 }
 
 void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
@@ -281,7 +324,10 @@ TBlob TZeroCopyEnvelopeReaderV2::ExtractBlob(TChunk& chunk, size_t size) {
 
 std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
     if (!HasHeader && CurrentSize >= sizeof(THeader)) {
-        CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        if (!CopyOut<sizeof(THeader)>(reinterpret_cast<char*>(&Header))) [[unlikely]] {
+            // Header was split across chunks, fallback to copying out the header
+            CopyOut(reinterpret_cast<char*>(&Header), sizeof(THeader));
+        }
         HasHeader = true;
     }
 

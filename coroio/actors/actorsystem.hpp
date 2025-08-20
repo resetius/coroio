@@ -81,16 +81,16 @@ public:
     }
 
     void Send(TActorId sender, TActorId recepient, TMessageId messageId, TBlob blob);
-    template<typename T>
-    void Send(TActorId sender, TActorId recepient, T&& message) {
-        auto blob = SerializeNear(std::forward<T>(message), GetPodAllocator());
+    template<typename T, typename... Args>
+    void Send(TActorId sender, TActorId recepient, Args&&... args) {
+        auto blob = SerializeNear<T>(GetPodAllocator(), std::forward<Args>(args)...);
         Send(sender, recepient, T::MessageId, std::move(blob));
     }
 
     TEvent Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
-    template<typename T>
-    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, T&& message) {
-        auto blob = SerializeNear(std::forward<T>(message), GetPodAllocator());
+    template<typename T, typename... Args>
+    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, Args&&... args) {
+        auto blob = SerializeNear<T>(GetPodAllocator(), std::forward<Args>(args)...);
         return Schedule(when, sender, recipient, T::MessageId, std::move(blob));
     }
     void Cancel(TEvent event);
@@ -127,7 +127,7 @@ public:
         auto state = std::make_shared<TAskState<T>>();
         auto askActor = std::make_unique<TAsk<T>>(state);
         auto actorId = Register(std::move(askActor));
-        Send(actorId, recepient, TQuestion::MessageId, SerializeNear(std::forward<TQuestion>(message), GetPodAllocator()));
+        Send(actorId, recepient, TQuestion::MessageId, SerializeNear<TQuestion>(GetPodAllocator(), std::forward<TQuestion>(message)));
         return TAskAwaiter{state};
     }
 
@@ -320,7 +320,7 @@ void TAsk<T>::Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx)
     State->MessageId = messageId;
     State->Blob = std::move(blob);
     State->Handle.resume();
-    ctx->Send(ctx->Self(), TPoison{});
+    ctx->Send<TPoison>(ctx->Self());
 }
 
 inline TFuture<void> TActorContext::Sleep(TTime until) {
@@ -337,20 +337,20 @@ inline TFuture<T> TActorContext::Ask(TActorId recipient, TQuestion&& question) {
     co_return co_await ActorSystem->Ask<T>(recipient, std::forward<TQuestion>(question));
 }
 
-template<typename T>
-inline void TActorContext::Send(TActorId to, T&& message) {
-    auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
+template<typename T, typename... Args>
+inline void TActorContext::Send(TActorId to, Args&&... args) {
+    auto blob = SerializeNear<T>(ActorSystem->GetPodAllocator(), std::forward<Args>(args)...);
     Send(to, T::MessageId, std::move(blob));
 }
-template<typename T>
-inline void TActorContext::Forward(TActorId to, T&& message) {
-    auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
+template<typename T, typename... Args>
+inline void TActorContext::Forward(TActorId to, Args&&... args) {
+    auto blob = SerializeNear<T>(ActorSystem->GetPodAllocator(), std::forward<Args>(args)...);
     Forward(to, T::MessageId, std::move(blob));
 }
 
-template<typename T>
-inline TEvent TActorContext::Schedule(TTime when, TActorId sender, TActorId recipient, T&& message) {
-    auto blob = SerializeNear(std::forward<T>(message), ActorSystem->GetPodAllocator());
+template<typename T, typename... Args>
+inline TEvent TActorContext::Schedule(TTime when, TActorId sender, TActorId recipient, Args&&... args) {
+    auto blob = SerializeNear<T>(ActorSystem->GetPodAllocator(), std::forward<Args>(args)...);
     return Schedule(when, sender, recipient, T::MessageId, std::move(blob));
 }
 

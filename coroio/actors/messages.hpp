@@ -115,9 +115,9 @@ constexpr size_t sizeof_data() {
     }
 }
 
-template<typename T, typename TAllocator>
+template<typename T, typename TAllocator, typename... Args>
 typename std::enable_if_t<is_pod_v<T>, TBlob>
-SerializePodNear(T&& message, TAllocator& alloc)
+SerializePodNear(TAllocator& alloc, Args&&... args)
 {
     constexpr uint32_t size = sizeof_data<T>();
 
@@ -125,7 +125,7 @@ SerializePodNear(T&& message, TAllocator& alloc)
 
     if constexpr (size > 0) {
         auto* data = alloc.Acquire(size);
-        new (data) T(std::move(message));
+        new (data) T(std::forward<Args>(args)...);
 
         rawPtr = TBlob::TRawPtr(data, TBlobDeleter{[&alloc](void* ptr) {
             alloc.Release(ptr);
@@ -135,11 +135,11 @@ SerializePodNear(T&& message, TAllocator& alloc)
     return TBlob{std::move(rawPtr), size, TBlob::PointerType::Near};
 }
 
-template<typename T, typename TAllocator>
+template<typename T, typename TAllocator, typename... Args>
 typename std::enable_if_t<!is_pod_v<T>, TBlob>
-SerializeNonPodNear(T&& message, TAllocator& alloc)
+SerializeNonPodNear(TAllocator& alloc, Args&&... args)
 {
-    T* obj = new T(std::forward<T>(message));
+    T* obj = new T(std::forward<Args>(args)...);
 
     auto rawPtr = TBlob::TRawPtr(obj, TBlobDeleter{[](void* ptr) {
         delete reinterpret_cast<T*>(ptr);
@@ -148,13 +148,13 @@ SerializeNonPodNear(T&& message, TAllocator& alloc)
     return TBlob{std::move(rawPtr), sizeof(T), TBlob::PointerType::Near};
 }
 
-template<typename T, typename TAllocator>
-TBlob SerializeNear(T&& message, TAllocator& alloc)
+template<typename T, typename TAllocator, typename... Args>
+TBlob SerializeNear(TAllocator& alloc, Args&&... args)
 {
     if constexpr (is_pod_v<T>) {
-        return SerializePodNear<T>(std::forward<T>(message), alloc);
+        return SerializePodNear<T>(alloc, std::forward<Args>(args)...);
     } else {
-        return SerializeNonPodNear<T>(std::forward<T>(message), alloc);
+        return SerializeNonPodNear<T>(alloc, std::forward<Args>(args)...);
     }
 }
 

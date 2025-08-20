@@ -55,9 +55,9 @@ public:
     TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
-        ctx->Send(ctx->Sender(), TPingMessage{});
+        ctx->Send<TPingMessage>(ctx->Sender());
         if (counter == 4) {
-            ctx->Send(ctx->Self(), TPoison{});
+            ctx->Send<TPoison>(ctx->Self());
         }
         co_return;
     }
@@ -69,9 +69,9 @@ class TPongActor : public IActor {
 public:
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Ping message from: " << ctx->Sender().ToString() << ", message: " << counter++ << "\n";
-        ctx->Send(ctx->Sender(), TPongMessage{});
+        ctx->Send<TPongMessage>(ctx->Sender());
         if (counter == 5) {
-            ctx->Send(ctx->Self(), TPoison{});
+            ctx->Send<TPoison>(ctx->Self());
         }
     }
 
@@ -84,7 +84,7 @@ class TAskerActor : public ICoroActor {
         auto result = co_await ctx->Ask<TPongMessage>(ctx->Sender(), TPingMessage{});
         std::cerr << "Reply received from " << ctx->Sender().ToString() << ", message: " << result.MessageId << "\n";
 
-        ctx->Send(ctx->Self(), TPoison{});
+        ctx->Send<TPoison>(ctx->Self());
         std::cerr << "PoisonPill sent\n";
 
         co_return;
@@ -95,9 +95,9 @@ class TResponderActor : public ICoroActor {
     TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Responder Received message from: " << ctx->Sender().ToString() << "\n";
         co_await ctx->Sleep(std::chrono::milliseconds(1000));
-        ctx->Send(ctx->Sender(), TPongMessage{});
+        ctx->Send<TPongMessage>(ctx->Sender());
 
-        ctx->Send(ctx->Self(), TPoison{});
+        ctx->Send<TPoison>(ctx->Self());
         std::cerr << "PoisonPill sent\n";
 
         co_return;
@@ -114,7 +114,7 @@ void test_ping_pong(void**) {
     std::cerr << "PingActor: " << pingActorId.ToString() << "\n";
     std::cerr << "PongActor: " << pongActorId.ToString() << "\n";
 
-    actorSystem.Send(pingActorId, pongActorId, TPingMessage{});
+    actorSystem.Send<TPingMessage>(pingActorId, pongActorId);
 
     actorSystem.Serve();
 
@@ -133,7 +133,7 @@ void test_ask_respond(void**) {
     std::cerr << "AskerActor: " << askerActorId.ToString() << "\n";
     std::cerr << "ResponderActor: " << responderActorId.ToString() << "\n";
 
-    actorSystem.Send(responderActorId, askerActorId, TPingMessage{});
+    actorSystem.Send<TPingMessage>(responderActorId, askerActorId);
 
     actorSystem.Serve();
 
@@ -146,8 +146,8 @@ class TSingleShotActor : public IActor {
 public:
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
         std::cerr << "Received Pong message from: " << ctx->Sender().ToString() << "\n";
-        ctx->Send(ctx->Sender(), TPingMessage{});
-        ctx->Send(ctx->Self(), TPoison{});
+        ctx->Send<TPingMessage>(ctx->Sender());
+        ctx->Send<TPoison>(ctx->Self());
     }
 };
 
@@ -163,7 +163,7 @@ void test_schedule(void**) {
     auto later = now + std::chrono::milliseconds(1000);
 
     actorSystem.Serve();
-    actorSystem.Schedule(later, pingActorId, pingActorId, TPingMessage{});
+    actorSystem.Schedule<TPingMessage>(later, pingActorId, pingActorId);
 
     while (actorSystem.ActorsSize() > 0) {
         loop.Step();
@@ -186,11 +186,11 @@ void test_schedule_cancel(void**) {
     auto later = now + std::chrono::milliseconds(1000);
 
     actorSystem.Serve();
-    auto timer = actorSystem.Schedule(later, pingActorId, pingActorId, TPingMessage{});
+    auto timer = actorSystem.Schedule<TPingMessage>(later, pingActorId, pingActorId);
     actorSystem.Cancel(timer);
     later = now + std::chrono::milliseconds(10);
 
-    actorSystem.Schedule(later, pingActorId, pingActorId, TPingMessage{});
+    actorSystem.Schedule<TPingMessage>(later, pingActorId, pingActorId);
 
     while (actorSystem.ActorsSize() > 0) {
         loop.Step();
@@ -209,7 +209,7 @@ void test_serialize_zero_size(void**) {
     TAllocator allocator;
 
     // Serialize
-    auto blob = SerializeNear(TEmptyMessage{}, allocator);
+    auto blob = SerializeNear<TEmptyMessage>(allocator);
     assert_true(blob.Size == 0);
     assert_true(blob.Data.get() == nullptr);
 
@@ -240,11 +240,11 @@ void test_serialize_pod(void**) {
     TAllocator allocator;
 
     // Serialize
-    auto blob = NNet::NActors::SerializeNear(std::move(msg), allocator);
+    auto blob = SerializeNear<TPodMessage>(allocator, std::move(msg));
     assert_true(blob.Size == sizeof(TPodMessage));
 
     // Deserialize
-    auto& deserialized = NNet::NActors::DeserializeNear<TPodMessage>(blob);
+    auto& deserialized = DeserializeNear<TPodMessage>(blob);
     assert_true(deserialized.field1 == 1);
     assert_true(deserialized.field2 == 2.0);
     assert_true(deserialized.field3 == 'c');
@@ -296,7 +296,7 @@ void test_serialize_non_pod(void**) {
     TAllocator allocator;
     std::string str = "Hello, World!";
     auto size = str.size();
-    auto blob = SerializeNear<std::string>(std::move(str), allocator);
+    auto blob = SerializeNear<std::string>(allocator, std::move(str));
 
     std::string& deserialized = DeserializeNear<std::string>(blob);
     assert_string_equal(deserialized.c_str(), "Hello, World!");
@@ -316,7 +316,7 @@ void test_serialize_messages_factory(void**) {
 
     factory.RegisterSerializer<TPodMessage>();
 
-    auto blob = SerializeNear(TPodMessage{1, 2.0, 'c', 4.0, 5.0}, alloc);
+    auto blob = SerializeNear<TPodMessage>(alloc, 1, 2.0, 'c', 4.0, 5.0);
     auto blobSize = blob.Size;
     auto farBlob = factory.SerializeFar(TPodMessage::MessageId, std::move(blob));
     assert_true(farBlob.Size == blobSize);
@@ -335,7 +335,7 @@ void test_serialize_messages_factory_non_pod(void**) {
 
     factory.RegisterSerializer<TWrappedString>();
 
-    auto blob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
+    auto blob = SerializeNear<TWrappedString>(alloc, "Hello, World!");
     auto blobSize = blob.Size;
     auto farBlob = factory.SerializeFar(TWrappedString::MessageId, std::move(blob));
 
@@ -403,13 +403,13 @@ void test_behavior(void**) {
     TAllocator alloc;
     TActorSystem actorSystem(nullptr);
     auto behavior = std::unique_ptr<IBehavior>(new TRichBehavior());
-    auto strNearBlob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
+    auto strNearBlob = SerializeNear<TWrappedString>(alloc, "Hello, World!");
 
     TActorContext::TPtr ctx;
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     behavior->Receive(TWrappedString::MessageId, std::move(strNearBlob), std::move(ctx));
 
-    auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
+    auto podNearBlob = SerializeNear<TPodMessage>(alloc, 42, 3.14, 'x', 2.71, 1.618);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     behavior->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
@@ -459,10 +459,10 @@ void test_behavior_actor(void**) {
 
     TActorContext::TPtr ctx;
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
-    auto strNearBlob = SerializeNear(TWrappedString{"Hello, World!"}, alloc);
+    auto strNearBlob = SerializeNear<TWrappedString>(alloc, "Hello, World!");
     actor->Receive(TWrappedString::MessageId, std::move(strNearBlob), std::move(ctx));
 
-    auto podNearBlob = SerializeNear(TPodMessage{42, 3.14, 'x', 2.71, 1.618}, alloc);
+    auto podNearBlob = SerializeNear<TPodMessage>(alloc, 42, 3.14, 'x', 2.71, 1.618);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
@@ -478,7 +478,7 @@ void test_behavior_actor(void**) {
 
     check();
 
-    podNearBlob = SerializeNear(TPodMessage{41, 1.14, 'y', 1.71, 2.618}, alloc);
+    podNearBlob = SerializeNear<TPodMessage>(alloc, 41, 1.14, 'y', 1.71, 2.618);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
@@ -542,7 +542,7 @@ void test_envelope_reader(void**) {
     assert_true(envelope->Blob.Size == 0);
 
     for (int i = 0; i < 10; ++i) {
-        auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
+        auto nearBlob = SerializeNear<TWrappedString>(alloc, "Message " + std::to_string(i));
         auto farBlob = SerializeFar<TWrappedString>(std::move(nearBlob));
         THeader header {
             .Sender = TActorId(1, 1, 1),
@@ -623,7 +623,7 @@ void test_envelope_reader_v2(void**) {
     assert_true(envelope->Blob.Size == 0);
 
     for (int i = 0; i < 10; ++i) {
-        auto nearBlob = SerializeNear(TWrappedString{"Message " + std::to_string(i)}, alloc);
+        auto nearBlob = SerializeNear<TWrappedString>(alloc, "Message " + std::to_string(i));
         auto farBlob = SerializeFar<TWrappedString>(std::move(nearBlob));
         THeader header {
             .Sender = TActorId(1, 1, 1),

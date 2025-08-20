@@ -247,19 +247,19 @@ public:
      * @brief Send a typed message to another actor
      * @tparam T Message type that has MessageId static member
      * @param to Recipient actor ID
-     * @param message Message object to send
+     * @param args passed to Message constructor
      */
-    template<typename T>
-    void Send(TActorId to, T&& message);
+    template<typename T, typename... Args>
+    void Send(TActorId to, Args&&... args);
 
     /**
      * @brief Forward a typed message to another actor
      * @tparam T Message type that has MessageId static member
      * @param to Recipient actor ID
-     * @param message Message object to forward
+     * @param args passed to Message constructor
      */
-    template<typename T>
-    void Forward(TActorId to, T&& message);
+    template<typename T, typename... Args>
+    void Forward(TActorId to, Args&&... args);
 
     /**
      * @brief Schedule a message to be delivered at a specific time
@@ -278,11 +278,11 @@ public:
      * @param when Time when the message should be delivered
      * @param sender Sender actor ID for the scheduled message
      * @param recipient Recipient actor ID
-     * @param message Message object to schedule
+     * @param args args passed to the Message constructor
      * @return Event handle that can be used to cancel the scheduled message
      */
-    template<typename T>
-    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, T&& message);
+    template<typename T, typename... Args>
+    TEvent Schedule(TTime when, TActorId sender, TActorId recipient, Args&&... args);
 
     /**
      * @brief Cancel a previously scheduled message
