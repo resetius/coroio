@@ -129,11 +129,10 @@ void TActorSystem::ExecuteSync() {
             continue;
         }
 
-        Actors[actorId].Flags.IsReady = 0;
+        state.Flags.IsReady = 0;
 
-        while (!mailbox->Empty()) {
-            auto envelope = std::move(mailbox->Front());
-            mailbox->Pop();
+        TEnvelope envelope;
+        while (mailbox->TryPop(envelope)) {
             auto messageId = envelope.MessageId;
             if (messageId == static_cast<TMessageId>(ESystemMessages::PoisonPill)) [[unlikely]] {
                 ShutdownActor(actorId);
@@ -143,7 +142,7 @@ void TActorSystem::ExecuteSync() {
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
             actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx));
-            if (Actors[actorId].Pending.raw()) [[unlikely]] {
+            if (state.Pending.raw()) [[unlikely]] {
                 break;
             }
         }

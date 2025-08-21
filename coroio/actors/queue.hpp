@@ -97,6 +97,15 @@ struct TUnboundedVectorQueue {
         Head = (Head + 1) & LastIndex;
     }
 
+    bool TryPop(T& item) {
+        if (Empty()) {
+            return false;
+        }
+        item = std::move(Data[Head]);
+        Head = (Head + 1) & LastIndex;
+        return true;
+    }
+
     /**
      * @brief Get current number of elements in the queue
      * @return Number of elements currently stored
