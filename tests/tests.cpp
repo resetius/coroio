@@ -9,6 +9,7 @@
 
 #include <coroio/all.hpp>
 #include <coroio/ws/utils.hpp>
+#include <coroio/dns/resolver.hpp>
 
 #include <unordered_set>
 

@@ -1,4 +1,4 @@
-#include "coroio/resolver.hpp"
+#include <coroio/dns/resolver.hpp>
 #include <coroio/all.hpp>
 
 using namespace NNet;

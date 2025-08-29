@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <coroio/all.hpp>
-#include <coroio/resolver.hpp>
+#include <coroio/dns/resolver.hpp>
 #include <coroio/corochain.hpp>
 #include <coroio/actors/actorsystem.hpp>
 

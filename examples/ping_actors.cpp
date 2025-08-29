@@ -3,7 +3,7 @@
 #include <vector>
 #include <set>
 #include <coroio/all.hpp>
-#include <coroio/resolver.hpp>
+#include <coroio/dns/resolver.hpp>
 #include <coroio/corochain.hpp>
 #include <coroio/actors/actorsystem.hpp>
 
@@ -113,7 +113,7 @@ int templatedMain(int argc, char** argv) {
     TResolver resolver(loop.Poller());
     TMessagesFactory factory;
     int messageSize = 0;
-    std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
+    std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 65536};
 
     std::vector<
         std::tuple<int, std::unique_ptr<TNode<TPoller>>>
@@ -264,6 +264,7 @@ int templatedMain(int argc, char** argv) {
     case 1024: runner.template operator()<1024>(); break;
     case 2048: runner.template operator()<2048>(); break;
     case 4096: runner.template operator()<4096>(); break;
+    case 65536: runner.template operator()<65536>(); break;
     default:
         std::cerr << "Unsupported message size: " << messageSize << "\n";
         return -1;
