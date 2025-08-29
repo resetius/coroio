@@ -107,7 +107,7 @@ jobs:
     - name: Checkout submodules
       run: git submodule update --init --recursive
     - name: Install packages
-      run: brew install cmake ninja cmocka
+      run: brew install ninja cmocka
     - name: Configure with CMake and Build with Ninja
       run: |
           mkdir build
