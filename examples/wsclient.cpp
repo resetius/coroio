@@ -1,6 +1,6 @@
 #include <coroio/all.hpp>
 #include <coroio/ws/ws.hpp>
-#include <coroio/resolver.hpp>
+#include <coroio/dns/resolver.hpp>
 
 #include <regex>
 

@@ -5,7 +5,7 @@
 #include "messages_factory.hpp"
 
 #include <coroio/address.hpp>
-#include <coroio/resolver.hpp>
+#include <coroio/dns/resolver.hpp>
 
 #include <span>
 

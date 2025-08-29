@@ -1,7 +1,7 @@
 #include "resolver.hpp"
-#include "socket.hpp"
-#include "sockutils.hpp"
-#include "promises.hpp"
+#include <coroio/socket.hpp>
+#include <coroio/sockutils.hpp>
+#include <coroio/promises.hpp>
 #ifdef __linux__
 #include <coroio/backends/uring.hpp>
 #endif

@@ -57,7 +57,6 @@
 #include "corochain.hpp"
 #include "sockutils.hpp"
 #include "ssl.hpp"
-#include "resolver.hpp"
 
 #ifdef _WIN32
 int pipe(int pipes[2]);

@@ -8,7 +8,6 @@ set(SOURCES
   init.cpp
   socket.cpp
   sockutils.cpp
-  resolver.cpp
   ssl.cpp
   win32_pipe.cpp
   backends/poll.cpp

@@ -16,4 +16,4 @@ set(SOURCES
 )
 
 add_library(coroio_actors ${SOURCES})
-target_link_libraries(coroio_actors PUBLIC coroio)
+target_link_libraries(coroio_actors PUBLIC coroio coroio_dns)
