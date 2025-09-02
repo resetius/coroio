@@ -23,8 +23,8 @@ jobs:
     - name: Install packages
       run: sudo apt-get install libcmocka-dev liburing-dev cmake ninja-build
     - name: configure
-      run: |        
-        mkdir build 
+      run: |
+        mkdir build
         echo 'add_compile_options(-fsanitize=address)' > build/local.cmake
         echo 'add_link_options(-fsanitize=address)' >> build/local.cmake
         cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
@@ -58,14 +58,14 @@ jobs:
           if (Test-Path C:\mingw64) { Rename-Item C:\mingw64 mingw64_disabled }
     - name: Install Packages using MSYS2
       run: |
-          choco install msys2 -y          
+          choco install msys2 -y
     - name: Add MSYS2 mingw64 to PATH
       run: |
           echo "C:\tools\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "C:\tools\msys64\usr\bin"     | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - name: Install Additional Packages
       run: |
-          pacman -Syu --noconfirm          
+          pacman -Syu --noconfirm
           pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
           ls -l C:\tools\msys64\mingw64\bin
     - name: Verify Installation
@@ -124,3 +124,53 @@ jobs:
       with:
          files: build/tests/*.xml
          check_name: Unit Test Results (MacOS)
+
+  docs:
+    name: Doxygen → coroio.dev@master
+    needs: [build, windows-build, macos-build]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Doxygen
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y doxygen graphviz
+
+    - name: Generate docs
+      run: |
+        doxygen -v
+        doxygen Doxyfile
+
+    - name: Checkout target repo (coroio.dev)
+      uses: actions/checkout@v4
+      with:
+        repository: OWNER/coroio.dev   # замените OWNER на владельца
+        path: out-repo
+        token: ${{ secrets.DOCS_REPO_TOKEN }}
+
+    - name: Sync docs into target repo/docs/html
+      run: |
+        mkdir -p out-repo/docs/html
+        rsync -av --delete docs/html/ out-repo/docs/html/
+
+    - name: Commit and push
+      run: |
+        cd out-repo
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+        DOCS_BRANCH="docs-${SHORT_SHA}"
+        git checkout -B "${DOCS_BRANCH}"
+        if [ -n "$(git status --porcelain)" ]; then
+          git add -A
+          git commit -m "docs: update from ${GITHUB_REPOSITORY}@${GITHUB_SHA} -> ${DOCS_BRANCH}"
+          git push origin HEAD:"${DOCS_BRANCH}"
+          echo "Pushed docs to branch ${DOCS_BRANCH}"
+        else
+          echo "No changes to commit"
+        fi
