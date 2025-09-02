@@ -127,7 +127,7 @@ jobs:
 
   docs:
     name: Doxygen → coroio.dev@master
-    needs: [build, windows-build, macos-build]
+    needs: [build, macos-build]
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
@@ -149,7 +149,7 @@ jobs:
     - name: Checkout target repo (coroio.dev)
       uses: actions/checkout@v4
       with:
-        repository: OWNER/coroio.dev   # замените OWNER на владельца
+        repository: resetius/coroio.dev
         path: out-repo
         token: ${{ secrets.DOCS_REPO_TOKEN }}
 
