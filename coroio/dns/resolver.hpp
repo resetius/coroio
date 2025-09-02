@@ -107,7 +107,7 @@ private:
  * TSelect poller;
  *
  * // Create a resolver using the default nameserver specified in /etc/resolv.conf
- * TResolver<TSelect> resolver(poller);
+ * TResolver resolver(poller);
  *
  * // Asynchronously resolve a hostname (IPv4 resolution by default)
  * TFuture<std::vector<TAddress>> futureAddresses = resolver.Resolve("example.com");
