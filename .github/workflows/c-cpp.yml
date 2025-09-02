@@ -144,7 +144,7 @@ jobs:
     - name: Generate docs
       run: |
         doxygen -v
-        doxygen Doxyfile
+        doxygen scripts/doxygen/Doxyfile
 
     - name: Checkout target repo (coroio.dev)
       uses: actions/checkout@v4
