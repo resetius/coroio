@@ -147,6 +147,8 @@ int main() {
 
 ### Actor System Example
 
+See detailed docs: [Actors on top of coroio](coroio/actors/README.md)
+
 The actor system provides message-passing concurrency with typed behaviors. Here's a simple counter actor example:
 
 ```cpp
