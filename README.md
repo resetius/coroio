@@ -37,6 +37,7 @@ This library leverages C++ coroutines for asynchronous programming, providing ef
 
 5. **Actor System**:
    - Actor-based concurrency model for message-passing systems with typed behaviors and async processing.
+    - See detailed docs: [Actors on top of coroio](coroio/actors/README.md)
 
 #### Supported Operating Systems
 
