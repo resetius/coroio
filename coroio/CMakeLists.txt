@@ -18,6 +18,7 @@ set(SOURCES
   backends/iocp.cpp
   ws/ws.cpp
   ws/utils.cpp
+  http/httpd.cpp
 )
 
 if (WIN32)

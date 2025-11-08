@@ -91,10 +91,10 @@ struct TByteReader {
 
         if (!Buffer.empty()) {
             size_t toCopy = std::min(size, Buffer.size());
-            std::memcpy(p, Buffer.data(), toCopy);
+            std::copy(Buffer.begin(), Buffer.begin() + toCopy, p);
             p += toCopy;
             size -= toCopy;
-            Buffer.erase(0, toCopy);
+            Buffer.erase(Buffer.begin(), Buffer.begin() + toCopy);
         }
 
         while (size != 0) {
@@ -110,6 +110,34 @@ struct TByteReader {
         }
         co_return;
     }
+
+    TFuture<ssize_t> ReadSome(void* data, size_t size) {
+        char tempBuffer[1024];
+        // read by chunks, copy to user up-to size bytes
+
+        if (!Buffer.empty()) {
+            size_t toCopy = std::min(size, Buffer.size());
+            std::copy(Buffer.begin(), Buffer.begin() + toCopy, static_cast<char*>(data));
+            Buffer.erase(Buffer.begin(), Buffer.begin() + toCopy);
+            co_return toCopy;
+        }
+
+        auto readSize = co_await Socket.ReadSome(tempBuffer, sizeof(tempBuffer));
+        if (readSize == 0) {
+            co_return 0;
+        }
+        if (readSize < 0) {
+            co_return -1; // retry
+        }
+
+        size_t toCopy = std::min(static_cast<size_t>(readSize), size);
+        std::copy(tempBuffer, tempBuffer + toCopy, static_cast<char*>(data));
+        if (static_cast<size_t>(readSize) > toCopy) {
+            Buffer.insert(Buffer.end(), tempBuffer + toCopy, tempBuffer + readSize);
+        }
+        co_return toCopy;
+    }
+
     /**
      * @brief Reads data until the given @p delimiter is encountered.
      *
@@ -136,12 +164,12 @@ struct TByteReader {
             auto pos = std::search(Buffer.begin(), Buffer.end(), delimiter.begin(), delimiter.end());
             if (pos != Buffer.end()) {
                 size_t delimiterOffset = std::distance(Buffer.begin(), pos);
-                result.append(Buffer.substr(0, delimiterOffset + delimiter.size()));
-                Buffer.erase(0, delimiterOffset + delimiter.size());
+                result.insert(result.end(), Buffer.begin(), Buffer.begin() + delimiterOffset + delimiter.size());
+                Buffer.erase(Buffer.begin(), Buffer.begin() + delimiterOffset + delimiter.size());
                 co_return result;
             }
 
-            result.append(Buffer);
+            result.insert(result.end(), Buffer.begin(), Buffer.end());
             Buffer.clear();
 
             auto readSize = co_await Socket.ReadSome(tempBuffer, sizeof(tempBuffer));
@@ -152,7 +180,7 @@ struct TByteReader {
                 continue; // retry
             }
 
-            Buffer.append(tempBuffer, readSize);
+            Buffer.insert(Buffer.end(), tempBuffer, tempBuffer + readSize);
         }
 
         co_return result;
@@ -160,7 +188,7 @@ struct TByteReader {
 
 private:
     TSocket& Socket;
-    std::string Buffer;
+    std::deque<char> Buffer;
 };
 
 /**
