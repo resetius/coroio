@@ -157,6 +157,18 @@ TFuture<ssize_t> TPipe::WriteSome(const void* buffer, size_t size) {
     co_return co_await WriteHandle->WriteSome(buffer, size);
 }
 
+int TPipe::Wait() {
+    int status = 0;
+    if (PipeLow.ChildPid == -1) {
+        return -1;
+    }
+    waitpid(PipeLow.ChildPid, &status, 0);
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+}
+
 } // namespace NNet {
 
 #endif // _WIN32
