@@ -19,6 +19,7 @@ set(SOURCES
   ws/ws.cpp
   ws/utils.cpp
   http/httpd.cpp
+  pipe/pipe.cpp
 )
 
 if (WIN32)
