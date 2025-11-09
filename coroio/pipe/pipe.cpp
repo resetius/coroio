@@ -17,7 +17,7 @@ namespace NNet {
 
 namespace {
 
-[[maybe_unused]] void SetCloseOnExec(int fd) {
+void SetCloseOnExec(int fd) {
     int flags = fcntl(fd, F_GETFD);
     if (flags == -1) {
         throw std::runtime_error("fcntl(F_GETFD) failed");
@@ -70,8 +70,18 @@ void TPipe::TPipeLow::Fork() {
         close(pipeStdin[1]);
         throw std::system_error(code, std::generic_category(), "pipe() failed for stdout");
     }
+    int pipeStderr[2];
+    if (pipe(pipeStderr) == -1) {
+        auto code = errno;
+        close(pipeStdin[0]);
+        close(pipeStdin[1]);
+        close(pipeStdout[0]);
+        close(pipeStdout[1]);
+        throw std::system_error(code, std::generic_category(), "pipe() failed for stderr");
+    }
     SetCloseOnExec(pipeStdin[0]); SetCloseOnExec(pipeStdin[1]);
     SetCloseOnExec(pipeStdout[0]); SetCloseOnExec(pipeStdout[1]);
+    SetCloseOnExec(pipeStderr[0]); SetCloseOnExec(pipeStderr[1]);
 
     auto pid = fork();
     if (pid == -1) {
@@ -80,6 +90,8 @@ void TPipe::TPipeLow::Fork() {
         close(pipeStdin[1]);
         close(pipeStdout[0]);
         close(pipeStdout[1]);
+        close(pipeStderr[0]);
+        close(pipeStderr[1]);
         throw std::system_error(code, std::generic_category(), "fork() failed");
     }
 
@@ -87,6 +99,7 @@ void TPipe::TPipeLow::Fork() {
         // Child process
         close(pipeStdin[1]);
         close(pipeStdout[0]);
+        close(pipeStderr[0]);
 
         if (dup2(pipeStdin[0], STDIN_FILENO) == -1) {
             std::cerr << "dup2() failed for stdin: " << strerror(errno) << std::endl;
@@ -96,9 +109,14 @@ void TPipe::TPipeLow::Fork() {
             std::cerr << "dup2() failed for stdout: " << strerror(errno) << std::endl;
             _exit(1);
         }
+        if (dup2(pipeStderr[1], STDERR_FILENO) == -1) {
+            std::cerr << "dup2() failed for stderr: " << strerror(errno) << std::endl;
+            _exit(1);
+        }
 
         close(pipeStdin[0]);
         close(pipeStdout[1]);
+        close(pipeStderr[1]);
 
         std::vector<char*> cargs;
         cargs.reserve(Args.size() + 2);
@@ -115,17 +133,24 @@ void TPipe::TPipeLow::Fork() {
         // Parent process
         close(pipeStdin[0]);
         close(pipeStdout[1]);
+        close(pipeStderr[1]);
 
         ChildPid = pid;
         WriteFd = pipeStdin[1];
         ReadFd = pipeStdout[0];
+        ErrFd = pipeStderr[0];
         SetNonBlocking(ReadFd);
         SetNonBlocking(WriteFd);
+        SetNonBlocking(ErrFd);
     }
 }
 
 TFuture<ssize_t> TPipe::ReadSome(void* buffer, size_t size) {
     co_return co_await ReadHandle->ReadSome(buffer, size);
+}
+
+TFuture<ssize_t> TPipe::ReadSomeErr(void* buffer, size_t size) {
+    co_return co_await ErrHandle->ReadSome(buffer, size);
 }
 
 TFuture<ssize_t> TPipe::WriteSome(const void* buffer, size_t size) {

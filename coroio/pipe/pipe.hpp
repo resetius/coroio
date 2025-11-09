@@ -16,9 +16,25 @@ public:
 
         ReadHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.ReadFd, poller);
         WriteHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.WriteFd, poller);
+        ErrHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.ErrFd, poller);
     }
 
+    void CloseRead() {
+        ReadHandle.reset();
+    }
+
+    void CloseWrite() {
+        WriteHandle.reset();
+    }
+
+    void CloseErr() {
+        ErrHandle.reset();
+    }
+
+    int Wait();
+
     TFuture<ssize_t> ReadSome(void* buffer, size_t size);
+    TFuture<ssize_t> ReadSomeErr(void* buffer, size_t size);
     TFuture<ssize_t> WriteSome(const void* buffer, size_t size);
 
 private:
@@ -33,6 +49,7 @@ private:
 
         int ReadFd = -1;
         int WriteFd = -1;
+        int ErrFd = -1;
         int ChildPid = -1;
     };
 
@@ -61,6 +78,7 @@ private:
     TPipeLow PipeLow;
     std::unique_ptr<TTypelessFileHandle> ReadHandle;
     std::unique_ptr<TTypelessFileHandle> WriteHandle;
+    std::unique_ptr<TTypelessFileHandle> ErrHandle;
 };
 
 #endif  // _WIN32

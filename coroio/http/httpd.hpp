@@ -94,12 +94,12 @@ private:
 };
 
 struct IRouter {
-    virtual TFuture<void> HandleRequest(const TRequest& request, TResponse& response) = 0;
+    virtual TFuture<void> HandleRequest(TRequest& request, TResponse& response) = 0;
 };
 
 class THelloWorldRouter : public IRouter {
 public:
-    TFuture<void> HandleRequest(const TRequest& request, TResponse& response) override {
+    TFuture<void> HandleRequest(TRequest& request, TResponse& response) override {
         if (request.Uri().Path() == "/") {
             response.SetStatus(200);
             response.SetHeader("Content-Type", "text/plain");
