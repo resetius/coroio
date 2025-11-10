@@ -158,6 +158,10 @@ void TRequest::ParseHeaders() {
     }
 }
 
+const std::map<std::string_view, std::string_view>& TRequest::Headers() const {
+    return Headers_;
+}
+
 bool TRequest::RequireConnectionClose() const {
     auto connectionHeader = Headers_.find("Connection");
     if (connectionHeader != Headers_.end()) {

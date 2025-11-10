@@ -44,6 +44,7 @@ public:
     TFuture<ssize_t> ReadBodySome(char* buffer, size_t size); // read up to Content-Length
     bool BodyConsumed() const;
     bool RequireConnectionClose() const;
+    const std::map<std::string_view, std::string_view>& Headers() const;
 
 private:
     void ParseRequestLine();
