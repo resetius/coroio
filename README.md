@@ -340,6 +340,7 @@ class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Ac
 ### Projects Using coroio
 
 - **miniraft-cpp**: A minimal implementation of the Raft consensus algorithm, leveraging coroio for efficient and asynchronous I/O operations. [View on GitHub](https://github.com/resetius/miniraft-cpp).
+- **qumir**: Qumir is a tiny experimental programming language and toolchain with Russian keywords, inspired by KUMIR and the educational language designed by Academician Andrei P. Ershov. Coroio used as a web server for Playground. [View on GitHub](https://github.com/resetius/qumir).
 
 
 ### Official Site
