@@ -9,14 +9,16 @@ namespace NNet {
 class TPipe {
 public:
     template<typename TPoller>
-    TPipe(TPoller& poller, const std::string& exe, const std::vector<std::string>& args)
-        : PipeLow(exe, args)
+    TPipe(TPoller& poller, const std::string& exe, const std::vector<std::string>& args, bool stderrToStdout = false)
+        : PipeLow(exe, args, stderrToStdout)
     {
         PipeLow.Fork();
 
         ReadHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.ReadFd, poller);
         WriteHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.WriteFd, poller);
-        ErrHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.ErrFd, poller);
+        if (!stderrToStdout) {
+            ErrHandle = std::make_unique<TPipeFileHandle<TPoller>>(PipeLow.ErrFd, poller);
+        }
     }
 
     void CloseRead() {
@@ -39,7 +41,7 @@ public:
 
 private:
     struct TPipeLow {
-        TPipeLow(const std::string& exe, const std::vector<std::string>& args);
+        TPipeLow(const std::string& exe, const std::vector<std::string>& args, bool mergeErr);
         ~TPipeLow();
 
         void Fork();
@@ -51,6 +53,7 @@ private:
         int WriteFd = -1;
         int ErrFd = -1;
         int ChildPid = -1;
+        bool StderrToStdout = false;
     };
 
     struct TTypelessFileHandle {

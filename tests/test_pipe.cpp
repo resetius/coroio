@@ -81,6 +81,32 @@ void test_pipe_read_stderr(void**) {
     assert_true(memcmp(buffer, expected, sizeof(expected)-1) == 0);
 }
 
+void test_pipe_merge_stderr_into_stdout(void**) {
+    TLoop<TDefaultPoller> loop;
+    auto& poller = loop.Poller();
+    std::string bashPath = "/bin/bash";
+    // Create pipe with stderr merged into stdout
+    TPipe pipe(poller, bashPath, {"-c", "echo 'err to out' 1>&2"}, true);
+
+    char buffer[64] = {};
+    size_t bytesRead = sizeof(buffer);
+    auto reader = [](TPipe& pipe, char* buffer, size_t& size) -> TFuture<void> {
+        try {
+            size = co_await pipe.ReadSome(buffer, size);
+        } catch (const std::exception& ex) {
+            std::cerr << "Read error: " << ex.what() << "\n";
+        }
+    }(pipe, buffer, bytesRead);
+
+    while (!reader.done()) {
+        loop.Step();
+    }
+
+    const char expected[] = "err to out\n";
+    assert_true(bytesRead == sizeof(expected)-1);
+    assert_true(memcmp(buffer, expected, sizeof(expected)-1) == 0);
+}
+
 #endif // _WIN32
 
 int main(int argc, char** argv) {
@@ -95,6 +121,7 @@ int main(int argc, char** argv) {
 #ifndef _WIN32
     ADD_TEST(cmocka_unit_test, test_pipe_basic_read_write);
     ADD_TEST(cmocka_unit_test, test_pipe_read_stderr);
+    ADD_TEST(cmocka_unit_test, test_pipe_merge_stderr_into_stdout);
 #endif
 
     return _cmocka_run_group_tests("test_pipe", tests.data(), tests.size(), NULL, NULL);
