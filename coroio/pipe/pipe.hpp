@@ -21,6 +21,8 @@ public:
         }
     }
 
+    int Pid() const { return PipeLow.ChildPid; }
+
     void CloseRead() {
         ReadHandle.reset();
     }
@@ -49,6 +51,7 @@ private:
         std::string Exe;
         std::vector<std::string> Args;
 
+        // Descriptors are owned by TPipeFileHandle, do not close them!
         int ReadFd = -1;
         int WriteFd = -1;
         int ErrFd = -1;

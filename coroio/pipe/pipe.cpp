@@ -50,9 +50,6 @@ TPipe::TPipeLow::~TPipeLow() {
         int status = 0;
         kill(ChildPid, SIGKILL);
         waitpid(ChildPid, &status, 0);
-        if (ReadFd != -1) { close(ReadFd); }
-        if (WriteFd != -1) { close(WriteFd); }
-        if (ErrFd != -1) { close(ErrFd); }
     }
 }
 

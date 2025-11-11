@@ -25,9 +25,9 @@ struct TTimer {
 };
 
 struct THandlePair {
-    THandle Read;
-    THandle Write;
-    THandle RHup;
+    THandle Read = {};
+    THandle Write = {};
+    THandle RHup = {};
 };
 
 struct TEvent {

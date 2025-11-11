@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <errno.h>
 #include <iostream>
 #include <unordered_set>
 
@@ -107,6 +108,38 @@ void test_pipe_merge_stderr_into_stdout(void**) {
     assert_true(memcmp(buffer, expected, sizeof(expected)-1) == 0);
 }
 
+void test_pipe_kill_then_read(void**) {
+    TLoop<TDefaultPoller> loop;
+    auto& poller = loop.Poller();
+    std::string sleepPath = "/bin/sleep";
+    // Start a process that produces no output and runs for a while
+    TPipe pipe(poller, sleepPath, {"5"});
+
+    int pid = pipe.Pid();
+    assert_true(pid > 0);
+
+    int rc = kill(pid, SIGKILL);
+    assert_true(rc == 0 || errno == ESRCH);
+
+    // Attempt to read from stdout; should observe EOF (0 bytes)
+    char buffer[8] = {};
+    size_t bytesRead = sizeof(buffer);
+    auto reader = [](TPipe& pipe, char* buffer, size_t& size) -> TFuture<void> {
+        try {
+            size = co_await pipe.ReadSome(buffer, size);
+        } catch (const std::exception& ex) {
+            // Accept exceptions as valid outcome on abrupt termination
+            size = 0;
+        }
+    }(pipe, buffer, bytesRead);
+
+    while (!reader.done()) {
+        loop.Step();
+    }
+
+    assert_true(bytesRead == 0);
+}
+
 #endif // _WIN32
 
 int main(int argc, char** argv) {
@@ -122,6 +155,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_pipe_basic_read_write);
     ADD_TEST(cmocka_unit_test, test_pipe_read_stderr);
     ADD_TEST(cmocka_unit_test, test_pipe_merge_stderr_into_stdout);
+    ADD_TEST(cmocka_unit_test, test_pipe_kill_then_read);
 #endif
 
     return _cmocka_run_group_tests("test_pipe", tests.data(), tests.size(), NULL, NULL);
