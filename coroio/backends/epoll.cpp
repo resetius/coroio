@@ -60,7 +60,7 @@ void TEPoll::Poll() {
         bool change = false;
         bool newEv = false;
         if (ch.Handle) {
-            newEv = !!ev.Read && !!ev.Write && !!ev.RHup;
+            newEv = ev.Empty();
             if (ch.Type & TEvent::READ) {
                 eev.events |= EPOLLIN;
                 change |= ev.Read != ch.Handle;
@@ -101,6 +101,7 @@ void TEPoll::Poll() {
                 throw std::system_error(errno, std::generic_category(), "epoll_ctl");
             }
         } else if (!eev.events) {
+            ev.Reset();
             if (epoll_ctl(Fd_, EPOLL_CTL_DEL, fd, nullptr) < 0) {
                 if (!(errno == EBADF || errno == ENOENT)) { // closed descriptor after TSocket -> close
                     throw std::system_error(errno, std::generic_category(), "epoll_ctl");
