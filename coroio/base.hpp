@@ -28,6 +28,16 @@ struct THandlePair {
     THandle Read = {};
     THandle Write = {};
     THandle RHup = {};
+
+    bool Empty() const {
+        return !Read && !Write && !RHup;
+    }
+
+    void Reset() {
+        Read = {};
+        Write = {};
+        RHup = {};
+    }
 };
 
 struct TEvent {
