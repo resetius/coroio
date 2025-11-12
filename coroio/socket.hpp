@@ -128,8 +128,9 @@ public:
     /**
      * @brief Asynchronously reads data from the socket into the provided buffer.
      *
-     * When awaited, this method suspends the current coroutine until the read operation
-     * completes and then returns the number of bytes read.
+     * Semantics: returns bytes read (>0), 0 on closure, and a negative value
+     * (retry hint) for transient errors (e.g. EINTR/EAGAIN/EINPROGRESS). Non-retryable
+     * errors throw std::system_error.
      *
      * @param buf Pointer to the destination buffer.
      * @param size The number of bytes to read.
@@ -150,8 +151,9 @@ public:
     /**
      * @brief Forces a read operation on the next event loop iteration.
      *
-     * Similar to @ref ReadSome(), but this variant ensures that the read is deferred
-     * to the next iteration of the event loop.
+     * Semantics: returns bytes read (>0), 0 on closure, and a negative value
+     * (retry hint) for transient errors (e.g. EINTR/EAGAIN/EINPROGRESS). Non-retryable
+     * errors throw std::system_error.
      *
      * @param buf Pointer to the buffer where data will be stored.
      * @param size Number of bytes to read.
@@ -176,8 +178,9 @@ public:
     /**
      * @brief Asynchronously writes data from the provided buffer to the socket.
      *
-     * This method suspends the current coroutine until the data is written, and then returns
-     * the number of bytes successfully written.
+     * Semantics: returns bytes written (>0), 0 if nothing written, and a negative value
+     * (retry hint) for transient errors (e.g. EINTR/EAGAIN/EINPROGRESS). Non-retryable
+     * errors throw std::system_error.
      *
      * @param buf Pointer to the data to be written.
      * @param size The number of bytes to write.
@@ -659,6 +662,17 @@ public:
             auto await_resume() {
                 auto ret = poller->Result();
                 if (ret < 0) {
+#ifdef _WIN32
+                    int err = -ret;
+                    if (err == WSAEWOULDBLOCK || err == WSAEINTR || err == WSAEINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#else
+                    int err = -ret;
+                    if (err == EINTR || err == EAGAIN || err == EINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#endif
                     throw std::system_error(-ret, std::generic_category());
                 }
                 return ret;
@@ -694,6 +708,17 @@ public:
             auto await_resume() {
                 auto ret = poller->Result();
                 if (ret < 0) {
+#ifdef _WIN32
+                    int err = -ret;
+                    if (err == WSAEWOULDBLOCK || err == WSAEINTR || err == WSAEINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#else
+                    int err = -ret;
+                    if (err == EINTR || err == EAGAIN || err == EINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#endif
                     throw std::system_error(-ret, std::generic_category());
                 }
                 return ret;
@@ -776,6 +801,17 @@ public:
             auto await_resume() {
                 auto ret = poller->Result();
                 if (ret < 0) {
+#ifdef _WIN32
+                    int err = -ret;
+                    if (err == WSAEWOULDBLOCK || err == WSAEINTR || err == WSAEINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#else
+                    int err = -ret;
+                    if (err == EINTR || err == EAGAIN || err == EINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#endif
                     throw std::system_error(-ret, std::generic_category());
                 }
                 return ret;
@@ -811,6 +847,17 @@ public:
             auto await_resume() {
                 auto ret = poller->Result();
                 if (ret < 0) {
+#ifdef _WIN32
+                    int err = -ret;
+                    if (err == WSAEWOULDBLOCK || err == WSAEINTR || err == WSAEINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#else
+                    int err = -ret;
+                    if (err == EINTR || err == EAGAIN || err == EINPROGRESS) {
+                        return ret; // retry hint
+                    }
+#endif
                     throw std::system_error(-ret, std::generic_category());
                 }
                 return ret;
