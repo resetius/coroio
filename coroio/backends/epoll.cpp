@@ -85,6 +85,10 @@ void TEPoll::Poll() {
                 change |= !!ev.Write;
                 ev.Write = {};
             }
+            if (ch.Type & TEvent::RHUP) {
+                change |= !!ev.RHup;
+                ev.RHup = {};
+            }
             if (ev.Read) {
                 eev.events |= EPOLLIN;
             }
@@ -135,11 +139,11 @@ void TEPoll::Poll() {
     for (int i = 0; i < nfds; ++i) {
         int fd = OutEvents_[i].data.fd;
         auto ev = InEvents_[fd];
-        if (OutEvents_[i].events & EPOLLIN) {
+        if ((OutEvents_[i].events & EPOLLIN) && ev.Read) {
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
             ev.Read = {};
         }
-        if (OutEvents_[i].events & EPOLLOUT) {
+        if ((OutEvents_[i].events & EPOLLOUT) && ev.Write) {
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
             ev.Write = {};
         }
