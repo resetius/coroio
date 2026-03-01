@@ -21,6 +21,17 @@ enum class ESystemMessages : TMessageId {
     PoisonPill = 1
 };
 
+/**
+ * @brief System message that terminates the receiving actor.
+ *
+ * Sending `TPoison` to any actor removes it from the system. Its destructor
+ * is called on the next GC cycle. The actor slot is then recycled with a
+ * bumped cookie so stale messages cannot reach its successor.
+ *
+ * @code
+ * ctx->Send<TPoison>(actorToKill);
+ * @endcode
+ */
 struct TPoison {
     static constexpr TMessageId MessageId = static_cast<TMessageId>(ESystemMessages::PoisonPill);
 };
@@ -59,9 +70,41 @@ private:
     std::shared_ptr<TAskState<T>> State;
 };
 
+/**
+ * @brief Single-threaded actor runtime.
+ *
+ * Manages actor registration, message delivery, timers, and (optionally)
+ * distributed communication over TCP. All actors run on the single thread
+ * that drives the poller — no locking is required inside handlers.
+ *
+ * **Local-only setup:**
+ * @code
+ * TLoop<TDefaultPoller> loop;
+ * TActorSystem sys(&loop.Poller(), 1);
+ * auto id = sys.Register(std::make_unique<MyActor>());
+ * sys.Send<StartMsg>(id, id);
+ * sys.Serve();
+ * loop.Loop();
+ * @endcode
+ *
+ * **Distributed setup** — call `AddNode` for each peer, then `Serve(socket)`:
+ * @code
+ * TActorSystem sys(&loop.Poller(), 1);
+ * sys.AddNode(2, std::make_unique<TNode<TDefaultPoller>>(loop.Poller(), TAddress{"::", 9002}));
+ * sys.Serve(std::move(listeningSocket));  // inbound + outbound coroutines
+ * loop.Loop();
+ * @endcode
+ */
 class TActorSystem
 {
 public:
+    /**
+     * @brief Constructs the actor system.
+     *
+     * @param poller  Poller used for timers and I/O. Must outlive this object.
+     * @param nodeId  This node's identifier (default 1). Must be unique across
+     *                all processes in a distributed cluster.
+     */
     TActorSystem(TPollerBase* poller, int nodeId = 1)
         : Poller(poller)
         , NodeId_(nodeId)
@@ -69,18 +112,44 @@ public:
 
     ~TActorSystem();
 
+    /**
+     * @brief Registers an actor and returns its system-wide ID.
+     *
+     * Takes ownership of the actor. The returned `TActorId` is valid until
+     * `TPoison` is delivered or the system is destroyed. Slots are reused
+     * with a bumped cookie to prevent stale delivery.
+     *
+     * @param actor Unique pointer to the actor (ownership transferred).
+     * @return Globally unique ID for this actor.
+     */
     TActorId Register(IActor::TPtr actor);
 
+    /// Suspends the current coroutine until `until`. Delegates to the poller.
     auto Sleep(TTime until) {
         return Poller->Sleep(until);
     }
 
+    /// Suspends the current coroutine for `duration`. Delegates to the poller.
     template<typename Rep, typename Period>
     auto Sleep(std::chrono::duration<Rep,Period> duration) {
         return Poller->Sleep(duration);
     }
 
+    /// Low-level send with a pre-serialized blob. Prefer the typed `Send<T>` overload.
     void Send(TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
+
+    /**
+     * @brief Sends a typed message from `sender` to `recipient` (non-blocking).
+     *
+     * Routes automatically: local actors receive via their mailbox; remote
+     * actors (different `NodeId`) are serialized and queued to the outbound
+     * node buffer. Delivery happens on the next event-loop iteration.
+     *
+     * @tparam T Message type; must have `static TMessageId MessageId`.
+     * @param sender    Actor ID that appears as `ctx->Sender()` in the handler.
+     * @param recipient Destination actor ID.
+     * @param args      Constructor arguments forwarded to `T`.
+     */
     template<typename T, typename... Args>
     void Send(TActorId sender, TActorId recipient, Args&&... args) {
         if (recipient.NodeId() == NodeId_) {
@@ -102,14 +171,49 @@ public:
         }
     }
 
+    /// Low-level schedule with a pre-serialized blob. Prefer the typed `Schedule<T>` overload.
     TEvent Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob);
+
+    /**
+     * @brief Schedules a typed message to be delivered at `when`.
+     *
+     * @param when      Absolute time point for delivery.
+     * @param sender    Actor ID for the scheduled message.
+     * @param recipient Destination actor ID.
+     * @param args      Constructor arguments forwarded to `T`.
+     * @return Event handle — pass to `Cancel()` to abort before delivery.
+     */
     template<typename T, typename... Args>
     TEvent Schedule(TTime when, TActorId sender, TActorId recipient, Args&&... args) {
         auto blob = SerializeNear<T>(GetPodAllocator(), std::forward<Args>(args)...);
         return Schedule(when, sender, recipient, T::MessageId, std::move(blob));
     }
+
+    /**
+     * @brief Cancels a previously scheduled message.
+     *
+     * Safe to call even if the message has already been delivered.
+     * @param event Handle returned by `Schedule()`.
+     */
     void Cancel(TEvent event);
 
+    /**
+     * @brief Sends a request and returns an awaitable for the reply of type `T`.
+     *
+     * Registers a temporary one-shot actor that captures the reply and
+     * self-destructs via `TPoison`. Must be `co_await`-ed inside
+     * `ICoroActor::CoReceive` or an async `TBehavior::Receive`.
+     *
+     * @tparam T         Expected reply message type.
+     * @tparam TQuestion Request message type.
+     * @param recepient  Actor to send the question to.
+     * @param message    Request message forwarded to `Send`.
+     * @return Awaitable that resolves to `T` when the reply arrives.
+     *
+     * @code
+     * auto reply = co_await sys.Ask<Pong>(pingActor, Ping{});
+     * @endcode
+     */
     template<typename T, typename TQuestion>
     auto Ask(TActorId recepient, TQuestion&& message) {
         class TAskAwaiter
@@ -146,15 +250,48 @@ public:
         return TAskAwaiter{state};
     }
 
+    /**
+     * @brief Wakes up the internal scheduler to process newly ready nodes.
+     *
+     * Called automatically after enqueuing a message to a remote node.
+     * Not intended for direct use in application code.
+     */
     void YieldNotify();
 
+    /// Returns the number of currently registered (alive) actors.
     size_t ActorsSize() const;
 
+    /**
+     * @brief Registers a remote node for distributed message routing.
+     *
+     * Messages sent to an actor whose `NodeId()` equals `id` are serialized
+     * and forwarded via this node's outbound buffer. Must be called before
+     * `Serve(TSocket)`.
+     *
+     * @param id   Node identifier matching the remote process's `nodeId`.
+     * @param node Transport handle (e.g. `TNode<TDefaultPoller>`).
+     */
     void AddNode(int id, std::unique_ptr<INode> node);
 
-    // Use Serve() for local actors and Serve(TSocket) for local and remote actors
+    /**
+     * @brief Starts the actor system event loop for local actors only.
+     *
+     * Schedules background coroutines that call `ExecuteSync` and
+     * `GcIterationSync` on every poller tick. Use when there are no remote
+     * nodes. For distributed setups use `Serve(TSocket)` instead.
+     */
     void Serve();
 
+    /**
+     * @brief Starts the actor system with inbound and outbound network serving.
+     *
+     * Calls `Serve()` for local processing, then launches:
+     * - An inbound accept loop on `socket` for messages from remote nodes.
+     * - One outbound coroutine per node registered via `AddNode()` to drain
+     *   outbound message buffers.
+     *
+     * @param socket Bound, listening socket for inbound connections.
+     */
     template<typename TSocket, typename TEnvelopeReader = TZeroCopyEnvelopeReader>
     void Serve(TSocket socket) {
         Serve();
