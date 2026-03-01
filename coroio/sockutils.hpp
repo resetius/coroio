@@ -15,9 +15,21 @@
 
 namespace NNet {
 
+/**
+ * @brief A line extracted from a circular read buffer, represented in up to two parts.
+ *
+ * Because the underlying buffer is circular, a single logical line may wrap around
+ * the buffer boundary. `Part1` is the first segment, `Part2` (possibly empty) is the
+ * continuation from the start of the buffer. `Size()` returns the total byte count.
+ *
+ * `operator bool()` returns `false` when `Part1` is empty (no complete line yet).
+ *
+ * The string views are valid only until the next `Push`/`Acquire`/`Commit` call on
+ * the owning `TLineSplitter` or `TZeroCopyLineSplitter`.
+ */
 struct TLine {
-    std::string_view Part1;
-    std::string_view Part2;
+    std::string_view Part1; ///< First (or only) segment of the line
+    std::string_view Part2; ///< Continuation segment if the line wraps; empty otherwise
 
     size_t Size() const {
         return Part1.size() + Part2.size();
@@ -208,7 +220,7 @@ private:
  *
  * ### Example Usage
  * @code{.cpp}
- * TValueTask<void> ExampleFunction(TSocket& socket) {
+ * TFuture<void> ExampleFunction(TSocket& socket) {
  *     TByteWriter<TSocket> writer(socket);
  *
  *     // Write a fixed amount of data
@@ -270,7 +282,7 @@ struct TByteWriter {
      *
      * @param line A structure holding the data to write in two parts.
      *
-     * @return A TValueTask<void> that completes once both parts have been fully written.
+     * @return A TFuture<void> that completes once both parts have been fully written.
      *
      * @throws std::runtime_error If the connection is closed while writing.
      */
@@ -288,7 +300,7 @@ private:
  * @class TStructReader
  * @brief A utility for reading a fixed-size structure of type @p T from a socket-like object.
  *
- * This class expects the socket to provide a method <tt>TValueTask<ssize_t> ReadSome(void* buffer, size_t size)</tt>,
+ * This class expects the socket to provide a method <tt>TFuture<ssize_t> ReadSome(void* buffer, size_t size)</tt>,
  * which returns:
  * - 0 if the connection is closed,
  * - a positive number for the count of bytes successfully read,
@@ -307,7 +319,7 @@ private:
  *     float Value;
  * };
  *
- * TValueTask<void> ExampleFunction(TSocket& socket) {
+ * TFuture<void> ExampleFunction(TSocket& socket) {
  *     // Create a reader for MyData structures
  *     TStructReader<MyData, TSocket> reader(socket);
  *
@@ -340,7 +352,7 @@ struct TStructReader {
      * - Retries if @c ReadSome() returns a negative number (indicating a
      *   recoverable read error).
      *
-     * @return A TValueTask<T> that completes once the entire structure is read.
+     * @return A TFuture<T> that completes once the entire structure is read.
      *
      * @throws std::runtime_error If the connection is closed before the
      *                            structure is fully read.
@@ -590,13 +602,13 @@ private:
  * which together represent the line (useful when a line wraps around the circular buffer).
  *
  * @tparam TSocket The socket type used for reading. TSocket must provide a method:
- *         <tt>TValueTask<ssize_t> ReadSome(void* buffer, size_t size)</tt>
+ *         <tt>TFuture<ssize_t> ReadSome(void* buffer, size_t size)</tt>
  *         that reads data asynchronously.
  *
  * ### Example Usage
  * @code{.cpp}
  * // Example function that processes lines read from the socket:
- * TValueTask<void> processLines(TSocket& socket) {
+ * TFuture<void> processLines(TSocket& socket) {
  *     TLineReader<TSocket> lineReader(socket);
  *     while (true) {
  *         TLine line = co_await lineReader.Read();
@@ -635,7 +647,7 @@ struct TLineReader {
      * newly read data, it retries extracting a line. The method returns a @c TLine
      * (which may contain two parts, if the line wraps around the circular buffer).
      *
-     * @return A TValueTask<TLine> that completes once a full line is available.
+     * @return A TFuture<TLine> that completes once a full line is available.
      */
     TFuture<TLine> Read() {
         auto line = Splitter.Pop();

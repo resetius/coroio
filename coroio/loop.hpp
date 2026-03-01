@@ -1,34 +1,30 @@
 namespace NNet {
 
 /**
- * @class TLoop
- * @brief A generic event loop wrapper that uses TSelect as its poller.
+ * @brief Event loop that drives a poller backend.
  *
- * The event loop continuously calls @ref Step() until explicitly stopped via
- * @ref Stop().
+ * Each call to `Step()` runs one polling round: it calls `Poller_.Poll()` to
+ * collect ready I/O events and timers, then `Poller_.WakeupReadyHandles()` to
+ * resume the waiting coroutines.
  *
- * ### Example Usage
- * @code{.cpp}
- * #include <iostream>
+ * `Loop()` repeats `Step()` until `Stop()` is called. For manual control (e.g.
+ * driving the loop until a specific `TFuture` completes), use `Step()` directly:
  *
- * int main() {
- *     // Instantiate the event loop with TSelect
- *     TLoop<TSelect> loop;
- *
- *     // Run a single iteration of polling and wakeup
+ * @code
+ * TLoop<TDefaultPoller> loop;
+ * TFuture<void> task = my_coroutine(loop.Poller());
+ * while (!task.done())
  *     loop.Step();
- *
- *     // Stop the loop
- *     loop.Stop();
- *
- *     // Alternatively, to run continuously:
- *     // loop.Loop(); // Will keep calling Step() until Stop() is called
- *
- *     return 0;
- * }
  * @endcode
  *
- * @tparam TPoller A type that provides polling and wakeup mechanisms (TSelect here).
+ * For server-style programs with detached `TVoidTask` coroutines:
+ * @code
+ * TLoop<TDefaultPoller> loop;
+ * server(loop.Poller(), TAddress{"::", 8888});  // returns TVoidTask
+ * loop.Loop();                                   // runs until Stop() is called
+ * @endcode
+ *
+ * @tparam TPoller Polling backend: TEPoll, TKqueue, TIOCp, TUring, TPoll, TSelect, etc.
  */
 template<typename TPoller>
 class TLoop {
@@ -48,7 +44,8 @@ public:
         Running_ = false;
     }
     /**
-     * @brief Performs a single iteration of polling and waking up ready handles.
+     * @brief Runs one event-loop iteration: polls for I/O/timer events then
+     *        resumes all coroutines whose events fired.
      */
     void Step() {
         Poller_.Poll();

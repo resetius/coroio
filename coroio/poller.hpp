@@ -24,30 +24,16 @@
 namespace NNet {
 
 /**
- * @class TPollerBase
- * @brief Base class for pollers managing asynchronous I/O events and timers.
+ * @brief Backend-independent base for I/O pollers.
  *
- * TPollerBase provides the common interface and functionality for pollers that drive asynchronous
- * operations. It allows scheduling timers, registering I/O events (read, write, remote hang-up) on file
- * descriptors, and waking up waiting coroutines. It also offers convenience methods such as @ref Sleep()
- * (and its overload accepting a std::chrono::duration) and @ref Yield().
+ * Manages three concerns shared by all poller backends:
+ * - **Timers** — `AddTimer` / `RemoveTimer` / `ProcessTimers`
+ * - **I/O event registration** — `AddRead`, `AddWrite`, `AddRemoteHup`, `RemoveEvent`
+ * - **Coroutine scheduling** — `Sleep`, `Yield`, `Wakeup`, `WakeupReadyHandles`
  *
- * The class maintains internal collections for pending changes (events), ready events, and timers.
- * It also keeps track of the maximum file descriptor, which is used in system-level polling calls.
- *
- * Key methods include:
- *  - @ref AddTimer() to schedule a timer.
- *  - @ref RemoveTimer() to cancel a timer.
- *  - @ref AddRead(), @ref AddWrite(), @ref AddRemoteHup() to register I/O events.
- *  - @ref RemoveEvent() to deregister events.
- *  - @ref Sleep() and @ref Yield() to suspend execution until a specified time or until the next
- *    polling round.
- *  - @ref Wakeup() and @ref WakeupReadyHandles() to resume waiting coroutines when events occur.
- *
- * The class also provides helper methods for computing timeout values (via @ref GetTimeout()).
- *
- * The detailed comment inside @ref Wakeup() describes how a waiting coroutine is resumed and how new
- * event registrations are matched.
+ * Concrete backends (TEPoll, TKqueue, …) inherit from this class and implement
+ * `Poll()` to fill `ReadyEvents_` using the OS-specific mechanism, then call
+ * `WakeupReadyHandles()` (provided here) to resume waiting coroutines.
  */
 class TPollerBase {
 public:
@@ -91,20 +77,26 @@ public:
     }
 
     /**
-     * @brief Registers a read event on a file descriptor.
+     * @brief Registers a read interest on a file descriptor.
      *
-     * @param fd The file descriptor.
-     * @param h  The coroutine handle to resume when data is available.
+     * `h` will be resumed by `WakeupReadyHandles()` on the next loop iteration
+     * after the fd becomes readable.
+     *
+     * @param fd File descriptor to watch.
+     * @param h  Coroutine to resume when data is available.
      */
     void AddRead(int fd, THandle h) {
         MaxFd_ = std::max(MaxFd_, fd);
         Changes_.emplace_back(TEvent{fd, TEvent::READ, h});
     }
     /**
-     * @brief Registers a write event on a file descriptor.
+     * @brief Registers a write interest on a file descriptor.
      *
-     * @param fd The file descriptor.
-     * @param h  The coroutine handle to resume when ready for writing.
+     * `h` will be resumed by `WakeupReadyHandles()` on the next loop iteration
+     * after the fd becomes writable.
+     *
+     * @param fd File descriptor to watch.
+     * @param h  Coroutine to resume when ready for writing.
      */
     void AddWrite(int fd, THandle h) {
         MaxFd_ = std::max(MaxFd_, fd);
@@ -133,12 +125,12 @@ public:
         Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP, {}});
     }
     /**
-     * @brief Removes events associated with a given coroutine handle.
+     * @brief No-op placeholder for future cleanup by handle.
      *
-     * This overload will be called by destructors of unfinished futures.
-     * Unimplemented.
+     * Intended to be called by destructors of unfinished futures so that
+     * pending waits can be unregistered. Currently unimplemented.
      *
-     * @param h The coroutine handle.
+     * @param h The coroutine handle (unused).
      */
     void RemoveEvent(THandle /*h*/) {
         // TODO: Add new vector for this type of removing
@@ -204,11 +196,13 @@ public:
         return Sleep(TClock::now() + duration);
     }
     /**
-     * @brief Yields execution to the next event loop iteration.
+     * @brief Suspends the coroutine until the next event-loop iteration.
      *
-     * Equivalent to calling Sleep() with a default zero time.
+     * Equivalent to `Sleep(TTime{})`, which fires immediately on the next
+     * `ProcessTimers()` call. Use when you want to give other coroutines a
+     * chance to run before continuing.
      *
-     * @return An awaitable object for yielding execution.
+     * @return An awaitable that resumes on the next loop tick.
      */
     auto Yield() {
         return Sleep(TTime{});

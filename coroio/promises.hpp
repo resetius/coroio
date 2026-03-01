@@ -5,6 +5,23 @@ namespace NNet {
 
 struct TVoidPromise;
 
+/**
+ * @brief Fire-and-forget coroutine handle.
+ *
+ * Cannot be `co_await`-ed. Self-destructs on completion (`final_suspend →
+ * suspend_never`). Unhandled exceptions are silently swallowed.
+ *
+ * Use for detached tasks that outlive their caller — e.g. per-connection
+ * handlers spawned inside an accept loop.
+ *
+ * @code
+ * TVoidTask handle_client(TSocket sock) {
+ *     char buf[4096]; ssize_t n;
+ *     while ((n = co_await sock.ReadSome(buf, sizeof(buf))) > 0)
+ *         co_await sock.WriteSome(buf, n);
+ * }
+ * @endcode
+ */
 struct TVoidTask : std::coroutine_handle<TVoidPromise>
 {
     using promise_type = TVoidPromise;
@@ -21,6 +38,12 @@ struct TVoidPromise
 
 struct TVoidSuspendedPromise;
 
+/**
+ * @brief Like TVoidTask but suspends at final_suspend instead of self-destructing.
+ *
+ * Used internally where the caller needs to manually destroy the coroutine
+ * after it completes. Not for general use — prefer TVoidTask or TFuture<void>.
+ */
 struct TVoidSuspendedTask : std::coroutine_handle<TVoidSuspendedPromise>
 {
     using promise_type = TVoidSuspendedPromise;
@@ -36,25 +59,11 @@ struct TVoidSuspendedPromise
 };
 
 /**
- * @class Self
- * @brief A minimal example of a coroutine "awaitable" object.
+ * @brief Awaitable that resumes immediately and yields this coroutine's own handle.
  *
- * This structure stores a coroutine handle and demonstrates how a coroutine
- * can be suspended and resumed.
- *
- * ### Example Usage
- * @code{.cpp}
- * // A simple coroutine that uses 'Self' as an awaitable:
- * std::coroutine_handle<> exampleCoroutine() {
- *     // co_await our custom awaitable
- *     auto handle = co_await Self{};
- *     // 'handle' is a std::coroutine_handle to this coroutine.
- *     // You can perform actions like handle.destroy(), handle.resume(), etc.
- *     ...
- * }
- * @endcode
- *
- * @note Internally, it captures the coroutine handle in its await_suspend step.
+ * `co_await Self{}` never actually suspends (`await_suspend` returns `false`),
+ * but it captures the current coroutine handle via `await_suspend`. Used by
+ * `Any()` to register the same coroutine as the continuation of multiple futures.
  *
  * @cond INTERNAL
  */

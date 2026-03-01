@@ -172,9 +172,12 @@ protected:
 template<> struct TFuture<void>;
 
 /**
- * @brief Future type for coroutines returning a value of type T.
+ * @brief Owned coroutine handle that carries a result of type T.
  *
- * Provides mechanisms to await and retrieve the result of a coroutine.
+ * RAII: destroys the coroutine frame in `~TFuture`. Move-only.
+ * `co_await future` suspends the caller until the coroutine finishes, then
+ * returns `T` or rethrows a stored exception. `future.done()` polls
+ * completion without suspending.
  *
  * @tparam T The type of the result.
  */
@@ -236,7 +239,11 @@ struct TPromise<void>: public TPromiseBase<void> {
 };
 
 /**
- * @brief Future specialization for coroutines that return void.
+ * @brief Owned coroutine handle for coroutines that return void.
+ *
+ * Same ownership and exception-propagation semantics as `TFuture<T>`.
+ * `co_await future` suspends the caller until done, then rethrows any
+ * stored exception. Provides `Accept(func)` to chain a continuation.
  */
 template<>
 struct TFuture<void> : public TFutureBase<void> {
@@ -297,11 +304,14 @@ template<typename T>
 TFinalAwaiter<T> TPromiseBase<T>::final_suspend() noexcept { return {}; }
 
 /**
- * @brief Awaits the completion of all futures and collects their results.
+ * @brief Awaits every future in order and collects their results.
+ *
+ * Futures are `co_await`-ed sequentially (not concurrently). The caller
+ * suspends until each future finishes before moving to the next.
  *
  * @tparam T The type of each coroutine's result.
- * @param futures A vector of TFuture<T> objects.
- * @return TFuture<std::vector<T>> containing the results from all coroutines.
+ * @param futures A vector of TFuture<T> objects (moved in).
+ * @return TFuture<std::vector<T>> containing results in input order.
  */
 template<typename T>
 TFuture<std::vector<T>> All(std::vector<TFuture<T>>&& futures) {
@@ -314,10 +324,10 @@ TFuture<std::vector<T>> All(std::vector<TFuture<T>>&& futures) {
 }
 
 /**
- * @brief Awaits the completion of all void-returning coroutines.
+ * @brief Awaits every void future in order until all have completed.
  *
- * @param futures A vector of TFuture<void> objects.
- * @return TFuture<void> representing the completion of all coroutines.
+ * @param futures A vector of TFuture<void> objects (moved in).
+ * @return TFuture<void> that completes after all futures finish.
  */
 inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
     auto waiting = std::move(futures);
@@ -328,14 +338,16 @@ inline TFuture<void> All(std::vector<TFuture<void>>&& futures) {
 }
 
 /**
- * @brief Awaits the completion of any one of the given futures and returns its result.
+ * @brief Returns the result of whichever future completes first.
  *
- * If one of the futures has already finished, its result is returned immediately.
- * Otherwise, the current coroutine is suspended until one of the futures completes.
+ * If one future is already done, its result is returned without suspension.
+ * Otherwise, all futures register this coroutine as their continuation; when
+ * the first one resumes it, the remaining futures are abandoned (their frames
+ * are destroyed when the vector goes out of scope).
  *
- * @tparam T The type of the coroutine's result.
- * @param futures A vector of TFuture<T> objects.
- * @return TFuture<T> with the result from the first completed coroutine.
+ * @tparam T The type of each coroutine's result.
+ * @param futures A vector of TFuture<T> objects (moved in).
+ * @return TFuture<T> with the result from the first completed future.
  */
 template<typename T>
 TFuture<T> Any(std::vector<TFuture<T>>&& futures) {
@@ -355,10 +367,10 @@ TFuture<T> Any(std::vector<TFuture<T>>&& futures) {
 }
 
 /**
- * @brief Awaits the completion of any one of the void-returning coroutines.
+ * @brief Completes when the first void future finishes; others are abandoned.
  *
- * @param futures A vector of TFuture<void> objects.
- * @return TFuture<void> representing the completion of one of the coroutines.
+ * @param futures A vector of TFuture<void> objects (moved in).
+ * @return TFuture<void> that completes as soon as one future finishes.
  */
 inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
     std::vector<TFuture<void>> all = std::move(futures);
