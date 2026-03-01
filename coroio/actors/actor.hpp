@@ -23,8 +23,8 @@
  *     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
  *         if (messageId == MyMessage::MessageId) {
  *             auto message = DeserializeNear<MyMessage>(blob);
- *             // Process message
- *             ctx->Send(ctx->Sender(), ResponseMessage{});
+ *             // Process message and reply to the sender
+ *             ctx->Send<ResponseMessage>(ctx->Sender(), message.value * 2);
  *         }
  *     }
  * };
@@ -37,15 +37,17 @@
  *     TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
  *         if (messageId == MyMessage::MessageId) {
  *             auto message = DeserializeNear<MyMessage>(blob);
+ *             auto sender = ctx->Sender();
  *
- *             // Async operations
+ *             // Async sleep — mailbox is paused until this handler finishes
  *             co_await ctx->Sleep(std::chrono::seconds(1));
  *
+ *             // Request-reply: blocks this handler, not the event loop
  *             auto response = co_await ctx->Ask<ResponseMessage>(
  *                 someActor, QueryMessage{}
  *             );
  *
- *             ctx->Send(ctx->Sender(), response);
+ *             ctx->Send<ResponseMessage>(sender, std::move(response));
  *         }
  *     }
  * };
@@ -88,11 +90,11 @@
  *     AsyncBehaviorActor() { Become(this); }
  *
  *     TFuture<void> Receive(ProcessMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
- *         // This method returns a future, so it will be handled asynchronously
+ *         // TFuture<void> return type triggers async dispatch automatically
  *         co_await ctx->Sleep(std::chrono::milliseconds(100));
  *
  *         auto result = co_await processAsync(msg.data);
- *         ctx->Send(ctx->Sender(), ResultMessage{result});
+ *         ctx->Send<ResultMessage>(ctx->Sender(), std::move(result));
  *     }
  *
  *     void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
@@ -127,13 +129,17 @@ using TEvent = std::pair<unsigned, TTime>;
 /**
  * @brief Context object providing actor communication and scheduling capabilities
  *
- * TActorContext is passed to actors when they receive messages. It provides
+ * TActorContext is passed to actors during message dispatch. It provides
  * methods for sending messages, scheduling future messages, sleeping, and
  * performing request-response patterns.
  *
- * The context contains information about the current message sender and
- * the actor's own ID. It also manages asynchronous operations through
- * the actor system.
+ * The context is valid only for the duration of the `Receive` / `CoReceive`
+ * call chain. Capture `ctx->Sender()` / `ctx->Self()` by value if you need
+ * them after the first `co_await`.
+ *
+ * @note `Sleep`, `Ask`, and any coroutine-based methods require `co_await`
+ *       and are only meaningful inside `ICoroActor::CoReceive` or an async
+ *       `TBehavior::Receive` (one returning `TFuture<void>`).
  */
 class TActorContext
 {
@@ -167,19 +173,32 @@ public:
     void Forward(TActorId to, TMessageId messageId, TBlob blob);
 
     /**
-     * @brief Send a typed message to another actor
-     * @tparam T Message type that has MessageId static member
+     * @brief Send a typed message to another actor (non-blocking)
+     *
+     * Constructs a `T` in-place from `args` and enqueues it to the recipient.
+     * Returns immediately; delivery is deferred to the next event-loop iteration.
+     *
+     * @tparam T Message type; must have a `static TMessageId MessageId` member
      * @param to Recipient actor ID
-     * @param args passed to Message constructor
+     * @param args Constructor arguments forwarded to `T`
+     *
+     * @code
+     * ctx->Send<Pong>(ctx->Sender(), 42);   // Pong{42} delivered to sender
+     * @endcode
      */
     template<typename T, typename... Args>
     void Send(TActorId to, Args&&... args);
 
     /**
-     * @brief Forward a typed message to another actor
-     * @tparam T Message type that has MessageId static member
+     * @brief Forward a typed message to another actor, preserving the original sender
+     *
+     * Like `Send<T>`, but the recipient sees `ctx->Sender()` equal to the
+     * sender of the *current* message rather than this actor's ID. Useful for
+     * routing/proxy actors that should not appear in the reply chain.
+     *
+     * @tparam T Message type; must have a `static TMessageId MessageId` member
      * @param to Recipient actor ID
-     * @param args passed to Message constructor
+     * @param args Constructor arguments forwarded to `T`
      */
     template<typename T, typename... Args>
     void Forward(TActorId to, Args&&... args);
@@ -214,29 +233,50 @@ public:
     void Cancel(TEvent event);
 
     /**
-     * @brief Sleep until a specific time
-     * @param until Time to sleep until
-     * @return Future that completes when the sleep time is reached
+     * @brief Suspend the current handler until a specific time
+     *
+     * Must be `co_await`-ed inside `ICoroActor::CoReceive` or an async
+     * `TBehavior::Receive`. The actor system continues processing other
+     * actors while this handler is suspended.
+     *
+     * @param until Absolute time point to wake up at
+     * @return Awaitable future that resumes at `until`
      */
     TFuture<void> Sleep(TTime until);
 
     /**
-     * @brief Sleep for a specific duration
-     * @tparam Rep Duration representation type
+     * @brief Suspend the current handler for a duration
+     *
+     * Convenience overload for relative delays. Must be `co_await`-ed.
+     *
+     * @code
+     * co_await ctx->Sleep(std::chrono::seconds(5));
+     * @endcode
+     *
+     * @tparam Rep   Duration representation type
      * @tparam Period Duration period type
      * @param duration How long to sleep
-     * @return Future that completes when the sleep duration has elapsed
+     * @return Awaitable future that resumes after `duration`
      */
     template<typename Rep, typename Period>
     TFuture<void> Sleep(std::chrono::duration<Rep,Period> duration);
 
     /**
-     * @brief Send a message and wait for a response
-     * @tparam T Expected response message type
+     * @brief Send a request and suspend until a reply of type `T` arrives
+     *
+     * Sends `question` to `recipient` and returns a future that resolves to the
+     * first reply of type `T` sent back to this actor. Must be `co_await`-ed
+     * inside `ICoroActor::CoReceive` or an async `TBehavior::Receive`.
+     *
+     * @code
+     * auto reply = co_await ctx->Ask<Pong>(pingActor, Ping{});
+     * @endcode
+     *
+     * @tparam T       Expected response message type
      * @tparam TQuestion Question message type
      * @param recipient Actor to send the question to
-     * @param question Question message to send
-     * @return Future containing the response message
+     * @param question  Message forwarded to the recipient
+     * @return Awaitable future resolving to `T` when the reply arrives
      */
     template<typename T, typename TQuestion>
     TFuture<T> Ask(TActorId recipient, TQuestion&& question);
@@ -332,30 +372,46 @@ public:
 /**
  * @brief Coroutine-based actor interface for asynchronous message processing
  *
- * ICoroActor extends IActor to support asynchronous message processing
- * using coroutines. The CoReceive method can perform async operations
- * like sleeping, waiting for responses, or doing I/O without blocking
- * the actor system.
+ * Extends `IActor` so that `CoReceive` can `co_await` timers, `Ask`, or I/O
+ * without blocking the event loop thread.
+ *
+ * **One async handler at a time.** When `CoReceive` returns a pending
+ * `TFuture<void>`, the actor's mailbox is paused: no further messages are
+ * dispatched until that future completes. This removes the need for internal
+ * locking — state can be mutated freely inside the handler.
+ *
+ * @code
+ * class Throttled : public ICoroActor {
+ *     TFuture<void> CoReceive(TMessageId id, TBlob blob, TActorContext::TPtr ctx) override {
+ *         auto msg = DeserializeNear<Work>(blob);
+ *         co_await ctx->Sleep(std::chrono::milliseconds(50)); // next msg waits here
+ *         process(msg);
+ *     }
+ * };
+ * @endcode
  */
 class ICoroActor : public IActor {
 public:
     /**
-     * @brief Synchronous receive method (calls CoReceive internally)
-     * @param messageId Type identifier of the message
-     * @param blob Serialized message data
-     * @param ctx Actor context for communication
+     * @brief IActor bridge — invokes CoReceive and parks pending futures
+     *
+     * Called by the actor system. Not meant to be overridden; override
+     * `CoReceive` instead.
      */
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
 
     /**
-     * @brief Asynchronous message processing method
-     * @param messageId Type identifier of the message
-     * @param blob Serialized message data
-     * @param ctx Actor context for communication
-     * @return Future that completes when message processing is done
+     * @brief Asynchronous message handler (override in subclass)
      *
-     * This method can use co_await to perform asynchronous operations
-     * without blocking the actor system thread.
+     * May freely use `co_await ctx->Sleep(...)`, `co_await ctx->Ask<T>(...)`,
+     * or any other coroutine primitive. While this coroutine is suspended,
+     * the actor's mailbox is paused — subsequent messages queue up and are
+     * delivered only after this handler returns (i.e. its future completes).
+     *
+     * @param messageId Type identifier of the incoming message
+     * @param blob      Serialized message payload
+     * @param ctx       Actor context (valid for the duration of this handler)
+     * @return Future that signals completion of message processing
      */
     virtual TFuture<void> CoReceive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
 };
@@ -389,22 +445,25 @@ public:
  * message handling. It supports both synchronous and asynchronous
  * message handlers, automatically detecting the return type.
  *
+ * The handler return type determines dispatch mode automatically:
+ * - `void`           → synchronous, called inline
+ * - `TFuture<void>`  → asynchronous, mailbox pauses until the future completes
+ *
  * Usage example:
  * @code
- * class MyBehavior : public TBehavior<MyBehavior, MessageA, MessageB> {
+ * class MyBehavior : public TBehavior<MyBehavior, Ping, Upload> {
  * public:
- *     void Receive(MessageA&& msg, TBlob blob, TActorContext::TPtr ctx) {
- *         // Handle MessageA synchronously
+ *     void Receive(Ping&& msg, TBlob, TActorContext::TPtr ctx) {
+ *         ctx->Send<Pong>(ctx->Sender());          // synchronous reply
  *     }
  *
- *     TFuture<void> Receive(MessageB&& msg, TBlob blob, TActorContext::TPtr ctx) {
- *         // Handle MessageB asynchronously
- *         co_await someAsyncOperation();
+ *     TFuture<void> Receive(Upload&& msg, TBlob, TActorContext::TPtr ctx) {
+ *         auto sender = ctx->Sender();
+ *         co_await ctx->Sleep(std::chrono::seconds(1)); // async — mailbox pauses
+ *         ctx->Send<UploadDone>(sender);
  *     }
  *
- *     void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
- *         // Handle messages not in the template parameter list
- *     }
+ *     void HandleUnknownMessage(TMessageId id, TBlob, TActorContext::TPtr) {}
  * };
  * @endcode
  */
@@ -489,33 +548,38 @@ private:
 /**
  * @brief Actor that delegates message handling to a pluggable behavior
  *
- * IBehaviorActor allows actors to change their message handling behavior
- * dynamically at runtime. This is useful for implementing state machines,
- * protocol handlers, or any actor that needs to change its behavior based
- * on its current state.
+ * Enables runtime behavior switching — useful for state machines and protocol
+ * handlers. Most commonly the actor itself is the initial behavior (`Become(this)`),
+ * but separate `TBehavior` objects can be stored as members and swapped in.
  *
  * Usage example:
  * @code
- * class StatefulActor : public IBehaviorActor,
- *                      public TBehavior<StatefulActor, InitMessage, WorkMessage> {
+ * struct IdleBehavior;
+ * struct ActiveBehavior;
+ *
+ * class Connection : public IBehaviorActor,
+ *                    public TBehavior<Connection, Connect, Data, Disconnect> {
  * public:
- *     StatefulActor() {
- *         Become(this); // Set initial behavior to self
+ *     Connection() { Become(this); }
+ *
+ *     void Receive(Connect&&, TBlob, TActorContext::TPtr ctx) {
+ *         connected_ = true;
+ *         // next message will already use this actor as behavior (no switch needed)
  *     }
  *
- *     void Receive(InitMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
- *         // Initialize and potentially switch to a different behavior
- *         if (msg.mode == "advanced") {
- *             Become(&advancedBehavior_);
- *         }
+ *     void Receive(Data&& msg, TBlob, TActorContext::TPtr ctx) {
+ *         if (!connected_) return;
+ *         process(msg.payload);
  *     }
  *
- *     void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
- *         // Handle unknown messages
+ *     void Receive(Disconnect&&, TBlob, TActorContext::TPtr) {
+ *         connected_ = false;
  *     }
+ *
+ *     void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) {}
  *
  * private:
- *     AdvancedBehavior advancedBehavior_;
+ *     bool connected_ = false;
  * };
  * @endcode
  */
@@ -523,10 +587,12 @@ class IBehaviorActor : public IActor {
 public:
     /**
      * @brief Switch to a new behavior
-     * @param behavior Pointer to the new behavior to use
      *
-     * After calling Become(), all subsequent messages will be handled
-     * by the new behavior until Become() is called again.
+     * The switch takes effect on the **next** incoming message. The behavior
+     * pointer must remain valid for the lifetime of the actor — storing
+     * behaviors as member variables is the typical pattern.
+     *
+     * @param behavior Non-owning pointer to the new behavior; must not be null
      */
     void Become(IBehavior* behavior) {
         CurrentBehavior_ = behavior;

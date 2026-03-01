@@ -16,12 +16,15 @@ using TCookie = uint16_t;
 using TMessageId = uint32_t;
 
 /**
- * @brief Unique identifier for actors in the system
+ * @brief Globally unique identifier for actors across a distributed system
  *
- * TActorId combines node ID, local actor ID, and cookie to create
- * a globally unique identifier for actors. The cookie helps with
- * actor lifecycle management and prevents message delivery to
- * reused actor IDs.
+ * Combines a 16-bit `NodeId`, a 32-bit local `ActorId`, and a 16-bit `Cookie`
+ * into a compact, copyable handle. The cookie increments each time a slot is
+ * reused, preventing stale messages from reaching a newly spawned actor that
+ * occupies the same local slot as a terminated one.
+ *
+ * A default-constructed `TActorId` (all zeros) is invalid; `operator bool()`
+ * returns `false` for it.
  */
 class TActorId {
 public:
@@ -42,7 +45,6 @@ public:
     }
 
     /** @brief Get the local actor ID component */
-    /** @brief Get the local actor ID component */
     TLocalActorId ActorId() const {
         return ActorId_;
     }
@@ -53,8 +55,8 @@ public:
     }
 
     /**
-     * @brief Convert actor ID to string representation
-     * @return String in format "ActorId:NodeId:LocalActorId:Cookie"
+     * @brief Convert actor ID to a human-readable string
+     * @return String in format `"ActorId:<NodeId>:<LocalActorId>:<Cookie>"`
      */
     std::string ToString() const {
         return "ActorId:"
@@ -82,14 +84,16 @@ private:
 };
 
 /**
- * @brief Header for messages sent between actors.
- * Used in remote communication and serialization.
+ * @brief Wire header prepended to every remote actor message
+ *
+ * Written as a fixed-size prefix before the serialized payload.
+ * `Size` is the byte length of the payload that follows.
  */
 struct THeader {
-    TActorId Sender;
-    TActorId Recipient;
-    TMessageId MessageId = 0;
-    uint32_t Size = 0;
+    TActorId Sender;       ///< Originating actor
+    TActorId Recipient;    ///< Destination actor
+    TMessageId MessageId = 0; ///< Message type discriminator
+    uint32_t Size = 0;        ///< Payload size in bytes
 };
 
 } // namespace NActors
