@@ -14,13 +14,23 @@
 namespace NNet
 {
 
+/**
+ * @brief Parsed HTTP request URI: `/path?key=value&...#fragment`.
+ *
+ * Constructed from the raw URI string found in the request line. Provides
+ * typed access to the path, query parameters, and fragment.
+ */
 // /path?arg1=value1&arg2=value2#fragment
 class TUri {
 public:
     TUri() = default;
+    /// Parses `uriStr` into path, query parameters, and fragment.
     TUri(const std::string& uriStr);
+    /// Returns the decoded path component (e.g. `"/api/v1/users"`).
     const std::string& Path() const;
+    /// Returns query parameters as a key→value map (e.g. `{"page": "2"}`).
     const std::map<std::string, std::string>& QueryParameters() const;
+    /// Returns the fragment (the part after `#`), or empty string if absent.
     const std::string& Fragment() const;
 
 private:
@@ -30,20 +40,49 @@ private:
     std::string Fragment_;
 };
 
+/**
+ * @brief Represents an incoming HTTP/1.1 request.
+ *
+ * Constructed by `TWebServer` from the parsed request headers and a body-reader
+ * callback. The body is read lazily — call `ReadBodyFull()` or `ReadBodySome()`
+ * to consume it. Both `Content-Length` and chunked transfer encoding are supported.
+ *
+ * Header string views (`Method()`, `Version()`, values in `Headers()`) reference
+ * the internal header buffer and are valid for the lifetime of this object.
+ */
 class TRequest {
 public:
     TRequest(std::string&& header,
         std::function<TFuture<ssize_t>(char*, size_t)> bodyReader,
         std::function<TFuture<std::string>()> chunkHeaderReader = {});
+    /// HTTP method string (e.g. `"GET"`, `"POST"`).
     std::string_view Method() const;
+    /// Parsed request URI.
     const TUri& Uri() const;
+    /// HTTP version string (e.g. `"HTTP/1.1"`).
     std::string_view Version() const { return Version_; }
 
+    /// Returns `true` if the request has a body (non-zero Content-Length or chunked).
     bool HasBody() const;
+    /**
+     * @brief Reads and returns the entire request body as a string.
+     *
+     * Buffers all data up to `Content-Length` or until the final chunk.
+     * Throws on connection close before body is complete.
+     */
     TFuture<std::string> ReadBodyFull();
-    TFuture<ssize_t> ReadBodySome(char* buffer, size_t size); // read up to Content-Length
+    /**
+     * @brief Reads up to `size` bytes of the request body into `buffer`.
+     *
+     * Returns bytes read, `0` at end-of-body, or a negative retry hint.
+     * Respects `Content-Length` and chunked encoding transparently.
+     */
+    TFuture<ssize_t> ReadBodySome(char* buffer, size_t size);
+    /// Returns `true` once the full body has been read.
     bool BodyConsumed() const;
+    /// Returns `true` if the client sent `Connection: close` or is HTTP/1.0.
     bool RequireConnectionClose() const;
+    /// All request headers as a `name → value` map (views into the header buffer).
     const std::map<std::string_view, std::string_view>& Headers() const;
 
 private:
@@ -68,17 +107,56 @@ private:
     std::string_view Version_;
 };
 
+/**
+ * @brief Builds and sends an HTTP/1.1 response.
+ *
+ * Typical usage in a router handler:
+ * @code
+ * response.SetStatus(200);
+ * response.SetHeader("Content-Type", "text/plain");
+ * co_await response.SendHeaders();
+ * co_await response.WriteBodyFull("hello");    // sets Content-Length automatically
+ * // -- or streaming --
+ * co_await response.WriteBodyChunk(data, size); // Transfer-Encoding: chunked
+ * @endcode
+ *
+ * `SetStatus` and `SetHeader` must be called **before** `SendHeaders`.
+ * After `SendHeaders`, only body-write methods may be called.
+ */
 class TResponse {
 public:
     TResponse(std::function<TFuture<ssize_t>(const void*, size_t)> writer)
         : Writer_(std::move(writer))
     {}
+    /// Sets the HTTP status code (default is 200). Must be called before `SendHeaders`.
     void SetStatus(int statusCode);
+    /// Adds or replaces a response header. Must be called before `SendHeaders`.
     void SetHeader(const std::string& name, const std::string& value);
+    /**
+     * @brief Sends the status line and all accumulated headers to the client.
+     *
+     * Must be called exactly once, after `SetStatus`/`SetHeader` and before any
+     * body write. If `WriteBodyFull` is used instead, `SendHeaders` is called
+     * implicitly.
+     */
     TFuture<void> SendHeaders();
-    TFuture<void> WriteBodyChunk(const char* data, size_t size); // Chunked transfer encoding
-    TFuture<void> WriteBodyFull(const std::string& data); // Content-Length + body
+    /**
+     * @brief Writes `data` as one chunk using Transfer-Encoding: chunked.
+     *
+     * Call `SendHeaders()` first (without a `Content-Length` header). Repeat for
+     * each chunk; the final zero-length chunk is sent automatically when the
+     * connection closes.
+     */
+    TFuture<void> WriteBodyChunk(const char* data, size_t size);
+    /**
+     * @brief Sends headers (with `Content-Length`) and the full body in one call.
+     *
+     * Implies `SendHeaders()` — do not call it separately when using this method.
+     */
+    TFuture<void> WriteBodyFull(const std::string& data);
+    /// Returns `true` if the connection has been closed or an error occurred.
     bool IsClosed() const;
+    /// Returns the status code set via `SetStatus` (default 200).
     int StatusCode() const {
         return StatusCode_;
     }
@@ -94,6 +172,25 @@ private:
     std::function<TFuture<ssize_t>(const void*, size_t)> Writer_;
 };
 
+/**
+ * @brief Interface for HTTP request handlers.
+ *
+ * Implement `HandleRequest` to process requests and write responses. A single
+ * router instance is shared across all connections; implementations must be
+ * stateless or protect shared state explicitly (though a single-threaded event
+ * loop means no concurrent calls in practice).
+ *
+ * @code
+ * struct MyRouter : IRouter {
+ *     TFuture<void> HandleRequest(TRequest& req, TResponse& res) override {
+ *         res.SetStatus(200);
+ *         res.SetHeader("Content-Type", "text/plain");
+ *         co_await res.SendHeaders();
+ *         co_await res.WriteBodyFull("hello");
+ *     }
+ * };
+ * @endcode
+ */
 struct IRouter {
     virtual TFuture<void> HandleRequest(TRequest& request, TResponse& response) = 0;
 };
@@ -117,15 +214,47 @@ public:
     }
 };
 
+/**
+ * @brief HTTP/1.1 server that accepts connections and dispatches to a router.
+ *
+ * Takes ownership of a bound, listening socket. Call `Start()` to launch the
+ * accept loop as a detached `TVoidTask`.
+ *
+ * @tparam TSocket A bound+listening socket type (e.g. `TDefaultPoller::TSocket`).
+ *
+ * @code
+ * using TSocket = TDefaultPoller::TSocket;
+ * TSocket sock(loop.Poller(), addr.Domain());
+ * sock.Bind(addr); sock.Listen();
+ *
+ * MyRouter router;
+ * TWebServer<TSocket> server(std::move(sock), router);
+ * server.Start();
+ * loop.Loop();
+ * @endcode
+ */
 template<typename TSocket>
 class TWebServer {
 public:
+    /**
+     * @brief Constructs the server.
+     *
+     * @param serverSocket Bound, listening socket (moved in; owned by the server).
+     * @param router       Request handler; must outlive this server.
+     * @param logger       Optional nginx-style access-log callback.
+     */
     TWebServer(TSocket&& serverSocket, IRouter& router, std::function<void(const std::string&)> logger = {})
         : ServerSocket(std::move(serverSocket))
         , Router(router)
         , Logger(std::move(logger))
     {}
 
+    /**
+     * @brief Starts the accept loop as a detached `TVoidTask`.
+     *
+     * Runs forever, accepting connections and spawning a per-connection handler
+     * coroutine for each. Returns immediately (the loop is detached).
+     */
     TVoidTask Start() {
         while (true) {
             auto clientSocket = co_await ServerSocket.Accept();

@@ -50,38 +50,28 @@ void CheckSecWebSocketAccept(const std::string& allServerHeaders, const std::str
 } // namespace detail
 
 /**
- * @class TWebSocket
- * @brief Implements a WebSocket protocol layer on top of a given socket.
+ * @brief Client-side WebSocket framing layer over an already-connected socket.
  *
- * The TWebSocket class wraps an underlying socket (of type @c TSocket) to implement
- * the WebSocket handshake, sending, and receiving of text frames. It uses asynchronous
- * operations (via TFuture) for I/O, and it internally maintains a reader and writer.
+ * Wraps `TSocket` with RFC 6455 framing. The underlying socket must be TCP-connected
+ * before calling `Connect()`. `TWebSocket` holds a **reference** to the socket —
+ * the socket must outlive the `TWebSocket` instance.
  *
- * ### Overview
- *  - @ref Connect() initiates the WebSocket handshake.
- *  - @ref SendText() sends a text frame.
- *  - @ref ReceiveText() receives a text frame.
+ * Only text frames are exposed. Outgoing frames are client-masked as required by
+ * RFC 6455. Server-side upgrade is not included.
  *
- * @tparam TSocket The underlying socket type used for network communication.
+ * @tparam TSocket Connected socket type providing `ReadSome` / `WriteSome`.
  *
- * ### Example: Minimal WebSocket Client
- * @code{.cpp}
- * #include <iostream>
- * #include <coroio/ws.hpp>
+ * @code
+ * template<typename TPoller>
+ * TFuture<void> chat(TPoller& poller, TAddress addr) {
+ *     typename TPoller::TSocket sock(poller, addr.Domain());
+ *     co_await sock.Connect(addr);
  *
- * template<typename TSocket>
- * TFuture<void> WebSocketClientExample(TSocket& socket) {
- *     TWebSocket<TSocket> ws(socket);
+ *     TWebSocket ws(sock);
+ *     co_await ws.Connect("example.com", "/chat");   // HTTP upgrade
  *
- *     co_await ws.Connect("echo.websocket.org", "/.ws");
- *
- *     std::string message = "Hello, WebSocket!";
- *     co_await ws.SendText(message);
- *
- *     std::string_view reply = co_await ws.ReceiveText();
- *     std::cout << "Received: " << reply << std::endl;
- *
- *     co_return;
+ *     co_await ws.SendText("hello");
+ *     std::string_view msg = co_await ws.ReceiveText(); // valid until next ReceiveText()
  * }
  * @endcode
  */
@@ -89,9 +79,9 @@ template<typename TSocket>
 class TWebSocket {
 public:
     /**
-     * @brief Constructs a WebSocket instance wrapping the provided socket.
+     * @brief Wraps an already-connected socket with WebSocket framing.
      *
-     * @param socket The underlying socket that will be used for the WebSocket connection.
+     * @param socket Reference to the connected socket. Must outlive this object.
      */
     explicit TWebSocket(TSocket& socket)
         : Socket(socket)
@@ -100,16 +90,17 @@ public:
     { }
 
     /**
-     * @brief Initiates the WebSocket handshake.
+     * @brief Performs the HTTP → WebSocket upgrade handshake.
      *
-     * Constructs and sends an HTTP GET request with the proper headers including a generated
-     * WebSocket key, then waits for the server's response. The response is verified to contain
-     * the "101 Switching Protocols" status and a valid Sec-WebSocket-Accept header.
+     * Sends an HTTP/1.1 GET request with `Upgrade: websocket` headers, then reads
+     * and validates the server's `101 Switching Protocols` response including the
+     * `Sec-WebSocket-Accept` header. Must be called once before `SendText` /
+     * `ReceiveText`.
      *
-     * @param host The target host name.
-     * @param path The resource path.
-     * @return A TFuture that completes when the handshake is successful.
-     * @throws std::runtime_error if the handshake fails.
+     * @param host Sent in the `Host:` header (e.g. `"example.com"`).
+     * @param path Request path (e.g. `"/chat"`).
+     * @throws std::runtime_error if the server rejects the upgrade or the accept
+     *         key does not match.
      */
     TFuture<void> Connect(const std::string& host, const std::string& path) {
         auto key = NDetail::GenerateWebSocketKey(Rd);
@@ -137,22 +128,23 @@ public:
     }
 
     /**
-     * @brief Sends a text message as a WebSocket frame.
+     * @brief Sends `message` as a masked WebSocket text frame (opcode 0x1).
      *
-     * @param message The text message to send.
-     * @return A TFuture that completes when the message has been sent.
+     * @param message UTF-8 text to send. The caller retains ownership.
      */
     TFuture<void> SendText(std::string_view message) {
         co_await SendFrame(0x1, message);
     }
 
     /**
-     * @brief Receives a text message from the WebSocket.
+     * @brief Receives the next WebSocket text frame.
      *
-     * Waits for an incoming frame, validates that it is a text frame, and returns its payload.
+     * Suspends until a complete frame arrives. The returned `string_view` points
+     * into an internal buffer and is **valid only until the next call to
+     * `ReceiveText()`**. Copy the contents if you need to keep them longer.
      *
-     * @return A TFuture that yields a string_view containing the text message.
-     * @throws std::runtime_error if a non-text frame is received.
+     * @return `string_view` over the frame payload.
+     * @throws std::runtime_error if a non-text frame (opcode ≠ 0x1) is received.
      */
     TFuture<std::string_view> ReceiveText() {
         auto [opcode, payload] = co_await ReceiveFrame();

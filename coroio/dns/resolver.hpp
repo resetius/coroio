@@ -10,12 +10,11 @@
 namespace NNet {
 
 /**
- * @class TResolvConf
- * @brief Reads and stores DNS configuration from a file or an input stream.
+ * @brief Reads nameserver addresses from a resolv.conf-style file or stream.
  *
- * This class loads a list of nameservers from a DNS configuration file (by default,
- * `/etc/resolv.conf`) or from any other input stream. The nameservers are stored
- * as a vector of @c TAddress objects.
+ * Parses `nameserver` lines and stores the resulting addresses in `Nameservers`.
+ * Defaults to `/etc/resolv.conf`. Pass an `istream` overload for testing or
+ * custom configurations.
  */
 class TResolvConf {
 public:
@@ -91,28 +90,26 @@ private:
 };
 
 /**
- * @class TResolver
- * @brief Resolves hostnames into IP addresses using a custom poller.
+ * @brief Async DNS resolver over UDP.
  *
- * The TResolver class provides DNS resolution functionality by sending DNS
- * queries to a nameserver. It supports different DNS record types as specified by
- * EDNSType. Internally, it uses a polling mechanism (provided by the template parameter)
- * for asynchronous operations.
+ * Sends DNS queries to a nameserver (from `/etc/resolv.conf` by default) and
+ * caches results. Multiple concurrent `Resolve()` calls for the same hostname
+ * share a single in-flight query — only one UDP packet is sent.
  *
- * @tparam TPoller The type of the poller used to manage asynchronous operations.
+ * Owns three background coroutines (sender, receiver, timeouts) that run for
+ * the lifetime of the resolver. Construct once and reuse from multiple
+ * coroutines concurrently.
  *
- * ### Example Usage
- * @code{.cpp}
- * // Assume TSelect is a poller type with methods Poll() and WakeupReadyHandles()
- * TSelect poller;
+ * @code
+ * TLoop<TDefaultPoller> loop;
+ * TResolver resolver(loop.Poller());
  *
- * // Create a resolver using the default nameserver specified in /etc/resolv.conf
- * TResolver resolver(poller);
- *
- * // Asynchronously resolve a hostname (IPv4 resolution by default)
- * TFuture<std::vector<TAddress>> futureAddresses = resolver.Resolve("example.com");
- * // Later (in an asynchronous context) use:
- * // auto addresses = co_await futureAddresses;
+ * TFuture<void> lookup = [&]() -> TFuture<void> {
+ *     auto addrs = co_await resolver.Resolve("example.com");         // A record
+ *     auto v6    = co_await resolver.Resolve("example.com", EDNSType::AAAA);
+ *     TAddress addr = co_await THostPort("example.com", 80).Resolve(resolver);
+ * }();
+ * while (!lookup.done()) loop.Step();
  * @endcode
  */
 class TResolver {
@@ -154,17 +151,17 @@ public:
     ~TResolver();
 
     /**
-     * @brief Resolves a hostname to a list of addresses.
+     * @brief Resolves a hostname to a list of IP addresses.
      *
-     * Sends a DNS query for the specified hostname. If the request type is set
-     * to EDNSType::DEFAULT, the default DNS record type (specified in the
-     * constructor) is used.
+     * If a cached result exists it is returned immediately without a network
+     * round-trip. If another coroutine is already resolving the same
+     * `{hostname, type}` pair, this call joins that in-flight query. The result
+     * vector is empty if the DNS server returned NXDOMAIN or no records.
      *
-     * @param hostname The name to be resolved.
-     * @param type The DNS record type to query. If EDNSType::DEFAULT is specified,
-     *             the default type provided to the constructor is used.
-     *
-     * @return A TFuture containing a vector of TAddress objects with the resolved addresses.
+     * @param hostname Hostname to resolve (e.g. `"example.com"`).
+     * @param type     Record type; `EDNSType::DEFAULT` uses the type passed to
+     *                 the constructor (typically `EDNSType::A`).
+     * @return Awaitable resolving to a `std::vector<TAddress>`.
      */
     TFuture<std::vector<TAddress>> Resolve(const std::string& hostname, EDNSType type = EDNSType::DEFAULT);
 
@@ -250,11 +247,30 @@ TResolver::TResolver(TAddress dnsAddr, TPoller& poller, EDNSType defaultType)
     });
 }
 
+/**
+ * @brief A `host:port` pair that resolves to a `TAddress`.
+ *
+ * If `host` is a literal IPv4 or IPv6 address, `Resolve()` returns immediately
+ * without querying DNS. Otherwise it delegates to `TResolver::Resolve()`.
+ *
+ * @code
+ * TAddress addr = co_await THostPort("example.com", 443).Resolve(resolver);
+ * TAddress ip   = co_await THostPort("127.0.0.1", 8080).Resolve(resolver); // no DNS
+ * @endcode
+ */
 class THostPort {
 public:
+    /// Parses a `"host:port"` string.
     THostPort(const std::string& hostPort);
+    /// Constructs from separate host and port values.
     THostPort(const std::string& host, int port);
 
+    /**
+     * @brief Resolves the host to a `TAddress` using the given resolver.
+     *
+     * Skips DNS if `host` is already a literal IP. Throws `std::runtime_error`
+     * if DNS returns no addresses.
+     */
     TFuture<TAddress> Resolve(TResolver& resolver) {
         char buf[16];
         if (inet_pton(AF_INET, Host.c_str(), buf) == 1 || inet_pton(AF_INET6, Host.c_str(), buf)) {
