@@ -20,20 +20,21 @@
 namespace NNet {
 
 /**
- * @struct TSslContext
- * @brief Encapsulates an OpenSSL context (SSL_CTX) with optional logging.
+ * @brief Owns an OpenSSL `SSL_CTX` and optional log callback.
  *
- * TSslContext holds a pointer to an OpenSSL SSL_CTX, which is used to configure
- * SSL/TLS parameters. It optionally accepts a logging function to report state changes
- * or errors during SSL operations.
+ * Move-only. Create via the static factory methods, then pass a reference to
+ * `TSslSocket`. The context must outlive every `TSslSocket` that uses it.
  *
- * The context can be created for client or server mode:
- *  - Use @ref Client() to create a client context.
- *  - Use @ref Server() to create a server context using certificate and key files.
- *  - Use @ref ServerFromMem() to create a server context from in-memory certificate and key data.
+ * @code
+ * // TLS client
+ * TSslContext ctx = TSslContext::Client();
  *
- * The context is movable but not copyable. Upon destruction, any associated resources
- * are released.
+ * // TLS server (PEM files)
+ * TSslContext ctx = TSslContext::Server("server.crt", "server.key");
+ *
+ * // TLS server (in-memory PEM)
+ * TSslContext ctx = TSslContext::ServerFromMem(certPem, keyPem);
+ * @endcode
  */
 struct TSslContext {
     SSL_CTX* Ctx; ///< The underlying OpenSSL context.
@@ -49,28 +50,29 @@ struct TSslContext {
     ~TSslContext();
 
     /**
-     * @brief Creates a client SSL context.
+     * @brief Creates a TLS client context (no certificate required).
      *
-     * @param logFunc Optional logging function.
-     * @return A TSslContext configured for client mode.
+     * @param logFunc Optional callback for SSL state-change messages.
      */
     static TSslContext Client(const std::function<void(const char*)>& logFunc = {});
+
     /**
-     * @brief Creates a server SSL context using certificate and key files.
+     * @brief Creates a TLS server context from PEM files on disk.
      *
-     * @param certfile Path to the certificate file.
-     * @param keyfile  Path to the key file.
-     * @param logFunc  Optional logging function.
-     * @return A TSslContext configured for server mode.
+     * @param certfile Path to the PEM certificate file (or chain).
+     * @param keyfile  Path to the PEM private key file.
+     * @param logFunc  Optional callback for SSL state-change messages.
      */
     static TSslContext Server(const char* certfile, const char* keyfile, const std::function<void(const char*)>& logFunc = {});
+
     /**
-     * @brief Creates a server SSL context from in-memory certificate and key data.
+     * @brief Creates a TLS server context from PEM data already in memory.
      *
-     * @param certfile Pointer to the certificate data in memory.
-     * @param keyfile  Pointer to the key data in memory.
-     * @param logFunc  Optional logging function.
-     * @return A TSslContext configured for server mode.
+     * Both `certfile` and `keyfile` must point to null-terminated PEM strings.
+     *
+     * @param certfile PEM certificate (or chain) in memory.
+     * @param keyfile  PEM private key in memory.
+     * @param logFunc  Optional callback for SSL state-change messages.
      */
     static TSslContext ServerFromMem(const void* certfile, const void* keyfile, const std::function<void(const char*)>& logFunc = {});
 
@@ -79,24 +81,28 @@ private:
 };
 
 /**
- * @class TSslSocket
- * @brief Implements an SSL/TLS layer on top of an underlying connection.
+ * @brief TLS layer over any connected socket, exposing the same `ReadSome`/`WriteSome` interface.
  *
- * TSslSocket wraps an existing connection (of type @c TSocket) with SSL/TLS functionality.
- * It creates a new SSL instance (via @c SSL_new()) using the provided TSslContext,
- * and sets up memory BIOs for reading (Rbio) and writing (Wbio).
+ * Takes **ownership** of the underlying socket (moved in). References the
+ * `TSslContext` — the context must outlive this object. Move-only.
  *
- * The class provides asynchronous operations for both server and client handshakes:
- *  - @ref AcceptHandshake() is used in server mode.
- *  - @ref Connect() is used in client mode.
+ * **Client usage:**
+ * @code
+ * TSslContext ctx = TSslContext::Client();
+ * TSslSocket ssl(std::move(socket), ctx);
+ * ssl.SslSetTlsExtHostName("example.com");   // SNI — call before Connect()
+ * co_await ssl.Connect(addr);
+ * ssize_t n = co_await ssl.ReadSome(buf, size);
+ * @endcode
  *
- * Once the handshake is complete, TSslSocket exposes asynchronous read and write
- * methods (@ref ReadSome() and @ref WriteSome()) that perform SSL_read() and SSL_write(),
- * using an internal I/O loop (via @ref DoIO() and @ref DoHandshake()).
+ * **Server usage:**
+ * @code
+ * TSslContext ctx = TSslContext::Server("server.crt", "server.key");
+ * TSslSocket listener(std::move(listeningSocket), ctx);
+ * auto client = co_await listener.Accept();  // TCP accept + TLS handshake
+ * @endcode
  *
- * Additionally, TSslSocket allows setting the TLS SNI (via @ref SslSetTlsExtHostName).
- *
- * @tparam TSocket The underlying socket type over which SSL/TLS is layered.
+ * @tparam TSocket Underlying connected socket type (e.g. `TDefaultPoller::TSocket`).
  */
 template<typename TSocket>
 class TSslSocket {
@@ -104,13 +110,10 @@ public:
     using TPoller = typename TSocket::TPoller;
 
     /**
-     * @brief Constructs a TSslSocket from an underlying socket and an SSL context.
+     * @brief Constructs a TSslSocket, taking ownership of the underlying socket.
      *
-     * Creates a new SSL instance using the provided context, sets up memory BIOs for
-     * I/O, and configures SSL for partial writes.
-     *
-     * @param socket An rvalue reference to the underlying connection handle.
-     * @param ctx    Reference to the TSslContext to use.
+     * @param socket Moved-in socket (TCP-connected for client; bound+listening for server).
+     * @param ctx    TLS context — must outlive this object.
      */
     TSslSocket(TSocket&& socket, TSslContext& ctx)
         : Socket(std::move(socket))
@@ -149,11 +152,7 @@ public:
 
     TSslSocket() = default;
 
-    /**
-     * @brief Destructor.
-     *
-     * Frees the SSL instance (and associated BIOs) and destroys any active handshake task.
-     */
+    /// Frees the SSL instance, associated BIOs, and any in-progress handshake coroutine.
     ~TSslSocket()
     {
         if (Ssl) { SSL_free(Ssl); }
@@ -161,23 +160,24 @@ public:
     }
 
     /**
-     * @brief Sets the TLS SNI (Server Name Indication) extension host name.
+     * @brief Sets the TLS SNI host name sent in the ClientHello.
      *
-     * This is useful for virtual hosting when connecting to servers that rely on SNI.
+     * Required for servers that host multiple certificates on one IP. Must be
+     * called **before** `Connect()`.
      *
-     * @param host The server host name.
+     * @param host The server hostname (e.g. `"example.com"`).
      */
     void SslSetTlsExtHostName(const std::string& host) {
         SSL_set_tlsext_host_name(Ssl, host.c_str());
     }
 
     /**
-     * @brief Asynchronously accepts an incoming SSL connection.
+     * @brief Accepts a TCP connection and performs the server-side TLS handshake.
      *
-     * Waits for an incoming connection on the underlying socket, wraps it in a TSslSocket,
-     * and performs the handshake.
+     * Calls `Socket.Accept()` then `AcceptHandshake()` on the resulting socket.
+     * Use this on a bound+listening `TSslSocket` in a server accept loop.
      *
-     * @return A TFuture yielding a TSslSocket representing the accepted connection.
+     * @return A fully-handshaked `TSslSocket` ready for `ReadSome`/`WriteSome`.
      */
     TFuture<TSslSocket<TSocket>> Accept() {
         auto underlying = std::move(co_await Socket.Accept());
@@ -187,11 +187,10 @@ public:
     }
 
     /**
-     * @brief Performs the server-side SSL handshake.
+     * @brief Performs the server-side TLS handshake on an already-accepted TCP socket.
      *
-     * Configures the SSL state to accept a connection, then performs the handshake asynchronously.
-     *
-     * @return A TFuture that completes when the handshake is successful.
+     * Called automatically by `Accept()`. Call directly only if you accepted the
+     * TCP connection separately and want to add TLS on top.
      */
     TFuture<void> AcceptHandshake() {
         assert(!Handshake);
@@ -200,13 +199,14 @@ public:
     }
 
     /**
-     * @brief Initiates the client-side SSL handshake.
+     * @brief TCP-connects to `address` and performs the client-side TLS handshake.
      *
-     * Connects to the remote address, sets the SSL state to connect, and performs the handshake.
+     * Call `SslSetTlsExtHostName` before this if the server requires SNI.
      *
-     * @param address  The remote address to connect to.
-     * @param deadline Optional timeout for the connection attempt.
-     * @return A TFuture that completes when the handshake is successful.
+     * @param address  Remote address to connect to.
+     * @param deadline Optional connection timeout (defaults to no timeout).
+     * @throws std::system_error on TCP connect failure or timeout.
+     * @throws std::runtime_error on TLS handshake failure.
      */
     TFuture<void> Connect(const TAddress& address, TTime deadline = TTime::max()) {
         assert(!Handshake);
@@ -216,13 +216,11 @@ public:
     }
 
     /**
-     * @brief Asynchronously reads data from the SSL connection.
+     * @brief Reads up to `size` decrypted bytes into `data`.
      *
-     * Performs SSL_read() and, if needed, loops using asynchronous I/O via DoIO() until data is available.
-     *
-     * @param data Pointer to the buffer.
-     * @param size Maximum number of bytes to read.
-     * @return A TFuture yielding the number of bytes read.
+     * Waits for the handshake to complete if it hasn't yet. Returns bytes read
+     * (>0), `0` on clean TLS shutdown, or a negative value on transient error.
+     * Throws `std::runtime_error` on fatal TLS errors.
      */
     TFuture<ssize_t> ReadSome(void* data, size_t size) {
         co_await WaitHandshake();
@@ -243,13 +241,11 @@ public:
     }
 
     /**
-     * @brief Asynchronously writes data to the SSL connection.
+     * @brief Encrypts and sends all `size` bytes from `data`.
      *
-     * Writes the full buffer in a loop using SSL_write() and asynchronous I/O until completion.
-     *
-     * @param data Pointer to the data.
-     * @param size The number of bytes to write.
-     * @return A TFuture yielding the total number of bytes written.
+     * Waits for the handshake to complete if it hasn't yet. Returns `size` on
+     * success (all bytes are always written). Throws `std::runtime_error` on
+     * TLS error or connection close.
      */
     TFuture<ssize_t> WriteSome(const void* data, size_t size) {
         co_await WaitHandshake();
@@ -274,11 +270,7 @@ public:
         co_return r;
     }
 
-    /**
-     * @brief Returns the underlying poller.
-     *
-     * @return The poller associated with the underlying socket.
-     */
+    /// Returns the poller associated with the underlying socket.
     auto Poller() {
         return Socket.Poller();
     }
