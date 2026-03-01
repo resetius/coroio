@@ -81,17 +81,38 @@ struct TBlobDeleter {
     TContextDeleter Release;
 };
 
+/**
+ * @brief Opaque message payload with Near/Far duality.
+ *
+ * Wraps an arbitrary message value for routing through the actor system.
+ * Two modes exist depending on whether the message stays in-process or
+ * crosses a node boundary:
+ *
+ * - **Near** — a live C++ object pointer. Zero-copy for local delivery.
+ *   POD types use a pool allocator; non-POD types use `new`.
+ * - **Far** — a flat byte buffer for network transmission. POD: the Near
+ *   pointer is reused as-is (bytes are already contiguous). Non-POD:
+ *   produced by `SerializeToStream` / `SerializeFarInplace`.
+ *
+ * Move-only; owns the payload via `TRawPtr`.
+ */
 struct TBlob {
     using TRawPtr = std::unique_ptr<void, TBlobDeleter>;
-    //using TRawPtr = std::shared_ptr<void>;
-    TRawPtr Data = {};
-    uint32_t Size = 0;
+    TRawPtr Data = {};   ///< Owned payload (Near: object ptr; Far: byte buffer)
+    uint32_t Size = 0;   ///< Payload size in bytes (0 for empty/sentinel blobs)
     enum class PointerType {
-        Near,  // Pointer to the object (for actor communication)
-        Far    // Serialized representation (for network transmission)
+        Near,  ///< Live object pointer — valid only within the same process
+        Far    ///< Serialized byte buffer — safe to copy across the network
     } Type;
 };
 
+/**
+ * @brief `true` if `T` qualifies for zero-overhead Near↔Far conversion.
+ *
+ * Requires `std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T>`.
+ * For POD types `SerializeFar` is a no-op and `SerializeFarInplace` writes
+ * raw bytes directly into the network buffer without any extra allocation.
+ */
 template<typename T>
 constexpr bool is_pod_v = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T>;
 
@@ -150,6 +171,17 @@ SerializeNonPodNear(TAllocator& alloc, Args&&... args)
     return TBlob{std::move(rawPtr), sizeof(T), TBlob::PointerType::Near};
 }
 
+/**
+ * @brief Creates a Near blob containing a newly constructed `T`.
+ *
+ * POD types are placed into `alloc` (arena/pool); non-POD types use `new`.
+ * The returned blob is the canonical form for local actor message delivery.
+ *
+ * @tparam T          Message type.
+ * @tparam TAllocator Allocator with `Acquire(size_t) → void*` / `Release(void*)`.
+ * @param alloc       Allocator used for POD objects (non-POD always use `new`).
+ * @param args        Constructor arguments forwarded to `T`.
+ */
 template<typename T, typename TAllocator, typename... Args>
 TBlob SerializeNear(TAllocator& alloc, Args&&... args)
 {
@@ -160,12 +192,38 @@ TBlob SerializeNear(TAllocator& alloc, Args&&... args)
     }
 }
 
+/**
+ * @brief User-provided serialization hook for non-POD message types.
+ *
+ * Specialize this function to enable non-POD messages to cross node boundaries.
+ * The default (unspecialized) template triggers a `static_assert` at compile
+ * time if a non-POD type is sent to a remote node without a specialization.
+ *
+ * Must be specialized alongside `DeserializeFromStream<T>`.
+ *
+ * @code
+ * template<>
+ * void SerializeToStream<MyMsg>(const MyMsg& msg, std::ostringstream& oss) {
+ *     oss << msg.field1 << ' ' << msg.field2;
+ * }
+ * @endcode
+ */
 template<typename T>
 void SerializeToStream(const T& obj, std::ostringstream& oss)
 {
     static_assert(sizeof(T) == 0, "Serialization not implemented for this type");
 }
 
+/**
+ * @brief Converts a Near blob to a Far (wire-safe) blob.
+ *
+ * POD: marks the existing blob as Far without copying — raw bytes are already
+ * contiguous and safe to transmit. Non-POD: calls `SerializeToStream<T>` and
+ * copies the result into a new heap buffer.
+ *
+ * @param blob Near blob to convert (moved in).
+ * @return Far blob ready for sending over the network.
+ */
 template<typename T>
 TBlob SerializeFar(TBlob blob)
 {
@@ -185,6 +243,22 @@ TBlob SerializeFar(TBlob blob)
     }
 }
 
+/**
+ * @brief Serializes a message directly into a stream buffer with a `THeader` prefix.
+ *
+ * Used by `TActorSystem::Send` when routing to a remote node. Writes
+ * `THeader + payload` into the node's outbound buffer in one contiguous
+ * region — no intermediate allocation.
+ *
+ * POD: copies raw bytes. Non-POD: calls `SerializeToStream<T>`.
+ *
+ * @tparam T       Message type.
+ * @tparam TStream Stream with `Acquire(size_t) → span<char>` / `Commit(size_t)`.
+ * @param stream    Output stream (e.g. `TNode`'s outbound buffer).
+ * @param sender    Actor ID written into the `THeader`.
+ * @param recipient Actor ID written into the `THeader`.
+ * @param args      Constructor arguments forwarded to `T`.
+ */
 template<typename T, typename TStream, typename... Args>
 void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, Args&&... args)
 {
@@ -215,6 +289,16 @@ void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, A
     }
 }
 
+/**
+ * @brief Returns a reference (or value for empty types) to `T` inside a Near blob.
+ *
+ * For types with data members: returns `T&` — zero-copy cast from `blob.Data.get()`.
+ * For empty types (no data members): returns a default-constructed `T` by value
+ * (no storage is allocated for empty messages).
+ *
+ * @param blob Near blob to read from.
+ * @return `T&` if `T` has data members; `T` by value if `T` is empty.
+ */
 template<typename T>
 auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() == 0, T, T&> {
     if constexpr (sizeof_data<T>() == 0) {
@@ -224,11 +308,35 @@ auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() =
     }
 }
 
+/**
+ * @brief User-provided deserialization hook for non-POD message types.
+ *
+ * Specialize alongside `SerializeToStream<T>` to enable non-POD messages to
+ * cross node boundaries. The default (unspecialized) template triggers a
+ * `static_assert` at compile time if called without a specialization.
+ *
+ * @code
+ * template<>
+ * void DeserializeFromStream<MyMsg>(MyMsg& msg, std::istringstream& iss) {
+ *     iss >> msg.field1 >> msg.field2;
+ * }
+ * @endcode
+ */
 template<typename T>
 void DeserializeFromStream(T& obj, std::istringstream& iss) {
     static_assert(sizeof(T) == 0, "Deserialization not implemented for this type");
 }
 
+/**
+ * @brief Deserializes a Far blob back into a `T`.
+ *
+ * POD with data members: returns `T&` — same as `DeserializeNear` (bytes are
+ * already valid C++ objects). Non-POD or empty POD: calls
+ * `DeserializeFromStream<T>` and returns `T` by value.
+ *
+ * @param blob Far blob received from the network.
+ * @return `T&` for POD types with data; `T` by value for non-POD or empty types.
+ */
 template<typename T>
 auto DeserializeFar(const TBlob& blob) -> std::conditional_t<is_pod_v<T> && (sizeof_data<T>()>0), T&, T> {
     if constexpr (is_pod_v<T>) {
