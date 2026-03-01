@@ -2,346 +2,429 @@
 
 <img src="/bench/logo.png?raw=true" width="400"/>
 
-### Guide to Using the Library
+C++23 coroutine-based async I/O library. Single-threaded event loop, zero virtual dispatch on the hot path, pluggable polling backends.
 
-#### Overview
-This library leverages C++ coroutines for asynchronous programming, providing efficient and non-blocking I/O operations. It offers a range of polling mechanisms and utilities for handling sockets and files, making it suitable for various networking and file I/O tasks.
+[![Stars](https://img.shields.io/github/stars/resetius/coroio)](https://github.com/resetius/coroio/stargazers)
+![Commits](https://img.shields.io/github/commit-activity/m/resetius/coroio)
+[![License](https://img.shields.io/github/license/resetius/coroio)](https://github.com/resetius/coroio)
 
- :star: If you find COROIO useful, please consider giving us a star on GitHub! Your support helps us continue to innovate and deliver exciting features.
+---
 
-[![Number of GitHub stars](https://img.shields.io/github/stars/resetius/coroio)](https://github.com/resetius/coroio/stargazers)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/m/resetius/coroio)
-[![GitHub license which is BSD-2-Clause license](https://img.shields.io/github/license/resetius/coroio)](https://github.com/resetius/coroio)
+## Architecture
 
-#### Key Features
-
-1. **Coroutines for Asynchronous Code**:
-   - The library uses C++ coroutines, allowing you to write asynchronous code in a more straightforward and readable manner.
-
-2. **Polling Mechanisms**:
-   - **`TSelect`**: Utilizes the `select` system call, suitable for a wide range of platforms.
-   - **`TPoll`**: Uses the `poll` system call, offering another general-purpose polling solution.
-   - **`TEPoll`**: Employs `epoll`, available exclusively on Linux systems for high-performance I/O.
-   - **`TUring`**: Integrates with `liburing` for advanced I/O operations, specific to Linux.
-   - **`TKqueue`**: Uses `kqueue`, available on FreeBSD and macOS.
-   - **`TIOCp`**: Uses IO completion ports on Windows.
-   - **`TDefaultPoll`**: Automatically selects the best polling mechanism based on the platform (TEPoll on Linux, TKqueue on macOS/FreeBSD, TIOCp on Windows).
-
-3. **Socket and File Handling**:
-   - **`TSocket`** and **`TFileHandle`**: Core entities for handling network sockets and file operations.
-   - Provide `ReadSome` and `WriteSome` methods for reading and writing data. These methods read or write up to a specified number of bytes, returning the number of bytes processed or -1 on error. A return value of 0 indicates a closed socket.
-
-4. **Utility Wrappers**:
-   - **`TByteReader`** and **`TByteWriter`**: Ensure the specified number of bytes is read or written, useful for guaranteed data transmission.
-   - **`TLineReader`**: Facilitates line-by-line reading, simplifying the handling of text-based protocols or file inputs.
-
-5. **Actor System**:
-   - Actor-based concurrency model for message-passing systems with typed behaviors and async processing.
-    - See detailed docs: [Actors on top of coroio](coroio/actors/README.md)
-
-#### Supported Operating Systems
-
-The library supports the following operating systems:
-
-- **Linux**: Fully supported with `epoll` and `liburing` for high-performance I/O operations.
-- **FreeBSD**: Supported via the `kqueue` mechanism.
-- **macOS**: Supported via the `kqueue` mechanism.
-- **Windows**: Supported using the `iocp` mechanism.
-
-#### Using the Library
-
-1. **Setup**: Include the library in your project and ensure C++ support is enabled in your compiler settings.
-
-2. **Selecting a Poller**:
-   - Choose a polling mechanism based on your platform and performance needs. For most cases, `TDefaultPoll` can automatically select the appropriate poller.
-
-3. **Implementing Network Operations**:
-   - Use `TSocket` for network communication. Initialize a socket with the desired address and use `ReadSome`/`WriteSome` for data transmission.
-   - Employ `TFileHandle` for file I/O operations with similar read/write methods.
-
-4. **Reading and Writing Data**:
-   - For basic operations, use `ReadSome` and `WriteSome`.
-   - When you need to ensure a specific amount of data is transmitted, use `TByteReader` or `TByteWriter`.
-   - For reading text files or protocols, `TLineReader` offers a convenient way to process data line by line.
-
-#### Example
-
-```cpp
-// Example of creating a socket and reading/writing data
-TSocket socket{/* initialize with poller */};
-// Writing data
-socket.WriteSome(data, dataSize);
-// Reading data
-socket.ReadSome(buffer, bufferSize);
+```
+TLoop<TPoller>
+  └── TPoller                    ← TEPoll | TKqueue | TIOCp | TUring | TPoll | TSelect
+        ├── TSocket              ← async TCP/UDP socket
+        ├── TFileHandle          ← async file descriptor
+        └── TPollerBase          ← timers, Sleep(), Yield(), AddTimer()
 ```
 
-#### Best Practices
+`TDefaultPoller` resolves to `TEPoll` on Linux, `TKqueue` on macOS/FreeBSD, `TIOCp` on Windows.
 
-- Choose the right poller for your platform and performance requirements.
-- Always check the return values of `ReadSome` and `WriteSome` to handle partial reads/writes and errors appropriately.
-- Use the utility wrappers (`TByteReader`, `TByteWriter`, `TLineReader`) to simplify common I/O patterns.
+All networking types are obtained as `TPoller::TSocket` / `TPoller::TFileHandle` so they bind to the correct backend at compile time.
 
-### Echo Client Example Using `TLineReader`, `TByteReader`, and `TByteWriter`
+### I/O primitives
+
+| Type | Description |
+|---|---|
+| `TSocket` | Async network socket. `Connect`, `Accept`, `Bind`, `Listen`, `ReadSome`, `WriteSome` |
+| `TFileHandle` | Async file descriptor (including stdin/stdout). Same `ReadSome`/`WriteSome` interface |
+| `TByteReader(sock)` | Reads exactly N bytes; `ReadUntil(delim)` for delimiter-terminated reads |
+| `TByteWriter(sock)` | Writes exactly N bytes |
+| `TLineReader(fd, maxSize)` | Line-by-line from a circular buffer → `TLine{Part1, Part2}` |
+
+`ReadSome`/`WriteSome` return bytes transferred, `0` on close, `-1` on transient error.
+`TLine` has two parts because the internal circular buffer may wrap around.
+
+---
+
+## Coroutine types
+
+```
+TVoidTask           fire-and-forget   cannot be co_await-ed, self-destructs, swallows exceptions
+TFuture<void>       owned task        can be co_await-ed, propagates exceptions, RAII handle lifetime
+TFuture<T>          owned task        same + carries a return value of type T
+```
+
+**`TVoidTask`** — detached coroutine. The caller does not own it; it runs independently and destroys itself on completion. Exceptions are silently dropped. Use for spawned handlers that outlive their creator (e.g. per-connection tasks in an accept loop).
+
+**`TFuture<T>`** — owned coroutine. The caller holds the handle. `co_await future` suspends the caller until the coroutine finishes, then returns `T` (or rethrows a stored exception). `future.done()` polls completion without suspending. The handle is destroyed in `~TFuture`.
+
+```cpp
+// TVoidTask: spawn and forget — no co_await possible
+TVoidTask handle_connection(TSocket sock) {
+    char buf[4096]; ssize_t n;
+    while ((n = co_await sock.ReadSome(buf, sizeof(buf))) > 0)
+        co_await sock.WriteSome(buf, n);
+    // exceptions here are swallowed
+}
+
+// TFuture<T>: await the result
+TFuture<int> read_int(TSocket& sock) {
+    int v; co_await TByteReader(sock).Read(&v, sizeof(v));
+    co_return v;
+}
+
+TFuture<void> use_it(TSocket& sock) {
+    int v = co_await read_int(sock);   // suspends until read_int finishes
+    // exception from read_int propagates here
+}
+```
+
+**Running a `TFuture` from `main`** — drive the loop until `.done()`:
+
+```cpp
+int main() {
+    NNet::TInitializer init;
+    TLoop<TDefaultPoller> loop;
+    TFuture<void> task = my_coroutine(loop.Poller(), ...);
+    while (!task.done())
+        loop.Step();
+}
+```
+
+**Running a `TVoidTask` from `main`** — the task is detached, so drive the loop by another condition:
+
+```cpp
+int main() {
+    NNet::TInitializer init;
+    TLoop<TDefaultPoller> loop;
+    server(loop.Poller(), TAddress{"::", 8888});  // returns TVoidTask, immediately detached
+    loop.Loop();                                   // runs forever (until loop.Stop())
+}
+```
+
+### Combining futures
+
+```cpp
+// Wait for all — sequentially awaits each future in order
+TFuture<std::vector<int>> f = All(std::move(futures));   // TFuture<vector<T>>
+TFuture<void>             f = All(std::move(void_futures));
+
+// Wait for any — resumes when the first one finishes
+TFuture<int>  f = Any(std::move(futures));
+TFuture<void> f = Any(std::move(void_futures));
+
+// Transform a result without co_await at call site
+TFuture<std::string> f = read_int(sock).Apply([](int v) { return std::to_string(v); });
+
+// Discard the return value
+TFuture<void> f = read_int(sock).Ignore();
+
+// Run a continuation after a void future
+TFuture<void> f = wait_for_event().Accept([] { cleanup(); });
+```
+
+---
+
+## Usage
+
+Include `<coroio/all.hpp>`.
+
+### Echo server
 
 ```cpp
 #include <coroio/all.hpp>
-#include <iostream>
-#include <string>
-#include <vector>
-
 using namespace NNet;
 
+template<typename TSocket>
+TVoidTask client_handler(TSocket socket) {
+    char buf[4096]; ssize_t n;
+    while ((n = co_await socket.ReadSome(buf, sizeof(buf))) > 0)
+        co_await socket.WriteSome(buf, n);
+}
+
 template<typename TPoller>
-TFuture<void> client(TPoller& poller, TAddress addr)
-{
-    static constexpr int maxLineSize = 4096;
-    using TSocket = typename TPoller::TSocket;
-    using TFileHandle = typename TPoller::TFileHandle;
-    std::vector<char> in(maxLineSize);
-
-    try {
-        TFileHandle input{0, poller}; // stdin
-        TSocket socket{poller, addr.Domain()};
-        TLineReader lineReader(input, maxLineSize);
-        TByteWriter byteWriter(socket);
-        TByteReader byteReader(socket);
-
-        co_await socket.Connect(addr);
-        while (auto line = co_await lineReader.Read()) {
-            co_await byteWriter.Write(line);
-            co_await byteReader.Read(in.data(), line.Size());
-            std::cout << "Received: " << std::string_view(in.data(), line.Size()) << "\n";
-        }
-    } catch (const std::exception& ex) {
-        std::cout << "Exception: " << ex.what() << "\n";
-    }
-
-    co_return;
+TVoidTask server(TPoller& poller, TAddress addr) {
+    typename TPoller::TSocket sock(poller, addr.Domain());
+    sock.Bind(addr); sock.Listen();
+    while (true)
+        client_handler(co_await sock.Accept());
 }
 
 int main() {
-    // Initialize your poller (e.g., TSelect, TEpoll)
-    // ...
-
-    // Run the Echo Client
-    // ...
+    NNet::TInitializer init;
+    TLoop<TDefaultPoller> loop;
+    server(loop.Poller(), TAddress{"::", 8888});
+    loop.Loop();
 }
 ```
 
-#### Key Points of the Example
-
-1. **Line Reading**:
-   - `TLineReader` is used to read lines from standard input. It handles lines split into two parts (`Part1` and `Part2`) due to the internal use of a fixed-size circular buffer.
-
-2. **Data Writing**:
-   - `TByteWriter` is utilized to write the line parts to the socket, ensuring that the entire line is sent to the server.
-
-3. **Data Reading**:
-   - `TByteReader` reads the server's response into a buffer, which is then printed to the console.
-
-4. **Socket Connection**:
-   - The `TSocket` is connected to the server at "127.0.0.1" on port 8000.
-
-5. **Processing Loop**:
-   - The loop continues reading lines from standard input and echoes back the server's response until the input stream ends.
-
-### Actor System Example
-
-See detailed docs: [Actors on top of coroio](coroio/actors/README.md)
-
-The actor system provides message-passing concurrency with typed behaviors. Here's a simple counter actor example:
+### Echo client (stdin → server → stdout)
 
 ```cpp
-#include <coroio/all.hpp>
-#include <coroio/actors/actor.hpp>
-#include <iostream>
-
-using namespace NNet;
-using namespace NNet::NActors;
-
-// Define message types
-struct IncrementMessage {
-    static constexpr TMessageId MessageId = 100;
-    int value;
-};
-
-struct GetCountMessage {
-    static constexpr TMessageId MessageId = 101;
-};
-
-struct CountResponseMessage {
-    static constexpr TMessageId MessageId = 102;
-    int count;
-};
-
-// Simple synchronous actor
-class CounterActor : public IActor {
-private:
-    int counter_ = 0;
-
-public:
-    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
-        if (messageId == IncrementMessage::MessageId) {
-            auto message = DeserializeNear<IncrementMessage>(blob);
-            counter_ += message.value;
-            std::cout << "Counter incremented by " << message.value
-                     << ", new value: " << counter_ << "\n";
-        } else if (messageId == GetCountMessage::MessageId) {
-            ctx->Send(ctx->Sender(), CountResponseMessage{counter_});
-        }
-    }
-};
-
-// Behavior-based actor with typed message handling
-class BehaviorCounterActor : public IBehaviorActor,
-                             public TBehavior<BehaviorCounterActor,
-                                            IncrementMessage,
-                                            GetCountMessage>
-{
-private:
-    int counter_ = 0;
-
-public:
-    BehaviorCounterActor() {
-        Become(this);
-    }
-
-    void Receive(IncrementMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
-        counter_ += msg.value;
-        std::cout << "Behavior counter: " << counter_ << "\n";
-    }
-
-    TFuture<void> Receive(GetCountMessage&& msg, TBlob blob, TActorContext::TPtr ctx) {
-        // Async response with delay
-        co_await ctx->Sleep(std::chrono::milliseconds(100));
-        ctx->Send(ctx->Sender(), CountResponseMessage{counter_});
-    }
-
-    void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {
-        std::cout << "Unknown message: " << messageId << "\n";
-    }
-};
-
 template<typename TPoller>
-TFuture<void> actorExample(TPoller& poller) {
-    TActorSystem actorSystem;
+TFuture<void> client(TPoller& poller, TAddress addr) {
+    using TSocket     = typename TPoller::TSocket;
+    using TFileHandle = typename TPoller::TFileHandle;
+    char in[4096];
 
-    // Register actors
-    auto counterActor = actorSystem.Register(std::make_unique<CounterActor>());
-    auto behaviorActor = actorSystem.Register(std::make_unique<BehaviorCounterActor>());
+    TFileHandle input{0, poller};          // stdin
+    TSocket socket{poller, addr.Domain()};
+    TLineReader  lineReader(input, 4096);
+    TByteWriter  byteWriter(socket);
+    TByteReader  byteReader(socket);
 
-    // Send messages
-    actorSystem.Send(counterActor, IncrementMessage{5});
-    actorSystem.Send(counterActor, IncrementMessage{10});
-    actorSystem.Send(behaviorActor, IncrementMessage{3});
-
-    // Request-response pattern would require additional setup
-    // This is a basic fire-and-forget example
-
-    co_return;
+    co_await socket.Connect(addr, TClock::now() + std::chrono::seconds(1));
+    while (auto line = co_await lineReader.Read()) {
+        co_await byteWriter.Write(line);
+        co_await byteReader.Read(in, line.Size());
+        std::cout << std::string_view(in, line.Size());
+    }
 }
 ```
 
-#### Key Points of the Actor Example
+### Selecting a backend explicitly
 
-1. **Message Definition**:
-   - Each message type has a unique `MessageId` constant for identification.
-   - Messages are serialized/deserialized automatically by the system.
+```cpp
+TLoop<TEPoll>  loop;   // Linux epoll
+TLoop<TUring>  loop;   // Linux io_uring
+TLoop<TKqueue> loop;   // macOS / FreeBSD
+TLoop<TIOCp>   loop;   // Windows IOCP
+TLoop<TSelect> loop;   // portable fallback
+```
 
-2. **Simple Actor**:
-   - `CounterActor` inherits from `IActor` and implements synchronous message handling.
-   - All message processing happens in the `Receive` method with manual message type checking.
+---
 
-3. **Behavior-Based Actor**:
-   - `BehaviorCounterActor` uses typed behaviors for cleaner message handling.
-   - Each message type gets its own `Receive` method with automatic deserialization.
-   - Supports both synchronous (`void`) and asynchronous (`TFuture<void>`) message handlers.
+## Utilities
 
-4. **Actor System**:
-   - Actors are registered with the system and receive unique IDs.
-   - Messages are sent using actor IDs and message objects.
+### DNS (`<coroio/dns/resolver.hpp>`)
+
+```
+TResolvConf          reads /etc/resolv.conf (or any istream) → .Nameservers
+TResolver(poller)    async DNS over UDP; caches results; retries on timeout
+THostPort(host,port) resolves hostname or passes through a literal IP
+```
+
+```cpp
+TResolver resolver(loop.Poller());                          // uses /etc/resolv.conf
+
+auto addrs = co_await resolver.Resolve("example.com");      // A record (IPv4)
+auto addrs = co_await resolver.Resolve("example.com", EDNSType::AAAA); // IPv6
+
+// THostPort skips DNS for literal IPs
+TAddress addr = co_await THostPort("example.com", 80).Resolve(resolver);
+```
+
+`TResolver` lives for the duration of the loop and handles multiple concurrent requests; call `Resolve` from multiple coroutines simultaneously.
+
+---
+
+### HTTP server (`<coroio/http/httpd.hpp>`)
+
+```
+TWebServer<TSocket>          accept loop + per-connection handler
+IRouter                      implement HandleRequest(TRequest&, TResponse&)
+TRequest                     method, URI, headers, body (Content-Length or chunked)
+TResponse                    SetStatus, SetHeader, SendHeaders, WriteBodyFull / WriteBodyChunk
+TUri                         path, query parameters, fragment
+```
+
+```cpp
+struct MyRouter : NNet::IRouter {
+    TFuture<void> HandleRequest(TRequest& req, TResponse& res) override {
+        res.SetStatus(200);
+        res.SetHeader("Content-Type", "text/plain");
+        co_await res.SendHeaders();
+        co_await res.WriteBodyFull("hello");
+        // or streaming: co_await res.WriteBodyChunk(data, size);
+    }
+};
+
+// startup
+using TSocket = TDefaultPoller::TSocket;
+TLoop<TDefaultPoller> loop;
+TSocket sock(loop.Poller(), addr.Domain());
+sock.Bind(addr); sock.Listen();
+MyRouter router;
+TWebServer<TSocket> server(std::move(sock), router);
+server.Start();
+loop.Loop();
+```
+
+Reading the request body:
+```cpp
+std::string body = co_await req.ReadBodyFull();        // slurp entire body
+ssize_t n = co_await req.ReadBodySome(buf, size);      // streaming
+```
+
+---
+
+### WebSocket (`<coroio/ws/ws.hpp>`)
+
+`TWebSocket<TSocket>` wraps any connected socket with the WebSocket framing layer. Client side only (server upgrade not included). Text frames only.
+
+```cpp
+typename TPoller::TSocket sock(poller, addr.Domain());
+co_await sock.Connect(addr);
+
+TWebSocket ws(sock);
+co_await ws.Connect("example.com", "/chat");   // HTTP upgrade handshake
+
+co_await ws.SendText("hello");
+std::string_view msg = co_await ws.ReceiveText();
+```
+
+`TWebSocket` holds a reference to the socket — the socket must outlive it.
+
+---
+
+### SSL/TLS (`<coroio/ssl.hpp>`, requires OpenSSL)
+
+```
+TSslContext::Client(logFn)                    client context
+TSslContext::Server(certfile, keyfile, logFn) server context (PEM files)
+TSslContext::ServerFromMem(cert*, key*, logFn) server context (in-memory PEM)
+TSslSocket<TSocket>(socket, ctx)              TLS layer; same ReadSome/WriteSome interface
+```
+
+```cpp
+// TLS client
+TSslContext ctx = TSslContext::Client();
+TSslSocket ssl(std::move(socket), ctx);
+ssl.SslSetTlsExtHostName("example.com");  // SNI
+co_await ssl.Connect(addr);
+ssize_t n = co_await ssl.ReadSome(buf, size);
+
+// TLS server
+TSslContext ctx = TSslContext::Server("server.crt", "server.key");
+TSslSocket ssl(std::move(accepted_socket), ctx);
+co_await ssl.AcceptHandshake();
+```
+
+`TSslSocket` is detected by presence of `<openssl/bio.h>` at compile time (`HAVE_OPENSSL`). `TWebSocket` over TLS works by wrapping `TSslSocket` instead of a plain socket.
+
+---
+
+### Pipe (`<coroio/pipe/pipe.hpp>`, Linux/macOS only)
+
+Spawns a child process and exposes its stdin/stdout/stderr as async handles.
+
+```cpp
+TPipe pipe(poller, "/bin/cat", {});           // exe + args
+TPipe pipe(poller, "/bin/bash", {"-c", "..."}, /*stderrToStdout=*/true);
+
+co_await pipe.WriteSome(data, size);          // write to child stdin
+ssize_t n = co_await pipe.ReadSome(buf, sz); // read child stdout
+ssize_t n = co_await pipe.ReadSomeErr(buf, sz); // read child stderr (if not merged)
+
+pipe.CloseWrite();   // send EOF to child
+int exit_code = pipe.Wait();
+int pid = pipe.Pid();
+```
+
+---
+
+## Actor System
+
+Full docs: [Actors on top of coroio](coroio/actors/README.md)
+
+```
+TActorSystem
+  ├── Register(unique_ptr<IActor>) → TActorId
+  ├── Send<T>(to, args...)
+  └── AddNode(nodeId, unique_ptr<INode>)  ← distributed; messages go over network
+```
+
+Each actor runs on one thread — no synchronization needed. Messages to remote nodes are serialized and sent asynchronously.
+
+**Two actor styles:**
+
+`IActor` — manual dispatch:
+```cpp
+void Receive(TMessageId id, TBlob blob, TActorContext::TPtr ctx) override {
+    if (id == TMyMsg::MessageId) {
+        auto msg = DeserializeNear<TMyMsg>(blob);
+        ctx->Send<TReply>(ctx->Sender(), ...);
+    }
+}
+```
+
+`IBehaviorActor + TBehavior<Derived, Msg1, Msg2, ...>` — typed dispatch, switchable behavior:
+```cpp
+struct MyActor : IBehaviorActor, TBehavior<MyActor, TPing, TMessage> {
+    MyActor() { Become(this); }
+
+    void Receive(TPing&&, TBlob, TActorContext::TPtr ctx) {
+        ctx->Schedule<TPing>(steady_clock::now() + 1s, ctx->Self(), ctx->Self());
+    }
+    void Receive(TMessage&& msg, TBlob, TActorContext::TPtr ctx) { /* ... */ }
+};
+```
+
+**`TActorContext` API:**
+
+| Method | Description |
+|---|---|
+| `ctx->Send<T>(to, args...)` | fire-and-forget |
+| `ctx->Forward<T>(to, args...)` | forward, preserving sender |
+| `ctx->Schedule<T>(when, from, to, args...)` | delayed send |
+| `ctx->Cancel(event)` | cancel a scheduled message |
+| `ctx->Ask<T>(to, question)` | request-reply, returns future |
+| `ctx->Sleep(duration)` | coroutine sleep |
+| `TPoison` | terminates the receiving actor |
+
+**POD messages** serialize automatically. Non-POD types need:
+```cpp
+template<> void SerializeToStream<T>(const T&, std::ostringstream&);
+template<> void DeserializeFromStream<T>(T&, std::istringstream&);
+```
+
+---
 
 ## Benchmark
 
-The benchmark methodology was taken from the [libevent library](https://libevent.org).
+Methodology from [libevent](https://libevent.org). Two tests: (1) one active connection, (2) 100 chained connections doing 1000 writes each.
 
-There are two benchmarks. The first one measures how long it takes to serve one active connection and exposes scalability issues of traditional interfaces like select or poll. The second benchmark measures how long it takes to serve one hundred active connections that chain writes to new connections until thousand writes and reads have happened. It exercises the event loop several times.
-
-Performance comparison using different event notification mechansims in Libevent and coroio as follows.
-
-* CPU i7-12800H
-* Ubuntu 23.04
-* clang 16
-* libevent master 4c993a0e7bcd47b8a56514fb2958203f39f1d906 (Tue Apr 11 04:44:37 2023 +0000)
+**i7-12800H · Ubuntu 23.04 · clang 16 · libevent 4c993a0**
 
 <img src="/bench/bench_12800H.png?raw=true" width="400"/><img src="/bench/bench_12800H_100.png?raw=true" width="400"/>
 
-
-* CPU i5-11400F
-* Ubuntu 23.04, WSL2, kernel 6.1.21.1-microsoft-standard-WSL2+
+**i5-11400F · Ubuntu 23.04 · WSL2 · kernel 6.1.21.1-microsoft-standard-WSL2+**
 
 <img src="/bench/bench_11400F.png?raw=true" width="400"/><img src="/bench/bench_11400F_100.png?raw=true" width="400"/>
 
-* CPU Apple M1
-* MacBook Air M1 16G
-* MacOS 12.6.3
+**Apple M1 · MacBook Air 16G · macOS 12.6.3**
 
 <img src="/bench/bench_M1.png?raw=true" width="400"/><img src="/bench/bench_M1_100.png?raw=true" width="400"/>
 
 ## Actor Benchmark
 
-The actor benchmark measures message-passing throughput in a ring topology where actors forward messages to the next actor in the ring, counting messages that pass through the first actor (seed messages are not counted).
+Ring topology: N actors forwarding a message around the ring M times. Seed messages not counted.
 
-The benchmark runs in two modes:
-- **Local mode**: 100 actors created within a single process
-- **Distributed mode**: 10 separate processes, each containing 1 actor
+**i5-11400F · Ubuntu 25.04**
 
-```scala
-class RingActor(idx: Int, N: Int, M: Int, ring: ListBuffer[ActorRef]) extends Actor {
-  private var remain = M
+Local ring (100 actors, batch 1024):
 
-  def receive: Receive = {
-    case Next =>
-      if (!(idx == 0 && remain == 0)) {
-        // Forward the message to the next actor
-        ring((idx + 1) % N) ! Next
+| Framework | msg/s |
+|---|---|
+| Akka | 473,966 |
+| **Coroio** | **442,151** |
+| Caf | 302,930 |
+| Ydb/actors | 151,972 |
 
-        if (idx == 0) {
-          if (sender() != context.system.deadLetters) {
-            remain -= 1
-          }
-        }
-      }
-  }
-}
-```
+Distributed ring (10 processes, batch 1024, payload 0 bytes):
 
-### Performance Results
+| Framework | msg/s |
+|---|---|
+| **Coroio** | **1,137,790** |
+| Ydb/actors | 182,525 |
+| Caf | 55,540 |
+| Akka | 5,765 |
 
-* CPU i5-11400F
-* Ubuntu 25.04
+Distributed ring (10 processes, batch 1024, payload 1024 bytes):
 
-**Local ring (100 actors, 1024 batch size):**
-- Akka: 473,966 msg/s
-- Coroio: 442,151 msg/s
-- Caf: 302,930 msg/s
-- Ydb/actors: 151,972 msg/s
+| Framework | msg/s |
+|---|---|
+| **Coroio** | **860,188** |
+| Ydb/actors | 96,372 |
 
-**Distributed ring (10 actors, 1024 batch size, 0 payload size):**
-- Coroio: 1,137,790 msg/s
-- Ydb/actors: 182,525 msg/s
-- Caf: 55,540 msg/s
-- Akka: 5,765 msg/s
+---
 
-**Distributed ring (10 actors, 1024 batch size, 1024 payload size):**
-- Coroio: 860,188 msg/s
-- Ydb/actors: 96,372 msg/s
+## Projects Using coroio
 
-### Projects Using coroio
+- **miniraft-cpp** — Raft consensus algorithm. [GitHub](https://github.com/resetius/miniraft-cpp)
+- **qumir** — Experimental language with Russian keywords; coroio as web server for Playground. [GitHub](https://github.com/resetius/qumir)
 
-- **miniraft-cpp**: A minimal implementation of the Raft consensus algorithm, leveraging coroio for efficient and asynchronous I/O operations. [View on GitHub](https://github.com/resetius/miniraft-cpp).
-- **qumir**: Qumir is a tiny experimental programming language and toolchain with Russian keywords, inspired by KUMIR and the educational language designed by Academician Andrei P. Ershov. Coroio used as a web server for Playground. [View on GitHub](https://github.com/resetius/qumir).
-
-
-### Official Site
 [Official Site](https://coroio.dev/)
