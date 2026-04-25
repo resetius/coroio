@@ -5,6 +5,17 @@ namespace NNet
 
 namespace {
 
+const std::unordered_map<int, std::string_view> kHttpReasons = {
+    {200, "OK"}, {201, "Created"}, {204, "No Content"},
+    {301, "Moved Permanently"}, {302, "Found"}, {304, "Not Modified"},
+    {400, "Bad Request"}, {401, "Unauthorized"}, {403, "Forbidden"},
+    {404, "Not Found"}, {405, "Method Not Allowed"}, {408, "Request Timeout"},
+    {409, "Conflict"}, {413, "Payload Too Large"}, {422, "Unprocessable Entity"},
+    {429, "Too Many Requests"},
+    {500, "Internal Server Error"}, {501, "Not Implemented"},
+    {502, "Bad Gateway"}, {503, "Service Unavailable"},
+};
+
 std::string UrlDecode(const std::string& str) {
     std::string result;
     result.reserve(str.size());
@@ -309,7 +320,9 @@ TFuture<void> TResponse::SendHeaders() {
     }
     HeadersSent_ = true;
 
-    std::string headerStr = "HTTP/1.1 " + std::to_string(StatusCode_) + " OK\r\n";
+    auto it = kHttpReasons.find(StatusCode_);
+    std::string_view reason = it != kHttpReasons.end() ? it->second : "Unknown";
+    std::string headerStr = "HTTP/1.1 " + std::to_string(StatusCode_) + " " + std::string(reason) + "\r\n";
     for (const auto& header : Headers_) {
         headerStr += header.first + ": " + header.second + "\r\n";
     }

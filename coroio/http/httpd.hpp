@@ -10,6 +10,8 @@
 #include <sstream>
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
+#include <unordered_map>
 
 namespace NNet
 {
