@@ -353,10 +353,9 @@ TFuture<void> TResponse::WriteBodyChunk(const char* data, size_t size) {
     // if chunked => send chunk size + \r\n + data + \r\n
     // else => send part of body
     if (Chunked_) {
-        std::ostringstream oss;
-        oss << std::hex << size;
-        std::string chunkHeader = oss.str() + "\r\n";
-        co_await CompleteWrite(chunkHeader.data(), chunkHeader.size());
+        char chunkHeader[24];
+        int n = std::snprintf(chunkHeader, sizeof(chunkHeader), "%zx\r\n", size);
+        co_await CompleteWrite(chunkHeader, n);
         if (size > 0) {
             co_await CompleteWrite(data, size);
         }
