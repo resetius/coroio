@@ -197,25 +197,6 @@ struct IRouter {
     virtual TFuture<void> HandleRequest(TRequest& request, TResponse& response) = 0;
 };
 
-class THelloWorldRouter : public IRouter {
-public:
-    TFuture<void> HandleRequest(TRequest& request, TResponse& response) override {
-        if (request.Uri().Path() == "/") {
-            response.SetStatus(200);
-            response.SetHeader("Content-Type", "text/plain");
-            response.SetHeader("Connection", "close");
-            co_await response.SendHeaders();
-            co_await response.WriteBodyFull("Hello, World!");
-        } else {
-            response.SetStatus(404);
-            response.SetHeader("Content-Type", "text/plain");
-            response.SetHeader("Connection", "close");
-            co_await response.SendHeaders();
-            co_await response.WriteBodyFull("Not Found");
-        }
-    }
-};
-
 /**
  * @brief HTTP/1.1 server that accepts connections and dispatches to a router.
  *
