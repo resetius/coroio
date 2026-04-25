@@ -8,6 +8,7 @@
 #include <coroio/arena.hpp>
 #include <coroio/sockutils.hpp>
 
+#include <functional>
 #include <stack>
 
 #ifdef Yield
@@ -105,9 +106,10 @@ public:
      * @param nodeId  This node's identifier (default 1). Must be unique across
      *                all processes in a distributed cluster.
      */
-    TActorSystem(TPollerBase* poller, int nodeId = 1)
+    TActorSystem(TPollerBase* poller, int nodeId = 1, std::function<void(const std::string&)> logger = {})
         : Poller(poller)
         , NodeId_(nodeId)
+        , Logger_(std::move(logger))
     { }
 
     ~TActorSystem();
@@ -158,7 +160,7 @@ public:
         } else {
             auto& maybeRemote = Nodes[recipient.NodeId()];
             if (!maybeRemote.Node) {
-                std::cerr << "Cannot send message to actor on different node: " << recipient.ToString() << "\n";
+                if (Logger_) Logger_("Cannot send message to actor on different node: " + recipient.ToString());
                 return;
             }
             SerializeFarInplace<T>(*maybeRemote.Node, sender, recipient, std::forward<Args>(args)...);
@@ -317,17 +319,15 @@ private:
             if (node) {
                 node->Drain();
             } else {
-                std::cerr << "Node with id: " << id << " is not registered\n";
+                if (Logger_) Logger_("Node with id: " + std::to_string(id) + " is not registered");
             }
         }
     }
 
     template<typename TSocket, typename TEnvelopeReader>
     TVoidTask InboundServe(TSocket socket) {
-        std::cerr << "InboundServe started\n";
         while (true) {
             auto client = co_await socket.Accept();
-            std::cerr << "Accepted\n";
             InboundConnection<TSocket, TEnvelopeReader>(std::move(client));
         }
         co_return;
@@ -360,7 +360,7 @@ private:
                 size_t bytesProcessed = 0;
                 while (auto envelope = envelopeReader.Pop()) {
                     if (envelope->Recipient.NodeId() != NodeId_) [[unlikely]] {
-                        std::cerr << "Received message for different node: " << envelope->Recipient.ToString() << "\n";
+                        if (Logger_) Logger_("Received message for different node: " + envelope->Recipient.ToString());
                         continue;
                     }
 
@@ -374,7 +374,7 @@ private:
                 co_await Poller->Yield();
             }
         } catch (const std::exception& e) {
-            std::cerr << "Error in InboundConnection: " << e.what() << "\n";
+            if (Logger_) Logger_(std::string("Error in InboundConnection: ") + e.what());
         }
     }
 
@@ -435,6 +435,7 @@ private:
     THandle YieldCoroutine_{};
     THandle ScheduleCoroutine_{};
     bool IsYielding_ = true;
+    std::function<void(const std::string&)> Logger_;
 
     struct TNodeState {
         std::unique_ptr<INode> Node;
