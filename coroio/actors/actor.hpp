@@ -308,6 +308,7 @@ public:
      */
     TAsync StartAsync();
 
+    static void* operator new(size_t) = delete;
     static void* operator new(size_t size, TActorSystem* actorSystem);
     static void operator delete(void* ptr);
 
