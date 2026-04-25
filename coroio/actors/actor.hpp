@@ -1,5 +1,6 @@
 #pragma once
 
+#include <assert.h>
 #include <memory>
 #include <coroio/corochain.hpp>
 #include "messages.hpp"
@@ -605,11 +606,12 @@ public:
      * @param ctx Actor context for communication
      */
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        assert(CurrentBehavior_);
         CurrentBehavior_->Receive(messageId, std::move(blob), std::move(ctx));
     }
 
 private:
-    IBehavior* CurrentBehavior_;
+    IBehavior* CurrentBehavior_ = nullptr;
 };
 
 } // namespace NActors
