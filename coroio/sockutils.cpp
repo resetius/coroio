@@ -28,7 +28,7 @@ TLine TLineSplitter::Pop() {
         Size -= end.size() + p2 + 1;
         return TLine { end, begin.substr(0, p2 + 1) };
     } else {
-        RPos += p1 + 1;
+        RPos = (RPos + p1 + 1) % Cap;
         Size -= p1 + 1;
         return TLine { end.substr(0, p1 + 1), {} };
     }
@@ -70,7 +70,7 @@ TLine TZeroCopyLineSplitter::Pop() {
         Size -= end.size() + p2 + 1;
         return TLine { end, begin.substr(0, p2 + 1) };
     } else {
-        RPos += p1 + 1;
+        RPos = (RPos + p1 + 1) % Cap;
         Size -= p1 + 1;
         return TLine { end.substr(0, p1 + 1), {} };
     }
