@@ -753,6 +753,34 @@ void test_zero_copy_line_splitter(void**) {
     }
 }
 
+void test_line_splitter_wrap(void**) {
+    TLineSplitter splitter(4); // Cap=8
+    splitter.Push("aaa\n", 4);
+    splitter.Pop();
+    splitter.Push("bbb\n", 4);
+    splitter.Pop(); // RPos hits Cap without fix
+
+    splitter.Push("cc\n", 3);
+    auto l = splitter.Pop();
+    assert_true(static_cast<bool>(l));
+    std::string result = std::string(l.Part1) + std::string(l.Part2);
+    assert_string_equal("cc\n", result.data());
+}
+
+void test_zero_copy_line_splitter_wrap(void**) {
+    TZeroCopyLineSplitter splitter(4); // Cap=8
+    splitter.Push("aaa\n", 4);
+    splitter.Pop();
+    splitter.Push("bbb\n", 4);
+    splitter.Pop(); // RPos hits Cap without fix
+
+    splitter.Push("cc\n", 3);
+    auto l = splitter.Pop();
+    assert_true(static_cast<bool>(l));
+    std::string result = std::string(l.Part1) + std::string(l.Part2);
+    assert_string_equal("cc\n", result.data());
+}
+
 void test_self_id(void**) {
     void* id;
     TFuture<void> h = [](void** id) -> TFuture<void> {
@@ -1308,6 +1336,8 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_timespec);
     ADD_TEST(cmocka_unit_test, test_line_splitter);
     ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter);
+    ADD_TEST(cmocka_unit_test, test_line_splitter_wrap);
+    ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter_wrap);
     ADD_TEST(cmocka_unit_test, test_self_id);
     ADD_TEST(cmocka_unit_test, test_resolv_nameservers);
     ADD_TEST(my_unit_poller, test_listen);
