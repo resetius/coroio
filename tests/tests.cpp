@@ -781,6 +781,37 @@ void test_zero_copy_line_splitter_wrap(void**) {
     assert_string_equal("cc\n", result.data());
 }
 
+template<typename TPoller>
+void test_any_simultaneous(void**) {
+    TLoop<TPoller> loop;
+
+    int fds1[2], fds2[2];
+    assert_int_equal(pipe(fds1), 0);
+    assert_int_equal(pipe(fds2), 0);
+    assert_int_equal(write(fds1[1], "x", 1), 1);
+    assert_int_equal(write(fds2[1], "x", 1), 1);
+
+    auto read_one = [](TPoller& poller, int fd) -> TFuture<int> {
+        typename TPoller::TFileHandle fh(fd, poller);
+        char buf[1];
+        co_return co_await fh.ReadSomeYield(buf, 1);
+    };
+
+    TFuture<void> task = [&](TPoller& poller) -> TFuture<void> {
+        std::vector<TFuture<int>> futures;
+        futures.push_back(read_one(poller, fds1[0]));
+        futures.push_back(read_one(poller, fds2[0]));
+        int r = co_await Any(std::move(futures));
+        assert_true(r == 1 || r == 2);
+    }(loop.Poller());
+
+    while (!task.done()) {
+        loop.Step();
+    }
+    close(fds1[1]);
+    close(fds2[1]);
+}
+
 void test_self_id(void**) {
     void* id;
     TFuture<void> h = [](void** id) -> TFuture<void> {
@@ -1338,6 +1369,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter);
     ADD_TEST(cmocka_unit_test, test_line_splitter_wrap);
     ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter_wrap);
+    ADD_TEST(my_unit_poller, test_any_simultaneous);
     ADD_TEST(cmocka_unit_test, test_self_id);
     ADD_TEST(cmocka_unit_test, test_resolv_nameservers);
     ADD_TEST(my_unit_poller, test_listen);

@@ -573,10 +573,12 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                handle_ = h;
                 poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, h);
             }
 
             TPollerDrivenSocket<T> await_resume() {
+                handle_ = {};
                 int clientfd = poller->Result();
                 if (clientfd < 0) {
                     throw std::system_error(-clientfd, std::generic_category(), "accept");
@@ -585,8 +587,13 @@ public:
                 return TPollerDrivenSocket<T>{TAddress{reinterpret_cast<sockaddr*>(&addr[0]), len}, clientfd, *poller};
             }
 
+            ~TAwaitable() {
+                if (handle_) { poller->RemoveReadyHandle(handle_); }
+            }
+
             T* poller;
             int fd;
+            std::coroutine_handle<> handle_;
 
             char addr[2*(sizeof(sockaddr_in6)+16)] = {0}; // use additional memory for windows
             socklen_t len = static_cast<socklen_t>(sizeof(addr));
@@ -616,6 +623,7 @@ public:
             bool await_ready() const { return false; }
 
             void await_suspend(std::coroutine_handle<> h) {
+                handle_ = h;
                 poller->Connect(fd, addr.first, addr.second, h);
                 if (deadline != TTime::max()) {
                     timerId = poller->AddTimer(deadline, h);
@@ -623,6 +631,7 @@ public:
             }
 
             void await_resume() {
+                handle_ = {};
                 if (deadline != TTime::max() && poller->RemoveTimer(timerId, deadline)) {
                     poller->Cancel(fd);
                     throw std::system_error(std::make_error_code(std::errc::timed_out));
@@ -633,11 +642,16 @@ public:
                 }
             }
 
+            ~TAwaitable() {
+                if (handle_) { poller->RemoveReadyHandle(handle_); }
+            }
+
             T* poller;
             int fd;
             std::pair<const sockaddr*, int> addr;
             TTime deadline;
             unsigned timerId = 0;
+            std::coroutine_handle<> handle_;
         };
         return TAwaitable{Poller_, Fd_, RemoteAddr()->RawAddr(), deadline};
     }
@@ -656,10 +670,12 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                handle_ = h;
                 poller->Recv(fd, buf, size, h);
             }
 
             auto await_resume() {
+                handle_ = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -678,11 +694,15 @@ public:
                 return ret;
             }
 
+            ~TAwaitable() {
+                if (handle_) { poller->RemoveReadyHandle(handle_); }
+            }
+
             T* poller;
             int fd;
-
             void* buf;
             size_t size;
+            std::coroutine_handle<> handle_;
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
@@ -702,10 +722,12 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                handle_ = h;
                 poller->Send(fd, buf, size, h);
             }
 
             auto await_resume() {
+                handle_ = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -724,22 +746,24 @@ public:
                 return ret;
             }
 
+            ~TAwaitable() {
+                if (handle_) { poller->RemoveReadyHandle(handle_); }
+            }
+
             T* poller;
             int fd;
-
             const void* buf;
             size_t size;
+            std::coroutine_handle<> handle_;
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
     }
 
-    /// The WriteSomeYield and ReadSomeYield variants behave similarly to WriteSome/ReadSome.
     auto WriteSomeYield(const void* buf, size_t size) {
         return WriteSome(buf, size);
     }
 
-    /// The WriteSomeYield and ReadSomeYield variants behave similarly to WriteSome/ReadSome.
     auto ReadSomeYield(void* buf, size_t size) {
         return ReadSome(buf, size);
     }
@@ -795,10 +819,12 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                handle_ = h;
                 poller->Read(fd, buf, size, h);
             }
 
             auto await_resume() {
+                handle_ = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -817,11 +843,15 @@ public:
                 return ret;
             }
 
+            ~TAwaitable() {
+                if (handle_) { poller->RemoveReadyHandle(handle_); }
+            }
+
             T* poller;
             int fd;
-
             void* buf;
             size_t size;
+            std::coroutine_handle<> handle_;
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
@@ -841,10 +871,12 @@ public:
         struct TAwaitable {
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                handle_ = h;
                 poller->Write(fd, buf, size, h);
             }
 
             auto await_resume() {
+                handle_ = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -863,22 +895,24 @@ public:
                 return ret;
             }
 
+            ~TAwaitable() {
+                if (handle_) { poller->RemoveReadyHandle(handle_); }
+            }
+
             T* poller;
             int fd;
-
             const void* buf;
             size_t size;
+            std::coroutine_handle<> handle_;
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
     }
 
-    /// The WriteSomeYield and ReadSomeYield variants behave similarly to WriteSome/ReadSome.
     auto WriteSomeYield(const void* buf, size_t size) {
         return WriteSome(buf, size);
     }
 
-    /// The WriteSomeYield and ReadSomeYield variants behave similarly to WriteSome/ReadSome.
     auto ReadSomeYield(void* buf, size_t size) {
         return ReadSome(buf, size);
     }

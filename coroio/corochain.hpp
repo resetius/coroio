@@ -163,6 +163,12 @@ struct TFutureBase {
         Coro.promise().Caller = caller;
     }
 
+    void detach() {
+        if (Coro) {
+            Coro.promise().Caller = std::noop_coroutine();
+        }
+    }
+
     using promise_type = TPromise<T>;
 
 protected:
@@ -363,6 +369,11 @@ TFuture<T> Any(std::vector<TFuture<T>>&& futures) {
         f.await_suspend(self);
     }
     co_await std::suspend_always();
+    for (auto& f : all) {
+        if (!f.done()) {
+            f.detach();
+        }
+    }
     co_return std::find_if(all.begin(), all.end(), [](auto& f) { return f.done(); })->await_resume();
 }
 
@@ -384,6 +395,11 @@ inline TFuture<void> Any(std::vector<TFuture<void>>&& futures) {
         f.await_suspend(self);
     }
     co_await std::suspend_always();
+    for (auto& f : all) {
+        if (!f.done()) {
+            f.detach();
+        }
+    }
     co_return;
 }
 
