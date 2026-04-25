@@ -106,7 +106,7 @@ public:
      * @param nodeId  This node's identifier (default 1). Must be unique across
      *                all processes in a distributed cluster.
      */
-    TActorSystem(TPollerBase* poller, int nodeId = 1, std::function<void(const std::string&)> logger = {})
+    TActorSystem(TPollerBase* poller, TNodeId nodeId = 1, std::function<void(const std::string&)> logger = {})
         : Poller(poller)
         , NodeId_(nodeId)
         , Logger_(std::move(logger))
