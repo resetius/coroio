@@ -251,13 +251,20 @@ public:
      */
     void WakeupReadyHandles() {
         for (auto&& ev : ReadyEvents_) {
-            if (!ev.Handle) { continue; }
+            if (!ev.Handle) {
+                continue;
+            }
             if (!RemovedFdsCurrentLoop_.empty()) [[unlikely]] {
-                if (ev.Fd >= 0 && RemovedFdsCurrentLoop_.count(ev.Fd)) { continue; }
+                if (ev.Fd >= 0 && RemovedFdsCurrentLoop_.count(ev.Fd)) {
+                    continue;
+                }
             }
             if (!RemovedHandlesCurrentLoop_.empty()) [[unlikely]] {
                 if (RemovedHandlesCurrentLoop_.count(ev.Handle.address())) {
                     RemovedHandlesCurrentLoop_.erase(ev.Handle.address());
+                    if (ev.Fd < 0 && !Results_.empty()) {
+                        Results_.pop();
+                    }
                     continue;
                 }
             }
@@ -344,6 +351,7 @@ protected:
     int MaxFd_ = 0; ///< Highest file descriptor in use.
     std::vector<TEvent> Changes_; ///< Pending changes (registered events).
     std::vector<TEvent> ReadyEvents_; ///< Events ready to wake up their coroutines.
+    std::queue<int> Results_; ///< Results queue for uring/IOCP completions (shared to allow mid-loop discard).
     std::unordered_set<int>   RemovedFdsCurrentLoop_;     ///< Fds cancelled mid-loop (fd-based backends).
     std::unordered_set<void*> RemovedHandlesCurrentLoop_; ///< Handles cancelled mid-loop (uring/IOCP).
     unsigned TimerId_ = 0; ///< Counter for generating unique timer IDs.
