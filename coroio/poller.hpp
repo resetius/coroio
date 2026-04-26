@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <unordered_set>
 #include <vector>
 #include <map>
 #include <queue>
@@ -120,21 +121,17 @@ public:
      * @param fd The file descriptor.
      */
     void RemoveEvent(int fd) {
-        // TODO: resume waiting coroutines here
         MaxFd_ = std::max(MaxFd_, fd);
         Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP, {}});
+        if (!ReadyEvents_.empty()) {
+            RemovedFdsCurrentLoop_.insert(fd);
+        }
     }
-    /**
-     * @brief No-op placeholder for future cleanup by handle.
-     *
-     * Intended to be called by destructors of unfinished futures so that
-     * pending waits can be unregistered. Currently unimplemented.
-     *
-     * @param h The coroutine handle (unused).
-     */
-    void RemoveEvent(THandle /*h*/) {
-        // TODO: Add new vector for this type of removing
-        // Will be called in destuctor of unfinished futures
+
+    void RemoveReadyHandle(THandle h) {
+        if (!ReadyEvents_.empty()) {
+            RemovedHandlesCurrentLoop_.insert(h.address());
+        }
     }
     /**
      * @brief Suspends execution until the specified time.
@@ -254,8 +251,27 @@ public:
      */
     void WakeupReadyHandles() {
         for (auto&& ev : ReadyEvents_) {
+            if (!ev.Handle) {
+                continue;
+            }
+            if (!RemovedFdsCurrentLoop_.empty()) [[unlikely]] {
+                if (ev.Fd >= 0 && RemovedFdsCurrentLoop_.count(ev.Fd)) {
+                    continue;
+                }
+            }
+            if (!RemovedHandlesCurrentLoop_.empty()) [[unlikely]] {
+                if (RemovedHandlesCurrentLoop_.count(ev.Handle.address())) {
+                    RemovedHandlesCurrentLoop_.erase(ev.Handle.address());
+                    if (ev.Fd < 0 && !Results_.empty()) {
+                        Results_.pop();
+                    }
+                    continue;
+                }
+            }
             Wakeup(std::move(ev));
         }
+        RemovedFdsCurrentLoop_.clear();
+        RemovedHandlesCurrentLoop_.clear();
     }
     /**
      * @brief Sets the maximum polling duration.
@@ -303,6 +319,8 @@ protected:
         ReadyEvents_.clear();
         Changes_.clear();
         MaxFd_ = 0;
+        RemovedFdsCurrentLoop_.clear();
+        RemovedHandlesCurrentLoop_.clear();
     }
     /**
      * @brief Processes scheduled timers.
@@ -333,6 +351,9 @@ protected:
     int MaxFd_ = 0; ///< Highest file descriptor in use.
     std::vector<TEvent> Changes_; ///< Pending changes (registered events).
     std::vector<TEvent> ReadyEvents_; ///< Events ready to wake up their coroutines.
+    std::queue<int> Results_; ///< Results queue for uring/IOCP completions (shared to allow mid-loop discard).
+    std::unordered_set<int>   RemovedFdsCurrentLoop_;     ///< Fds cancelled mid-loop (fd-based backends).
+    std::unordered_set<void*> RemovedHandlesCurrentLoop_; ///< Handles cancelled mid-loop (uring/IOCP).
     unsigned TimerId_ = 0; ///< Counter for generating unique timer IDs.
     std::priority_queue<TTimer> Timers_; ///< Priority queue for scheduled timers.
     TTime LastTimersProcessTime_; ///< Last time timers were processed.
