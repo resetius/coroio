@@ -162,8 +162,13 @@ void TPipe::TPipeLow::Fork() {
 
         SetNonBlocking(ReadFd);
         SetNonBlocking(WriteFd);
+        // CLOEXEC: a later spawned child must not inherit these, else its pipe
+        // never sees EOF.
+        SetCloseOnExec(ReadFd);
+        SetCloseOnExec(WriteFd);
         if (ErrFd != -1) {
             SetNonBlocking(ErrFd);
+            SetCloseOnExec(ErrFd);
         }
     }
 }
