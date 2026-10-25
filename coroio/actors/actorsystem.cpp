@@ -56,6 +56,10 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     }
     Actors[id] = std::move(state);
 
+    Actors[id].Actor->AfterRegister(std::unique_ptr<TActorContext>(
+        new (this) TActorContext(actorId, actorId, this)
+    ));
+
     return actorId;
 }
 
