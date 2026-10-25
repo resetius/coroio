@@ -33,6 +33,11 @@ void TActorContext::Cancel(TEvent event)
     ActorSystem->Cancel(event);
 }
 
+TActorId TActorContext::Register(std::unique_ptr<IActor> actor)
+{
+    return ActorSystem->Register(std::move(actor));
+}
+
 TActorId TActorSystem::Register(IActor::TPtr actor) {
     TLocalActorId id = 0;
     if (!FreeActorIds.empty()) {
@@ -131,12 +136,13 @@ void TActorSystem::ExecuteSync() {
             continue;
         }
         auto& state = Actors[actorId];
-        auto& actor = state.Actor;
+        // Receive may Register new actors and reallocate Actors: keep stable pointers, not slot references.
+        auto* actor = state.Actor.get();
         if (!actor) {
             std::cerr << "Actor with id: " << actorId << " is not registered\n";
             continue;
         }
-        auto& mailbox = state.Mailbox;
+        auto* mailbox = state.Mailbox.get();
         if (!mailbox) {
             std::cerr << "Mailbox for actor with id: " << actorId << " is not initialized\n";
             continue;
@@ -155,7 +161,7 @@ void TActorSystem::ExecuteSync() {
                 new (this) TActorContext(envelope.Sender, envelope.Recipient, this)
             );
             actor->Receive(envelope.MessageId, std::move(envelope.Blob), std::move(ctx));
-            if (state.Pending.raw()) [[unlikely]] {
+            if (Actors[actorId].Pending.raw()) [[unlikely]] {
                 break;
             }
         }

@@ -109,6 +109,7 @@ namespace NNet {
 namespace NActors {
 
 class TActorSystem;
+class IActor;
 
 /**
  * @brief Message envelope containing routing and payload information
@@ -232,6 +233,13 @@ public:
      * @param event Event handle returned by Schedule()
      */
     void Cancel(TEvent event);
+
+    /**
+     * @brief Registers a new actor in the same actor system
+     * @param actor Actor to register (ownership transferred)
+     * @return ID of the new actor; safe to Send to immediately
+     */
+    TActorId Register(std::unique_ptr<IActor> actor);
 
     /**
      * @brief Suspend the current handler until a specific time
