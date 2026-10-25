@@ -369,6 +369,14 @@ public:
      * ICoroActor instead.
      */
     virtual void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) = 0;
+
+    /**
+     * @brief Called once right after the actor is registered in the system
+     * @param ctx Context whose recipient is the actor itself; safe to Send/Schedule from here
+     *
+     * Default implementation does nothing.
+     */
+    virtual void AfterRegister(TActorContext::TPtr) { }
 };
 
 /**

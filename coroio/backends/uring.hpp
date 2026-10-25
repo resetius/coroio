@@ -188,7 +188,6 @@ private:
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
-    std::queue<int> Results_; ///< Queue of results for completed operations.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
 };
 

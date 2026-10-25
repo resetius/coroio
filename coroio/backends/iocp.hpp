@@ -142,7 +142,6 @@ private:
     // Allocator to avoid dynamic memory allocation for each IOCP event structure.
     TArenaAllocator<TIO> Allocator_;
     std::vector<OVERLAPPED_ENTRY> Entries_;
-    std::queue<int> Results_;
 };
 
 }
