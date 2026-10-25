@@ -34,7 +34,6 @@ void TActorContext::Cancel(TEvent event)
 }
 
 TActorId TActorSystem::Register(IActor::TPtr actor) {
-    AliveActors++;
     TLocalActorId id = 0;
     if (!FreeActorIds.empty()) {
         id = FreeActorIds.top();
@@ -42,7 +41,17 @@ TActorId TActorSystem::Register(IActor::TPtr actor) {
     } else {
         id = NextActorId_++;
     }
-    auto cookie = NextCookie_++;
+    return Emplace(id, NextCookie_++, std::move(actor));
+}
+
+TActorId TActorSystem::RegisterWellKnown(TLocalActorId id, IActor::TPtr actor) {
+    assert(id > 0 && id < FirstDynamicActorId && "Well-known id is out of reserved range");
+    assert((id >= Actors.size() || !Actors[id].Actor) && "Well-known id is already taken");
+    return Emplace(id, WellKnownCookie, std::move(actor));
+}
+
+TActorId TActorSystem::Emplace(TLocalActorId id, TCookie cookie, IActor::TPtr actor) {
+    AliveActors++;
     TActorId actorId{NodeId_, id, cookie};
 
     TActorInternalState state = TActorInternalState {

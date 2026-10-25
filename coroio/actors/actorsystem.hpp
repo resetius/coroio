@@ -126,6 +126,19 @@ public:
      */
     TActorId Register(IActor::TPtr actor);
 
+    /// Local ids in [1, FirstDynamicActorId) are reserved for well-known actors.
+    static constexpr TLocalActorId FirstDynamicActorId = 128;
+    /// Fixed cookie of well-known actors, so any node can build their `TActorId`.
+    static constexpr TCookie WellKnownCookie = 0;
+
+    /**
+     * @brief Registers an actor under a fixed local id in [1, FirstDynamicActorId).
+     *
+     * The resulting id is `TActorId{nodeId, id, WellKnownCookie}`, so other
+     * nodes can address the actor without any discovery. The id must be free.
+     */
+    TActorId RegisterWellKnown(TLocalActorId id, IActor::TPtr actor);
+
     /// Suspends the current coroutine until `until`. Delegates to the poller.
     auto Sleep(TTime until) {
         return Poller->Sleep(until);
@@ -382,7 +395,9 @@ private:
         if (actorId < Actors.size()) {
             AliveActors--;
             Actors[actorId] = {};
-            FreeActorIds.push(actorId);
+            if (actorId >= FirstDynamicActorId) {
+                FreeActorIds.push(actorId);
+            }
         }
     }
 
@@ -425,11 +440,13 @@ private:
     std::vector<TFuture<void>> CleanupMessages;
     std::stack<TLocalActorId, std::vector<TLocalActorId>> FreeActorIds;
 
+    TActorId Emplace(TLocalActorId id, TCookie cookie, IActor::TPtr actor);
+
     TArenaAllocator<TActorContext> ContextAllocator;
 
     TPodAllocator PodAllocator;
 
-    TLocalActorId NextActorId_ = 1;
+    TLocalActorId NextActorId_ = FirstDynamicActorId;
     TCookie NextCookie_ = 1;
     TNodeId NodeId_ = 1;
     THandle YieldCoroutine_{};
