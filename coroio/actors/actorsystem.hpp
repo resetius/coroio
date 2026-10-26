@@ -393,6 +393,12 @@ private:
 
     void ShutdownActor(TLocalActorId actorId) {
         if (actorId < Actors.size()) {
+            if (auto* actor = Actors[actorId].Actor.get()) {
+                TActorId self{NodeId_, actorId, Actors[actorId].Cookie};
+                actor->BeforeUnregister(std::unique_ptr<TActorContext>(
+                    new (this) TActorContext(self, self, this)
+                ));
+            }
             AliveActors--;
             Actors[actorId] = {};
             if (actorId >= FirstDynamicActorId) {

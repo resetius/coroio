@@ -385,6 +385,14 @@ public:
      * Default implementation does nothing.
      */
     virtual void AfterRegister(TActorContext::TPtr) { }
+
+    /**
+     * @brief Called once on PoisonPill, right before the actor is destroyed
+     * @param ctx Context whose recipient is the actor itself
+     *
+     * Not called when the whole TActorSystem is destroyed. Default does nothing.
+     */
+    virtual void BeforeUnregister(TActorContext::TPtr) { }
 };
 
 /**
