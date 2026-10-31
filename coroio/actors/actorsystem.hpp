@@ -160,7 +160,9 @@ public:
      * actors (different `NodeId`) are serialized and queued to the outbound
      * node buffer. Delivery happens on the next event-loop iteration.
      *
-     * @tparam T Message type; must have `static TMessageId MessageId`.
+     * @tparam T Message type; must have `static TMessageId MessageId`. If it declares
+     *           `using LocalMessage = ...;` it is never serialized for the wire and
+     *           sending it to another node is dropped (logged).
      * @param sender    Actor ID that appears as `ctx->Sender()` in the handler.
      * @param recipient Destination actor ID.
      * @param args      Constructor arguments forwarded to `T`.
@@ -170,6 +172,8 @@ public:
         if (recipient.NodeId() == NodeId_) {
             auto blob = SerializeNear<T>(GetPodAllocator(), std::forward<Args>(args)...);
             Send(sender, recipient, T::MessageId, std::move(blob));
+        } else if constexpr (is_local_message_v<T>) {
+            if (Logger_) Logger_("Local message cannot be sent to a remote actor: " + recipient.ToString());
         } else {
             auto& maybeRemote = Nodes[recipient.NodeId()];
             if (!maybeRemote.Node) {

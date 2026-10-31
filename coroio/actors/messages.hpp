@@ -116,6 +116,22 @@ struct TBlob {
 template<typename T>
 constexpr bool is_pod_v = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T>;
 
+/**
+ * @brief `true` if `T` declares `using LocalMessage = ...;` (any type).
+ *
+ * Local messages are never sent to remote nodes, so no Far serialization
+ * (`SerializeToStream<T>`) is required for them. Sending one to an actor on
+ * another node is dropped (and logged).
+ */
+template<typename T, typename = void>
+struct is_local_message : std::false_type {};
+
+template<typename T>
+struct is_local_message<T, std::void_t<typename T::LocalMessage>> : std::true_type {};
+
+template<typename T>
+constexpr bool is_local_message_v = is_local_message<T>::value;
+
 template<typename T, typename = void>
 struct has_data_members : std::true_type {};
 
