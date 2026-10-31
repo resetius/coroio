@@ -206,6 +206,28 @@ public:
     void Forward(TActorId to, Args&&... args);
 
     /**
+     * @brief Send a message with an explicitly specified sender
+     * @param from Actor ID that the recipient will see as `ctx->Sender()`
+     * @param to Recipient actor ID
+     * @param messageId Message type identifier
+     * @param blob Serialized message data
+     */
+    void SendAs(TActorId from, TActorId to, TMessageId messageId, TBlob blob);
+
+    /**
+     * @brief Send a typed message with an explicitly specified sender
+     *
+     * Like `Send<T>`, but the recipient sees `ctx->Sender()` equal to `from`.
+     *
+     * @tparam T Message type; must have a `static TMessageId MessageId` member
+     * @param from Actor ID that the recipient will see as `ctx->Sender()`
+     * @param to Recipient actor ID
+     * @param args Constructor arguments forwarded to `T`
+     */
+    template<typename T, typename... Args>
+    void SendAs(TActorId from, TActorId to, Args&&... args);
+
+    /**
      * @brief Schedule a message to be delivered at a specific time
      * @param when Time when the message should be delivered
      * @param sender Sender actor ID for the scheduled message

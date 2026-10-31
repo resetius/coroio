@@ -400,6 +400,7 @@ Available inside every `Receive` / `CoReceive`:
 | `ctx->Sender()` | sender of the current message (may be falsy for system messages) |
 | `ctx->Send<T>(to, args...)` | construct and deliver `T{args...}` to `to`; non-blocking |
 | `ctx->Forward<T>(to, args...)` | same but preserves original `Sender()` |
+| `ctx->SendAs<T>(from, to, args...)` | same but with an explicitly specified `Sender()` |
 | `ctx->Schedule<T>(when, from, to, args...)` | deliver at `when`; returns `TEvent` |
 | `ctx->Cancel(event)` | cancel a previously scheduled message |
 | `ctx->Sleep(duration\|time_point)` | `co_await`-able; requires `ICoroActor` or async `TBehavior` handler |

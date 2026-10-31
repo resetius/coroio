@@ -23,6 +23,11 @@ void TActorContext::Forward(TActorId to, TMessageId messageId, TBlob blob)
     ActorSystem->Send(Sender(), to, messageId, std::move(blob));
 }
 
+void TActorContext::SendAs(TActorId from, TActorId to, TMessageId messageId, TBlob blob)
+{
+    ActorSystem->Send(from, to, messageId, std::move(blob));
+}
+
 TEvent TActorContext::Schedule(TTime when, TActorId sender, TActorId recipient, TMessageId messageId, TBlob blob)
 {
     return ActorSystem->Schedule(when, sender, recipient, messageId, std::move(blob));

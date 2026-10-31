@@ -523,6 +523,11 @@ inline void TActorContext::Forward(TActorId to, Args&&... args) {
 }
 
 template<typename T, typename... Args>
+inline void TActorContext::SendAs(TActorId from, TActorId to, Args&&... args) {
+    ActorSystem->Send<T>(from, to, std::forward<Args>(args)...);
+}
+
+template<typename T, typename... Args>
 inline TEvent TActorContext::Schedule(TTime when, TActorId sender, TActorId recipient, Args&&... args) {
     auto blob = SerializeNear<T>(ActorSystem->GetPodAllocator(), std::forward<Args>(args)...);
     return Schedule(when, sender, recipient, T::MessageId, std::move(blob));
