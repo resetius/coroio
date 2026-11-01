@@ -195,6 +195,7 @@ private:
  */
 struct IRouter {
     virtual TFuture<void> HandleRequest(TRequest& request, TResponse& response) = 0;
+    virtual ~IRouter() = default;
 };
 
 /**
