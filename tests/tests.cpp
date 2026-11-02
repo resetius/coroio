@@ -1,3 +1,6 @@
+#include <atomic>
+#include <barrier>
+#include <thread>
 #include <chrono>
 #include <array>
 #include <exception>
@@ -1319,6 +1322,185 @@ void test_sha1(void**) {
 #define my_unit_poller(f) my_unit_test2(f, TSelect, TPoll)
 #endif
 
+#ifndef _WIN32
+namespace {
+
+template<typename TPoller>
+void Complete(TLoop<TPoller>& loop, TFuture<void>& wait) {
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (!wait.done() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(wait.done());
+    wait.await_resume();
+}
+
+template<typename TPoller>
+void CheckWait() {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TNotifier notifier(loop.Poller());
+    auto wait = notifier.Wait();
+    assert_false(wait.done());
+    notifier.Notify();
+    Complete(loop, wait);
+
+    auto next = notifier.Wait();
+    assert_false(next.done());
+    notifier.Notify();
+    Complete(loop, next);
+}
+
+void test_notifier_epoll(void**) {
+#ifdef __linux__
+    CheckWait<TEPoll>();
+#else
+    CheckWait<TDefaultPoller>();
+#endif
+}
+
+void test_notifier_poll(void**) {
+    CheckWait<TPoll>();
+}
+
+void test_notifier_select(void**) {
+    CheckWait<TSelect>();
+}
+
+void test_notifier_notify_before_wait(void**) {
+    TLoop<TDefaultPoller> loop;
+    TNotifier notifier(loop.Poller());
+    notifier.Notify();
+    auto wait = notifier.Wait();
+    assert_true(wait.done());
+    wait.await_resume();
+}
+
+void test_notifier_coalesces(void**) {
+    TLoop<TDefaultPoller> loop;
+    TNotifier notifier(loop.Poller());
+    for (int i = 0; i < 10000; ++i) {
+        notifier.Notify();
+    }
+    auto wait = notifier.Wait();
+    assert_true(wait.done());
+    wait.await_resume();
+    auto next = notifier.Wait();
+    assert_false(next.done());
+}
+
+void test_notifier_concurrent_producers(void**) {
+    TLoop<TDefaultPoller> loop;
+    TNotifier notifier(loop.Poller());
+    constexpr size_t producerCount = 8;
+    std::barrier start(producerCount);
+    std::vector<std::jthread> producers;
+    for (size_t i = 0; i < producerCount; ++i) {
+        producers.emplace_back([&] {
+            start.arrive_and_wait();
+            for (int j = 0; j < 10000; ++j) {
+                notifier.Notify();
+            }
+        });
+    }
+    producers.clear();
+    auto wait = notifier.Wait();
+    assert_true(wait.done());
+    wait.await_resume();
+    auto next = notifier.Wait();
+    assert_false(next.done());
+}
+
+TFuture<void> Observe(TNotifier& notifier, const int& payload, int& observed) {
+    co_await notifier.Wait();
+    observed = payload;
+}
+
+void test_notifier_cross_thread_wakeup(void**) {
+    TLoop<TDefaultPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
+    TNotifier notifier(loop.Poller());
+    int payload = 0;
+    int observed = 0;
+    auto wait = Observe(notifier, payload, observed);
+    std::jthread producer([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        payload = 42;
+        notifier.Notify();
+    });
+    Complete(loop, wait);
+    assert_int_equal(observed, 42);
+}
+
+TFuture<void> Drain(TNotifier& notifier, const std::atomic<int>& published, int total) {
+    int consumed = 0;
+    while (consumed != total) {
+        co_await notifier.Wait();
+        consumed = published.load(std::memory_order_acquire);
+    }
+}
+
+void test_notifier_notify_while_draining(void**) {
+    TLoop<TDefaultPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TNotifier notifier(loop.Poller());
+    constexpr int producerCount = 4;
+    constexpr int perProducer = 10000;
+    std::atomic<int> published = 0;
+    auto wait = Drain(notifier, published, producerCount * perProducer);
+    std::vector<std::jthread> producers;
+    for (int i = 0; i < producerCount; ++i) {
+        producers.emplace_back([&] {
+            for (int j = 0; j < perProducer; ++j) {
+                published.fetch_add(1, std::memory_order_release);
+                notifier.Notify();
+                if (j % 16 == 0) {
+                    std::this_thread::yield();
+                }
+            }
+        });
+    }
+    Complete(loop, wait);
+    producers.clear();
+    assert_int_equal(published.load(), producerCount * perProducer);
+}
+
+void test_notifier_rejects_second_listener(void**) {
+    TLoop<TDefaultPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TNotifier notifier(loop.Poller());
+    auto first = notifier.Wait();
+    auto second = notifier.Wait();
+    assert_true(second.done());
+    bool rejected = false;
+    try {
+        second.await_resume();
+    } catch (const std::logic_error&) {
+        rejected = true;
+    }
+    assert_true(rejected);
+    notifier.Notify();
+    Complete(loop, first);
+}
+
+void test_notifier_cancel_wait(void**) {
+    TLoop<TDefaultPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    TNotifier notifier(loop.Poller());
+    {
+        auto cancelled = notifier.Wait();
+        loop.Step();
+        assert_false(cancelled.done());
+    }
+    loop.Step();
+    auto wait = notifier.Wait();
+    notifier.Notify();
+    Complete(loop, wait);
+}
+
+} // namespace
+#endif // _WIN32
+
 int main(int argc, char* argv[]) {
     TInitializer init;
 
@@ -1327,6 +1509,19 @@ int main(int argc, char* argv[]) {
     tests.reserve(500);
 
     parse_filters(argc, argv, filters);
+
+#ifndef _WIN32
+    ADD_TEST(cmocka_unit_test, test_notifier_epoll);
+    ADD_TEST(cmocka_unit_test, test_notifier_poll);
+    ADD_TEST(cmocka_unit_test, test_notifier_select);
+    ADD_TEST(cmocka_unit_test, test_notifier_notify_before_wait);
+    ADD_TEST(cmocka_unit_test, test_notifier_coalesces);
+    ADD_TEST(cmocka_unit_test, test_notifier_concurrent_producers);
+    ADD_TEST(cmocka_unit_test, test_notifier_cross_thread_wakeup);
+    ADD_TEST(cmocka_unit_test, test_notifier_notify_while_draining);
+    ADD_TEST(cmocka_unit_test, test_notifier_rejects_second_listener);
+    ADD_TEST(cmocka_unit_test, test_notifier_cancel_wait);
+#endif
 
     ADD_TEST(cmocka_unit_test, test_base64);
     ADD_TEST(cmocka_unit_test, test_sha1);

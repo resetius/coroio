@@ -6,6 +6,7 @@ pkg_check_modules(OPENSSL openssl)
 set(SOURCES
   address.cpp
   init.cpp
+  notifier.cpp
   socket.cpp
   sockutils.cpp
   ssl.cpp
