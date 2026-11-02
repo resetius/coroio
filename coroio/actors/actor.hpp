@@ -551,6 +551,8 @@ private:
                     std::move(blob),
                     std::move(ctx)
                 );
+            } else if constexpr (is_local_message_v<TMessage>) {
+                return false;
             } else {
                 auto&& mes = DeserializeFar<TMessage>(blob);
                 HandleMessage<TMessage>(

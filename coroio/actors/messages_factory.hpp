@@ -9,16 +9,19 @@ namespace NActors {
 
 class TMessagesFactory {
 public:
+    // Local messages have no wire handler, even when registered generically.
     template<typename T>
     void RegisterSerializer() {
-        constexpr auto messageId = T::MessageId;
-        if (Handlers_.size() <= messageId) {
-            Handlers_.resize(messageId + 1);
+        if constexpr (!is_local_message_v<T>) {
+            constexpr auto messageId = T::MessageId;
+            if (Handlers_.size() <= messageId) {
+                Handlers_.resize(messageId + 1);
+            }
+            auto serializeFunc = +[](TBlob&& blob) {
+                return ::NNet::NActors::SerializeFar<T>(std::move(blob));
+            };
+            Handlers_[messageId] = serializeFunc;
         }
-        auto serializeFunc = +[](TBlob&& blob) {
-            return ::NNet::NActors::SerializeFar<T>(std::move(blob));
-        };
-        Handlers_[messageId] = serializeFunc;
     }
 
     TBlob SerializeFar(uint32_t messageId, TBlob blob) {

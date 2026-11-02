@@ -381,6 +381,56 @@ void test_unbounded_vector_queue(void**) {
     }
 }
 
+struct TLocalMessage {
+    using LocalMessage = void;
+    static constexpr TMessageId MessageId = 300;
+    std::unique_ptr<int> Value;
+};
+
+static_assert(is_local_message_v<TLocalMessage>);
+static_assert(!is_pod_v<TLocalMessage>);
+
+struct TLocalBehavior : public TBehavior<TLocalBehavior, TLocalMessage> {
+    int Received = 0;
+    int Unknown = 0;
+
+    void Receive(TLocalMessage&& message, TBlob, TActorContext::TPtr) {
+        Received = *message.Value;
+    }
+
+    void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) {
+        ++Unknown;
+    }
+};
+
+void test_local_message(void**) {
+    TAllocator alloc;
+    TMessagesFactory factory;
+    factory.RegisterSerializer<TLocalMessage>();
+
+    TLocalBehavior behavior;
+    IBehavior& dispatcher = behavior;
+    dispatcher.Receive(TLocalMessage::MessageId,
+        SerializeNear<TLocalMessage>(alloc, std::make_unique<int>(42)), {});
+    assert_int_equal(behavior.Received, 42);
+
+    dispatcher.Receive(TLocalMessage::MessageId,
+        TBlob{nullptr, 0, TBlob::PointerType::Far}, {});
+    assert_int_equal(behavior.Unknown, 1);
+
+    bool rejected = false;
+    try {
+        factory.SerializeFar(TLocalMessage::MessageId,
+            SerializeNear<TLocalMessage>(alloc, std::make_unique<int>(7)));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert_true(rejected);
+
+    TActorSystem actorSystem(nullptr);
+    actorSystem.Send<TLocalMessage>(TActorId(), TActorId(2, 1, 1), std::make_unique<int>(7));
+}
+
 struct TRichBehavior : public TBehavior<TRichBehavior, TWrappedString, TPodMessage> {
     TPodMessage PodReceived;
     TWrappedString StrReceived;
@@ -780,6 +830,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
     ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
     ADD_TEST(cmocka_unit_test, test_behavior);
+    ADD_TEST(cmocka_unit_test, test_local_message);
     ADD_TEST(cmocka_unit_test, test_behavior_actor);
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
 
