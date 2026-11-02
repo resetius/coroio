@@ -26,6 +26,38 @@ extern "C" {
 using namespace NNet;
 using namespace NNet::NActors;
 
+void test_actor_id_equality(void**) {
+    const TActorId actor(1, 64, 2);
+    const TActorId same(1, 64, 2);
+    const TActorId otherNode(2, 64, 2);
+    const TActorId otherActor(1, 65, 2);
+    const TActorId otherCookie(1, 64, 3);
+    assert_true(actor == same);
+    assert_false(actor != same);
+    assert_true(TActorId{} == TActorId{});
+    assert_true(TActorId{} != actor);
+    for (const auto& other : {otherNode, otherActor, otherCookie}) {
+        assert_false(actor == other);
+        assert_false(other == actor);
+        assert_true(actor != other);
+        assert_true(other != actor);
+    }
+
+    struct TCollisionHash {
+        size_t operator()(const TActorId&) const { return 0; }
+    };
+    std::unordered_map<TActorId, int, TCollisionHash> values{
+        {actor, 1}, {otherNode, 2}, {otherActor, 3}, {otherCookie, 4},
+    };
+    assert_int_equal(values.size(), 4);
+    assert_int_equal(values.at(same), 1);
+    assert_int_equal(values.at(otherNode), 2);
+    assert_int_equal(values.at(otherActor), 3);
+    assert_int_equal(values.at(otherCookie), 4);
+    assert_int_equal(values.erase(same), 1);
+    assert_int_equal(values.size(), 3);
+}
+
 struct TState {
     bool usePerf = false;
     int maxIterations = 1000000;
@@ -816,6 +848,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    ADD_TEST(cmocka_unit_test, test_actor_id_equality);
     ADD_TEST(cmocka_unit_test, test_ping_pong);
     ADD_TEST(cmocka_unit_test, test_ask_respond);
     ADD_TEST(cmocka_unit_test, test_schedule);
