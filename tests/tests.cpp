@@ -1498,6 +1498,74 @@ void test_notifier_cancel_wait(void**) {
     Complete(loop, wait);
 }
 
+TFuture<void> CancelNotifierWait(
+    TPollerBase& poller,
+    std::optional<TFuture<void>>& wait)
+{
+    co_await poller.Sleep(TClock::now());
+    wait.reset();
+}
+
+template<typename TPoller>
+void test_notifier_cancel_ready_from_timer(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    TNotifier notifier(loop.Poller());
+    std::optional<TFuture<void>> wait{notifier.Wait()};
+    auto cancel = CancelNotifierWait(loop.Poller(), wait);
+    notifier.Notify();
+    loop.Step();
+    assert_true(cancel.done());
+    cancel.await_resume();
+    assert_false(wait.has_value());
+
+    auto next = notifier.Wait();
+    assert_true(next.done());
+    next.await_resume();
+    loop.Step();
+}
+
+template<typename TPoller>
+void test_notifier_cancel_collected_event(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    TNotifier notifier(loop.Poller());
+    std::optional<TFuture<void>> wait{notifier.Wait()};
+    notifier.Notify();
+    loop.Poller().Poll();
+    wait.reset();
+
+    auto next = notifier.Wait();
+    assert_true(next.done());
+    next.await_resume();
+    auto pending = notifier.Wait();
+    loop.Poller().WakeupReadyHandles();
+    assert_false(pending.done());
+    notifier.Notify();
+    Complete(loop, pending);
+}
+
+template<typename TPoller>
+void test_notifier_destroy_before_poll(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    for (bool registered : {false, true}) {
+        {
+            TNotifier notifier(loop.Poller());
+            auto wait = notifier.Wait();
+            if (registered) {
+                loop.Step();
+            }
+        }
+        loop.Step();
+        TNotifier replacement(loop.Poller());
+        auto wait = replacement.Wait();
+        replacement.Notify();
+        Complete(loop, wait);
+    }
+    loop.Step();
+}
+
 } // namespace
 #endif // _WIN32
 
@@ -1521,6 +1589,18 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_notifier_notify_while_draining);
     ADD_TEST(cmocka_unit_test, test_notifier_rejects_second_listener);
     ADD_TEST(cmocka_unit_test, test_notifier_cancel_wait);
+    ADD_TEST(my_unit_test2, test_notifier_cancel_ready_from_timer, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_notifier_cancel_collected_event, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_notifier_destroy_before_poll, TSelect, TPoll);
+#ifdef __linux__
+    ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TEPoll);
+    ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TEPoll);
+    ADD_TEST(my_unit_test, test_notifier_destroy_before_poll, TEPoll);
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+    ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TKqueue);
+    ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TKqueue);
+    ADD_TEST(my_unit_test, test_notifier_destroy_before_poll, TKqueue);
+#endif
 #endif
 
     ADD_TEST(cmocka_unit_test, test_base64);
