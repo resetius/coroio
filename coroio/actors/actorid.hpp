@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 namespace NNet {
 namespace NActors {
 
@@ -30,6 +33,9 @@ class TActorId {
 public:
     /** @brief Default constructor creates an invalid actor ID */
     TActorId() = default;
+
+    /// Compares node, local actor identifier, and incarnation cookie.
+    bool operator==(const TActorId&) const noexcept = default;
 
     /**
      * @brief Check if the actor ID is valid
