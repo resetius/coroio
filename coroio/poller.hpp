@@ -115,12 +115,23 @@ public:
     /**
      * @brief Removes registered events for a specific file descriptor.
      *
-     * This method signals that events for a descriptor should be deregistered.
+     * Cancels pending registrations and ready callbacks immediately, and queues
+     * removal of the descriptor's backend registration. Call on the poller thread.
      *
      * @param fd The file descriptor.
      */
     void RemoveEvent(int fd) {
-        // TODO: resume waiting coroutines here
+        // Keep entries in place: Wakeup may be iterating them during cancellation.
+        for (auto& change : Changes_) {
+            if (change.Fd == fd) {
+                change.Handle = {};
+            }
+        }
+        for (auto& event : ReadyEvents_) {
+            if (event.Fd == fd) {
+                event.Handle = {};
+            }
+        }
         MaxFd_ = std::max(MaxFd_, fd);
         Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP, {}});
     }
@@ -234,6 +245,9 @@ public:
         * In that chain of calls, multiple new waits can be added before returning here,
         * so `Changes_` can increase by 2 (or potentially more) in a single wake-up cycle.
         */
+        if (!change.Handle) {
+            return;
+        }
         auto index = Changes_.size();
         change.Handle.resume();
         if (change.Fd >= 0) {
