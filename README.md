@@ -425,6 +425,7 @@ Distributed ring (10 processes, batch 1024, payload 1024 bytes):
 ## Projects Using coroio
 
 - **miniraft-cpp** — Raft consensus algorithm. [GitHub](https://github.com/resetius/miniraft-cpp)
-- **qumir** — Experimental language with Russian keywords; coroio as web server for Playground. [GitHub](https://github.com/resetius/qumir)
+- **qumir** — Experimental language with Russian keywords; coroio as web server for Playground. [GitHub](https://github.com/QumirLabs/qumir)
+- **qumirdb** — Analytical SQL engine for Parquet; uses coroio for the Playground web server and interprocess communication. [GitHub](https://github.com/QumirLabs/qumirdb)
 
 [Official Site](https://coroio.dev/)
