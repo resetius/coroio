@@ -146,6 +146,52 @@ void test_accept(void**) {
     assert_memory_equal(&addr1, &addr2, 4);
 }
 
+#ifndef _WIN32
+template<typename TPoller>
+void test_cloexec(void**) {
+    int port = getport();
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    TLoop loop;
+    TAddress addr{"127.0.0.1", port};
+    TSocket socket(loop.Poller(), addr.Domain());
+    TSocket client(loop.Poller(), addr.Domain());
+    TSocket accepted{};
+    socket.Bind(addr);
+    socket.Listen();
+
+    TFuture<void> h1 = [](TSocket* client, TAddress addr) -> TFuture<void>
+    {
+        try {
+            co_await client->Connect(addr);
+        } catch (const std::exception& ex) {
+            std::cerr << "Error on connect: " << ex.what() << std::endl;
+        }
+        co_return;
+    }(&client, addr);
+
+    TFuture<void> h2 = [](TSocket* socket, TSocket* accepted) -> TFuture<void>
+    {
+        try {
+            *accepted = std::move(co_await socket->Accept());
+        } catch (const std::exception& ex) {
+            std::cerr << "Error on accept: " << ex.what() << std::endl;
+        }
+        co_return;
+    }(&socket, &accepted);
+
+    while (!(h1.done() && h2.done())) {
+        loop.Step();
+    }
+
+    for (int fd : {socket.Fd(), client.Fd(), accepted.Fd()}) {
+        int flags = fcntl(fd, F_GETFD);
+        assert_true(flags >= 0);
+        assert_true(flags & FD_CLOEXEC);
+    }
+}
+#endif
+
 template<typename TPoller>
 void test_write_after_connect(void**) {
     using TLoop = TLoop<TPoller>;
@@ -1636,6 +1682,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_futures_any_same_wakeup);
     ADD_TEST(my_unit_poller, test_futures_all);
 #ifndef _WIN32
+    ADD_TEST(my_unit_poller, test_cloexec);
 #ifdef HAVE_OPENSSL
     ADD_TEST(my_unit_test2, test_read_write_full_ssl, TSelect, TPoll);
 #endif

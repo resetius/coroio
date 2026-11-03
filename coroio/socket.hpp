@@ -463,10 +463,21 @@ public:
                 char clientaddr[sizeof(sockaddr_in6)];
                 socklen_t len = static_cast<socklen_t>(sizeof(sockaddr_in6));
 
+#ifdef SOCK_CLOEXEC
+                int clientfd = accept4(fd, reinterpret_cast<sockaddr*>(&clientaddr[0]), &len, SOCK_CLOEXEC);
+#else
                 int clientfd = accept(fd, reinterpret_cast<sockaddr*>(&clientaddr[0]), &len);
+#endif
                 if (clientfd < 0) {
                     throw std::system_error(errno, std::generic_category(), "accept");
                 }
+#if !defined(SOCK_CLOEXEC) && !defined(_WIN32)
+                if (fcntl(clientfd, F_SETFD, FD_CLOEXEC) < 0) {
+                    auto err = errno;
+                    ::close(clientfd);
+                    throw std::system_error(err, std::generic_category(), "fcntl");
+                }
+#endif
 
                 return TSocket{TAddress{reinterpret_cast<sockaddr*>(&clientaddr[0]), len}, clientfd, *poller};
             }
