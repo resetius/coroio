@@ -15,7 +15,8 @@ namespace NNet {
  * - `ReadSome`  → child's stdout
  * - `ReadSomeErr` → child's stderr (unless `stderrToStdout = true`)
  *
- * Call `CloseWrite()` to send EOF to the child, then `Wait()` to reap it.
+ * Call `CloseWrite()` to send EOF to the child, then `AsyncWait()` (or the
+ * blocking `Wait()`) to reap it.
  *
  * @code
  * TPipe pipe(poller, "/bin/cat", {});
@@ -24,7 +25,7 @@ namespace NNet {
  *
  * char buf[64];
  * ssize_t n = co_await pipe.ReadSome(buf, sizeof(buf));
- * int exit_code = pipe.Wait();
+ * int exit_code = co_await pipe.AsyncWait();
  * @endcode
  */
 class TPipe {
@@ -41,6 +42,7 @@ public:
     template<typename TPoller>
     TPipe(TPoller& poller, const std::string& exe, const std::vector<std::string>& args, bool stderrToStdout = false)
         : PipeLow(exe, args, stderrToStdout)
+        , Poller(&poller)
     {
         PipeLow.Fork();
 
@@ -78,6 +80,18 @@ public:
      * @return The exit status as returned by `waitpid` (use `WEXITSTATUS` to extract the code).
      */
     int Wait();
+
+    /**
+     * @brief Waits for the child process to exit without blocking the event loop.
+     *
+     * Polls `waitpid(WNOHANG)` and sleeps on the poller between attempts with a
+     * backoff growing from 1 ms to 32 ms, so it works with every poller backend.
+     * Once it completes the child is reaped and `Pid()` returns `-1`.
+     *
+     * @return The child's exit code, or `-1` if it did not exit normally or was
+     *         already reaped.
+     */
+    TFuture<int> AsyncWait();
 
     /**
      * @brief Reads up to `size` bytes from the child's stdout.
@@ -144,6 +158,7 @@ private:
     };
 
     TPipeLow PipeLow;
+    TPollerBase* Poller;
     std::unique_ptr<TTypelessFileHandle> ReadHandle;
     std::unique_ptr<TTypelessFileHandle> WriteHandle;
     std::unique_ptr<TTypelessFileHandle> ErrHandle;
