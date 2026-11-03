@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
@@ -199,6 +200,25 @@ int TPipe::Wait() {
         return WEXITSTATUS(status);
     }
     return -1;
+}
+
+TFuture<int> TPipe::AsyncWait() {
+    if (PipeLow.ChildPid == -1) {
+        co_return -1;
+    }
+    int status = 0;
+    pid_t ret;
+    auto delay = std::chrono::milliseconds(1);
+    while ((ret = waitpid(PipeLow.ChildPid, &status, WNOHANG)) == 0) {
+        co_await Poller->Sleep(delay);
+        delay = std::min(delay * 2, std::chrono::milliseconds(32));
+    }
+    // Reaped (or not our child): the destructor must not signal a reused pid.
+    PipeLow.ChildPid = -1;
+    if (ret != -1 && WIFEXITED(status)) {
+        co_return WEXITSTATUS(status);
+    }
+    co_return -1;
 }
 
 } // namespace NNet

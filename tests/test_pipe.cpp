@@ -140,6 +140,40 @@ void test_pipe_kill_then_read(void**) {
     assert_true(bytesRead == 0);
 }
 
+template<typename TPoller>
+void test_pipe_async_wait(void**) {
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    std::string shPath = "/bin/sh";
+    // Closes stdout right away, exits later
+    TPipe pipe(poller, shPath, {"-c", "exec >&-; sleep 0.3; exit 3"});
+
+    int exitCode = -2;
+    auto waiter = [](TPipe& pipe, int& exitCode) -> TFuture<void> {
+        char buffer[64];
+        while (co_await pipe.ReadSome(buffer, sizeof(buffer)) != 0) { }
+        exitCode = co_await pipe.AsyncWait();
+    }(pipe, exitCode);
+
+    int ticks = 0;
+    auto ticker = [](TPoller& poller, TFuture<void>& waiter, int& ticks) -> TFuture<void> {
+        while (!waiter.done()) {
+            co_await poller.Sleep(std::chrono::milliseconds(10));
+            ticks++;
+        }
+    }(poller, waiter, ticks);
+
+    while (!waiter.done() || !ticker.done()) {
+        loop.Step();
+    }
+
+    assert_int_equal(exitCode, 3);
+    assert_true(ticks > 5);
+    assert_int_equal(pipe.Pid(), -1);
+}
+
+#define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
+
 #endif // _WIN32
 
 int main(int argc, char** argv) {
@@ -156,6 +190,17 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_pipe_read_stderr);
     ADD_TEST(cmocka_unit_test, test_pipe_merge_stderr_into_stdout);
     ADD_TEST(cmocka_unit_test, test_pipe_kill_then_read);
+    ADD_TEST(my_unit_test, test_pipe_async_wait, TSelect);
+    ADD_TEST(my_unit_test, test_pipe_async_wait, TPoll);
+#ifdef __linux__
+    ADD_TEST(my_unit_test, test_pipe_async_wait, TEPoll);
+#ifdef HAVE_URING
+    ADD_TEST(my_unit_test, test_pipe_async_wait, TUring);
+#endif
+#endif
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    ADD_TEST(my_unit_test, test_pipe_async_wait, TKqueue);
+#endif
 #endif
 
     return _cmocka_run_group_tests("test_pipe", tests.data(), tests.size(), NULL, NULL);
