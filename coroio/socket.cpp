@@ -13,10 +13,20 @@ TSocketBase<void>::TSocketBase(int fd, TPollerBase& poller)
 { }
 
 int TSocketBase<void>::Create(int domain, int type) {
+#ifdef SOCK_CLOEXEC
+    type |= SOCK_CLOEXEC;
+#endif
     auto s = socket(domain, type, 0);
     if (s == static_cast<decltype(s)>(-1)) {
         throw std::system_error(errno, std::generic_category(), "socket");
     }
+#if !defined(SOCK_CLOEXEC) && !defined(_WIN32)
+    if (fcntl(s, F_SETFD, FD_CLOEXEC) < 0) {
+        auto err = errno;
+        close(s);
+        throw std::system_error(err, std::generic_category(), "fcntl");
+    }
+#endif
     return Setup(s);
 }
 
