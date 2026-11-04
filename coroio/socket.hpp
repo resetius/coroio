@@ -579,6 +579,9 @@ protected:
  * Instead, they should use the type defined by the poller, i.e. @c typename TPoller::TSocket.
  * Depending on the poller, this may resolve to either TSocket or TPollerDrivenSocket.
  *
+ * @note The poller must outlive every coroutine suspended on an operation of this
+ *       class: destroying such a coroutine cancels the operation in the poller.
+ *
  * @tparam T The poller type used by this socket. The poller must provide methods for
  * asynchronous operations (such as Connect, Accept, Recv, and Send) and timer management.
  */
@@ -866,6 +869,9 @@ private:
  * Ordinary users should not choose a file handle type directly. Instead, they should use the type
  * defined by the poller (i.e. @c typename TPoller::TFileHandle), which will resolve to either
  * TFileHandle or TPollerDrivenFileHandle depending on the poller in use.
+ *
+ * @note The poller must outlive every coroutine suspended on an operation of this
+ *       class: destroying such a coroutine cancels the operation in the poller.
  *
  * @tparam T The poller type that defines the asynchronous file operations.
  */
