@@ -41,7 +41,7 @@ void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
     WSABUF recvBuf = {(ULONG)size, (char*)buf};
     DWORD flags = 0;
     DWORD outSize = 0;
-    auto ret = WSARecv((SOCKET)fd, &recvBuf, 1, &outSize, &flags, (WSAOVERLAPPED*)tio, nullptr);
+    auto ret = WSARecv((SOCKET)fd, &recvBuf, 1, &outSize, &flags, static_cast<OVERLAPPED*>(tio), nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
@@ -53,7 +53,7 @@ void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> hand
     TIO* tio = NewTIO(fd, handle);
     WSABUF sendBuf = {(ULONG)size, (char*)buf};
     DWORD outSize = 0;
-    auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
+    auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, static_cast<OVERLAPPED*>(tio), nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
@@ -79,7 +79,7 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine
     }
 
     DWORD dwBytesReceived = 0;
-    auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, &dwBytesReceived, (WSAOVERLAPPED*)tio);
+    auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, &dwBytesReceived, static_cast<OVERLAPPED*>(tio));
     if (ret == FALSE && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         closesocket(sock);
@@ -114,7 +114,7 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
         throw std::system_error(WSAGetLastError(), std::generic_category(), "bind");
     }
 
-    auto ret = ConnectEx((SOCKET)fd, addr, len, nullptr, 0, nullptr, (WSAOVERLAPPED*)tio);
+    auto ret = ConnectEx((SOCKET)fd, addr, len, nullptr, 0, nullptr, static_cast<OVERLAPPED*>(tio));
     if (ret == FALSE && WSAGetLastError() != ERROR_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "ConnectEx");
@@ -125,7 +125,7 @@ void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
     TIO* tio = NewTIO(fd, handle);
 
-    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
+    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(tio));
     if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "ReadFile");
@@ -136,7 +136,7 @@ void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> han
 {
     TIO* tio = NewTIO(fd, handle);
 
-    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
+    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(tio));
     if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WriteFile");
@@ -194,7 +194,7 @@ int TIOCp::Cancel(THandle h)
             break; // called from destructors: do not throw
         }
         for (DWORD i = 0; i < fired; i++) {
-            if (!done && (TIO*)Entries_[i].lpOverlapped == tio) {
+            if (!done && static_cast<TIO*>(Entries_[i].lpOverlapped) == tio) {
                 done = true;
             }
             auto [handle, result] = Complete(Entries_[i]);
@@ -227,7 +227,7 @@ long TIOCp::GetTimeoutMs() {
 
 std::pair<THandle, int> TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
 {
-    TIO* event = (TIO*)entry.lpOverlapped;
+    TIO* event = static_cast<TIO*>(entry.lpOverlapped);
     THandle handle = event->handle;
     int result = -1;
     if (!handle) {
