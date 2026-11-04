@@ -143,4 +143,16 @@ private:
     std::variant<sockaddr_in, sockaddr_in6> Addr_ = {};
 };
 
+/**
+ * @brief Asks the OS for a free TCP port on 127.0.0.1.
+ *
+ * Binds a temporary socket to 127.0.0.1:0, reads the assigned port and closes
+ * the socket. The port is not reserved, so it may be taken again by the time
+ * it is used.
+ *
+ * @return The port number.
+ * @throws std::runtime_error If the socket cannot be created or bound.
+ */
+int GetFreePort();
+
 } // namespace NNet
