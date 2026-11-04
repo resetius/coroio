@@ -385,6 +385,35 @@ void test_byte_reader_read_until_two_delimiters(void**) {
     assert_true(line2 == "line2\r\n");
 }
 
+void test_byte_reader_read_until_empty_delimiter(void**) {
+    TChunkedSocket socket{{"abc"}};
+    std::string empty1, empty2, rest;
+    bool failed = false;
+    auto task = [](TChunkedSocket& socket, std::string& empty1, std::string& empty2,
+                   std::string& rest, bool& failed) -> TFuture<void>
+    {
+        TByteReader<TChunkedSocket> reader(socket);
+        try {
+            // Empty buffer
+            empty1 = co_await reader.ReadUntil("");
+            char buf[3];
+            co_await reader.Read(buf, 1);
+            rest.assign(buf, 1);
+            // Non-empty buffer: the read of 3 bytes left "bc" buffered
+            empty2 = co_await reader.ReadUntil("");
+            co_await reader.Read(buf, 2);
+            rest.append(buf, 2);
+        } catch (const std::exception&) {
+            failed = true;
+        }
+    }(socket, empty1, empty2, rest, failed);
+    assert_true(task.done());
+    assert_false(failed);
+    assert_true(empty1.empty());
+    assert_true(empty2.empty());
+    assert_true(rest == "abc");
+}
+
 void test_http_server_header_split_between_writes(void**) {
     using TSocket = TDefaultPoller::TSocket;
 
@@ -462,6 +491,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_byte_by_byte);
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_1024_boundary);
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_two_delimiters);
+    ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_empty_delimiter);
     ADD_TEST(cmocka_unit_test, test_http_server_header_split_between_writes);
 
     return _cmocka_run_group_tests("test_http", tests.data(), tests.size(), NULL, NULL);

@@ -148,7 +148,10 @@ private:
  *
  * Binds a temporary socket to 127.0.0.1:0, reads the assigned port and closes
  * the socket. The port is not reserved, so it may be taken again by the time
- * it is used.
+ * it is used. Only the IPv4 loopback is probed, a port free there may still be
+ * taken on other interfaces or address families.
+ *
+ * On Windows a TInitializer must exist first (it calls WSAStartup).
  *
  * @return The port number.
  * @throws std::runtime_error If the socket cannot be created or bound.
