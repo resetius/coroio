@@ -15,6 +15,7 @@
 #include <coroio/all.hpp>
 #include <coroio/ws/utils.hpp>
 #include <coroio/dns/resolver.hpp>
+#include <coroio/intrusive_list.hpp>
 
 #include <unordered_set>
 
@@ -1678,6 +1679,99 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
     }
 }
 
+namespace {
+
+struct TListItem: TIntrusiveNode<TListItem> {
+    TListItem(int value)
+        : Value(value)
+    { }
+
+    int Value;
+};
+
+std::vector<int> ListValues(TIntrusiveList<TListItem>& list) {
+    std::vector<int> values;
+    for (auto& item : list) {
+        values.push_back(item.Value);
+    }
+    return values;
+}
+
+} // namespace
+
+void test_intrusive_list_push(void**) {
+    TIntrusiveList<TListItem> list;
+    assert_true(list.Empty());
+    assert_true(ListValues(list).empty());
+    TListItem a(1), b(2), c(3), d(4);
+    list.PushBack(a);
+    list.PushBack(b);
+    list.PushFront(c);
+    list.PushFront(d);
+    assert_false(list.Empty());
+    assert_true(a.IsLinked());
+    assert_int_equal(list.Front().Value, 4);
+    assert_true(ListValues(list) == std::vector<int>({4, 3, 1, 2}));
+    for (auto* item : {&a, &b, &c, &d}) {
+        list.Erase(*item);
+    }
+}
+
+void test_intrusive_list_erase(void**) {
+    // The first, a middle and the last item.
+    for (int erased = 0; erased < 3; erased++) {
+        TIntrusiveList<TListItem> list;
+        TListItem items[3] = {0, 1, 2};
+        for (auto& item : items) {
+            list.PushBack(item);
+        }
+        list.Erase(items[erased]);
+        assert_false(items[erased].IsLinked());
+        std::vector<int> expected;
+        for (int i = 0; i < 3; i++) {
+            if (i != erased) {
+                expected.push_back(i);
+            }
+        }
+        assert_true(ListValues(list) == expected);
+        for (int i = 0; i < 3; i++) {
+            if (i != erased) {
+                items[i].Unlink();
+            }
+        }
+        assert_true(list.Empty());
+    }
+
+    TIntrusiveList<TListItem> list;
+    TListItem only(7);
+    list.PushBack(only);
+    TIntrusiveList<TListItem>::Erase(only);
+    assert_true(list.Empty());
+    assert_false(only.IsLinked());
+}
+
+void test_intrusive_list_reinsert(void**) {
+    TIntrusiveList<TListItem> list;
+    TListItem a(1), b(2);
+    list.PushBack(a);
+    list.PushBack(b);
+    list.Erase(a);
+    list.Erase(b);
+    assert_true(list.Empty());
+    list.PushBack(b);
+    list.PushBack(a);
+    assert_true(ListValues(list) == std::vector<int>({2, 1}));
+    list.Erase(b);
+    list.PushFront(b);
+    assert_true(ListValues(list) == std::vector<int>({2, 1}));
+    list.Erase(a);
+    list.PushFront(a);
+    assert_int_equal(list.Front().Value, 1);
+    assert_true(ListValues(list) == std::vector<int>({1, 2}));
+    list.Erase(a);
+    list.Erase(b);
+}
+
 #ifdef HAVE_URING
 // An operation not submitted yet is dropped without reaching the kernel, so
 // nothing is consumed on behalf of the destroyed coroutine.
@@ -2713,6 +2807,9 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TIOCp);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TIOCp);
 #endif
+    ADD_TEST(cmocka_unit_test, test_intrusive_list_push);
+    ADD_TEST(cmocka_unit_test, test_intrusive_list_erase);
+    ADD_TEST(cmocka_unit_test, test_intrusive_list_reinsert);
 
     return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);
 }
