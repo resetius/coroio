@@ -106,6 +106,8 @@ int TUring::Cancel(std::coroutine_handle<> h) {
     }
 
     // Not submitted yet: the kernel has not seen the operation, so it can be dropped as is.
+    // Without SQPOLL the kernel reads SQEs only in io_uring_enter, so this holds from *khead;
+    // with SQPOLL only sqe_head..sqe_tail could be rewritten.
     auto data = reinterpret_cast<__u64>(h.address());
     for (unsigned i = *Ring_.sq.khead; i != Ring_.sq.sqe_tail; i++) {
         struct io_uring_sqe *sqe = &Ring_.sq.sqes[i & *Ring_.sq.kring_mask];
@@ -238,6 +240,8 @@ int TUring::Wait(timespec ts) {
 }
 
 int TUring::Result() {
+    // Delivered: the next Wait() does not keep it.
+    ReadyEvents_[NextResult_].Handle = {};
     return Results_[NextResult_++];
 }
 

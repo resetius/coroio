@@ -1353,6 +1353,26 @@ void test_uring_file_offset(void**) {
     close(fd);
 }
 
+// Wait() and Result() without WakeupReadyHandles(), as in the TUring example.
+void test_uring_wait_result_without_wakeup(void**) {
+    TUring uring(256);
+    char rbuf[10];
+    int p[2];
+    assert_int_equal(0, pipe(p));
+    TFuture<void> h1 = []() -> TFuture<void> { co_return; }();
+    TFuture<void> h2 = []() -> TFuture<void> { co_return; }();
+    assert_int_equal(1, write(p[1], "a", 1));
+    uring.Read(p[0], rbuf, sizeof(rbuf), h1.raw());
+    assert_int_equal(uring.Wait(), 1);
+    assert_int_equal(uring.Result(), 1);
+    assert_int_equal(3, write(p[1], "bcd", 3));
+    uring.Read(p[0], rbuf, sizeof(rbuf), h2.raw());
+    assert_int_equal(uring.Wait(), 1);
+    assert_int_equal(uring.Result(), 3);
+    close(p[0]);
+    close(p[1]);
+}
+
 void test_uring_no_sqe(void** ) {
     TUring uring(1);
     char rbuf[1] = {'k'};
@@ -2678,6 +2698,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_read_resume);
     ADD_TEST(cmocka_unit_test, test_uring_file_offset);
     ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
+    ADD_TEST(cmocka_unit_test, test_uring_wait_result_without_wakeup);
     // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TUring);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TUring);
