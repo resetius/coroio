@@ -166,17 +166,6 @@ private:
                 TAddress addr = co_await HostPort.Resolve(Resolver);
                 Socket = SocketFactory(addr);
                 co_await Socket.Connect(addr /*, deadline*/);
-                // Connection bug workaround:
-                {
-                    auto sender = TActorId(0, 0, 0);
-                    auto recipient = TActorId(0, 0, 0);
-                    THeader data{
-                        .Sender = sender,
-                        .Recipient = recipient,
-                        .MessageId = 0
-                    };
-                    co_await TByteWriter(Socket).Write(&data, sizeof(data));
-                }
                 Connected = true;
                 std::cout << "Connected to " << HostPort.ToString() << "\n";
             } catch (const std::exception& ex) {
