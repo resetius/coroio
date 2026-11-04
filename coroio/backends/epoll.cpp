@@ -60,7 +60,7 @@ void TEPoll::Poll() {
     for (const auto& pending : Changes_) {
         int fd = pending.Fd;
         auto& ev  = InEvents_[fd];
-        const auto ch = Resolve(pending, ev);
+        const auto ch = ResolveCancel(pending, ev);
         if (!ch.Type) {
             continue;
         }

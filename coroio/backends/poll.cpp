@@ -57,7 +57,7 @@ void TPoll::Poll()
     for (const auto& pending : Changes_) {
         int fd = pending.Fd;
         auto& [ev, idx] = InEvents_[fd];
-        const auto ch = Resolve(pending, ev);
+        const auto ch = ResolveCancel(pending, ev);
         if (ch.Handle) {
             if (idx == -1) {
                 idx = Fds_.size();

@@ -36,7 +36,7 @@ void TSelect::Poll() {
     for (const auto& pending : Changes_) {
         int fd = pending.Fd;
         auto& ev = InEvents_[fd];
-        const auto ch = Resolve(pending, ev);
+        const auto ch = ResolveCancel(pending, ev);
         if (ch.Handle) {
             if (ch.Type & TEvent::READ) {
                 FD_SET(fd, ReadFds()); ev.Read = ch.Handle;

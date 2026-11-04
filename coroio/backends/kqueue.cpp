@@ -29,7 +29,7 @@ void TKqueue::Poll()
         int fd = pending.Fd;
         struct kevent kev = {};
         auto& ev = InEvents_[fd];
-        const auto ch = Resolve(pending, ev);
+        const auto ch = ResolveCancel(pending, ev);
 
         if (ch.Handle) {
             if (ch.Type & TEvent::READ && ev.Read != ch.Handle) {

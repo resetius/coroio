@@ -2026,6 +2026,11 @@ template<typename TPoller>
 TFuture<void> SendRequest(TPoller& poller, TAddress address, std::string path, bool abort, int* completed) {
     using TSocket = typename TPoller::TSocket;
     TSocket socket(poller, address.Domain());
+    // Reset on close: no TIME_WAIT, so repeated runs do not run out of ports.
+    linger reset{1, 0};
+    if (setsockopt(socket.Fd(), SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)) < 0) {
+        throw std::system_error(errno, std::generic_category(), "setsockopt");
+    }
     co_await socket.Connect(address);
     // The header terminator is split between the two parts.
     std::string start = "GET " + path + " HTTP/1.1\r\nHost: x\r\n";
@@ -2058,7 +2063,11 @@ void test_short_connections(void**) {
     auto reap = [](std::list<TFuture<void>>& futures) {
         for (auto it = futures.begin(); it != futures.end(); ) {
             if (it->done()) {
-                it->await_resume();
+                try {
+                    it->await_resume();
+                } catch (const std::exception& ex) {
+                    fail_msg("%s", ex.what());
+                }
                 it = futures.erase(it);
             } else {
                 ++it;

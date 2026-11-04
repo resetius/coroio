@@ -141,7 +141,8 @@ public:
      * Called by destructors of unfinished awaitables. Drops @p h from ready
      * events immediately and queues removal of the backend registrations that
      * still belong to @p h, so a newer waiter on the same descriptor number
-     * keeps its own. Call on the poller thread.
+     * keeps its own. Call on the poller thread. Because of this call the
+     * poller must outlive every coroutine suspended on a socket awaitable.
      *
      * @param fd The file descriptor passed to AddRead, AddWrite or AddRemoteHup.
      * @param h  The coroutine handle passed with it.
@@ -153,8 +154,15 @@ public:
             }
         }
         MaxFd_ = std::max(MaxFd_, fd);
-        Changes_.emplace_back(TEvent{fd, 0, h});
+        Changes_.emplace_back(TEvent{fd, TEvent::CANCEL, h});
     }
+    /**
+     * @brief Former placeholder, does nothing.
+     *
+     * Destroyed awaitables cancel their own waits with RemoveEvent(int, THandle).
+     */
+    [[deprecated("does nothing: destroyed awaitables cancel their own waits")]]
+    void RemoveEvent(THandle /*h*/) { }
     /**
      * @brief Suspends execution until the specified time.
      *
@@ -323,14 +331,15 @@ protected:
     /**
      * @brief Turns a cancellation queued by RemoveEvent(int, THandle) into a removal.
      *
-     * Other changes are returned as is.
+     * Backends call it on every pending change before applying it; other
+     * changes are returned as is.
      *
      * @param change A pending change.
      * @param ev     The backend's current registrations for `change.Fd`.
      * @return A removal of the directions still registered to the cancelled handle.
      */
-    static TEvent Resolve(const TEvent& change, const THandlePair& ev) {
-        if (change.Type || !change.Handle) {
+    static TEvent ResolveCancel(const TEvent& change, const THandlePair& ev) {
+        if (change.Type != TEvent::CANCEL || !change.Handle) {
             return change;
         }
         int type = 0;
