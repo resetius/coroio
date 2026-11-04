@@ -105,39 +105,60 @@ int TUring::Cancel(std::coroutine_handle<> h) {
         }
     }
 
-    struct io_uring_sqe *sqe = GetSqe();
+    // Not submitted yet: the kernel has not seen the operation, so it can be dropped as is.
+    auto data = reinterpret_cast<__u64>(h.address());
+    for (unsigned i = *Ring_.sq.khead; i != Ring_.sq.sqe_tail; i++) {
+        struct io_uring_sqe *sqe = &Ring_.sq.sqes[i & *Ring_.sq.kring_mask];
+        if (sqe->user_data == data) {
+            io_uring_prep_nop(sqe);
+            io_uring_sqe_set_data(sqe, nullptr);
+            return -ECANCELED;
+        }
+    }
+
+    // Called from destructors: errors that persist end the wait instead of throwing.
+    auto failed = [](int err) {
+        return err < 0 && err != -EINTR && err != -EAGAIN && err != -EBUSY;
+    };
+    int result = -ECANCELED;
+    struct io_uring_sqe *sqe;
+    while (!(sqe = io_uring_get_sqe(&Ring_))) {
+        // The SQ is full. Submitting it fails while the CQ overflows, so drain that too.
+        int err = io_uring_submit(&Ring_);
+        if (Reap(h, &result) || failed(err)) {
+            return result;
+        }
+    }
     io_uring_prep_cancel(sqe, h.address(), 0);
     io_uring_sqe_set_data(sqe, nullptr);
 
     // The kernel may use the operation's buffers until its completion is posted,
     // so wait for it. Other completions are kept for the next Wait().
-    while (true) {
-        int err = io_uring_submit_and_wait(&Ring_, 1);
-        if (err < 0 && err != -EINTR) {
-            throw std::system_error(-err, std::generic_category(), "io_uring_submit_and_wait");
-        }
-
-        struct io_uring_cqe *cqe;
-        unsigned head;
-        int completed = 0;
-        bool found = false;
-        int result = 0;
-        io_uring_for_each_cqe(&Ring_, head, cqe) {
-            completed ++;
-            void* data = reinterpret_cast<void*>(cqe->user_data);
-            if (data == h.address()) {
-                found = true;
-                result = cqe->res;
-            } else if (data != nullptr) {
-                Reaped_.emplace_back(std::coroutine_handle<>::from_address(data), cqe->res);
-            }
-        }
-        io_uring_cq_advance(&Ring_, completed);
-
-        if (found) {
-            return result;
+    while (!Reap(h, &result)) {
+        if (failed(io_uring_submit_and_wait(&Ring_, 1))) {
+            break;
         }
     }
+    return result;
+}
+
+bool TUring::Reap(std::coroutine_handle<> h, int* result) {
+    struct io_uring_cqe *cqe;
+    unsigned head;
+    int completed = 0;
+    bool found = false;
+    io_uring_for_each_cqe(&Ring_, head, cqe) {
+        completed ++;
+        void* data = reinterpret_cast<void*>(cqe->user_data);
+        if (data == h.address()) {
+            found = true;
+            *result = cqe->res;
+        } else if (data != nullptr) {
+            Reaped_.emplace_back(std::coroutine_handle<>::from_address(data), cqe->res);
+        }
+    }
+    io_uring_cq_advance(&Ring_, completed);
+    return found;
 }
 
 void TUring::Register(int) {
@@ -153,6 +174,13 @@ int TUring::Wait(timespec ts) {
         assert(ev.Type == (TEvent::READ|TEvent::WRITE|TEvent::RHUP));
         assert(!ev.Handle);
         Cancel(ev.Fd);
+    }
+
+    // Collected by the previous call, but not delivered: WakeupReadyHandles() was not called.
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        if (ReadyEvents_[i].Handle) {
+            Reaped_.emplace_back(ReadyEvents_[i].Handle, Results_[i]);
+        }
     }
 
     Reset();
@@ -221,6 +249,7 @@ void TUring::WakeupReadyHandles() {
             h.resume();
         }
     }
+    ReadyEvents_.clear();
 }
 
 void TUring::Submit() {

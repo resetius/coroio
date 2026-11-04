@@ -135,11 +135,15 @@ public:
      * @brief Cancels the pending operation posted with a coroutine handle.
      *
      * Called when the coroutine is destroyed while waiting for the operation.
-     * Returns only after the kernel has finished with the operation, so its
-     * buffers may be freed, and drops its completion, so @p h is not resumed.
+     * An operation not submitted yet is dropped. Otherwise it is cancelled, and
+     * the call returns only after the kernel has finished with it, so its
+     * buffers may be freed. Either way its completion is dropped, so @p h is
+     * not resumed. An operation that completed before the cancellation loses
+     * its result, e.g. the data it read.
      *
      * @param h The coroutine handle the operation was posted with.
-     * @return The result of the dropped completion, e.g. a descriptor accepted meanwhile.
+     * @return The result of the dropped completion, e.g. a descriptor accepted meanwhile,
+     *         or a negative value.
      */
     int Cancel(std::coroutine_handle<> h);
     /**
@@ -195,6 +199,8 @@ private:
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
+    /// Moves the posted completions to Reaped_, except the one of @p h, whose result goes to @p result.
+    bool Reap(std::coroutine_handle<> h, int* result);
 
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
