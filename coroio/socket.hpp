@@ -416,7 +416,8 @@ public:
      * @return An awaitable object that suspends until the connection is established.
      *
      * @note If a deadline is specified and exceeded, the awaitable will throw a timed-out error.
-     * @throws std::system_error with the socket error if the connection attempt fails.
+     * @throws std::runtime_error at the call, before anything is awaited, if the socket is already connected.
+     * @throws std::system_error at @c co_await with the socket error if the connection attempt fails.
      */
     auto Connect(const TAddress& addr, TTime deadline = TTime::max()) {
         if (RemoteAddr_.has_value()) {
@@ -582,6 +583,11 @@ protected:
  * @note The poller must outlive every coroutine suspended on an operation of this
  *       class: destroying such a coroutine cancels the operation in the poller.
  *
+ * @note Unlike TSocket::Connect, TPollerDrivenSocket::Connect is a coroutine that starts running
+ * at the call, so "Already connected" is not thrown at the call: it is stored in the returned
+ * future and rethrown at @c co_await. A future that is never awaited drops the error. Always
+ * await the result of Connect, and put the try/catch around the @c co_await.
+ *
  * @tparam T The poller type used by this socket. The poller must provide methods for
  * asynchronous operations (such as Connect, Accept, Recv, and Send) and timer management.
  */
@@ -676,15 +682,16 @@ public:
     /**
      * @brief Asynchronously connects to the specified address with an optional deadline.
      *
-     * Initiates a connection and returns an awaitable that completes when the connection is established.
+     * Starts the connection at once and returns a future that completes when the connection is established.
      * If a deadline is specified and exceeded, a timeout error is thrown.
      *
      * @param addr     The remote address to connect to.
      * @param deadline The timeout deadline (defaults to TTime::max()).
-     * @return An awaitable object for the connection operation.
+     * @return A future for the connection operation. It must be awaited: every error below is stored in it.
      *
-     * @throws std::runtime_error if the socket is already connected.
-     * @throws std::system_error with the socket error if the connection attempt fails.
+     * @throws std::runtime_error at @c co_await, not at the call, if the socket is already connected.
+     * @throws std::system_error at @c co_await with the socket error if the connection attempt fails,
+     *         or with std::errc::timed_out if the deadline is exceeded.
      */
     TFuture<void> Connect(const TAddress& addr, TTime deadline = TTime::max()) {
         if (RemoteAddr_.has_value()) {
