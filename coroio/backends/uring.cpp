@@ -46,14 +46,14 @@ TUring::~TUring() {
 
 void TUring::Read(int fd, void* buf, int size, std::coroutine_handle<> handle) {
     struct io_uring_sqe *sqe = GetSqe();
-    io_uring_prep_read(sqe, fd, buf, size, 0);
+    io_uring_prep_read(sqe, fd, buf, size, -1);
     //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
     io_uring_sqe_set_data(sqe, handle.address());
 }
 
 void TUring::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle) {
     struct io_uring_sqe *sqe = GetSqe();
-    io_uring_prep_write(sqe, fd, buf, size, 0);
+    io_uring_prep_write(sqe, fd, buf, size, -1);
     //memcpy(Buffer_.data(), buf, size);
     //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
     io_uring_sqe_set_data(sqe, handle.address());

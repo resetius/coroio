@@ -1323,6 +1323,36 @@ void test_uring_read_resume(void**) {
     assert_true(h.done());
 }
 
+void test_uring_file_offset(void**) {
+    TUring uring(256);
+    char path[] = "/tmp/coroio_uring_offset_XXXXXX";
+    int fd = mkstemp(path);
+    assert_true(fd >= 0);
+    unlink(path);
+
+    TFuture<void> h = []() -> TFuture<void> { co_return; }();
+    const char data[] = "0123456789abcdefghij";
+    for (int i = 0; i < 20; i += 5) {
+        uring.Write(fd, data + i, 5, h.raw());
+        assert_int_equal(uring.Wait(), 1);
+        assert_int_equal(uring.Result(), 5);
+    }
+
+    char check[sizeof(data)] = {};
+    assert_int_equal(20, pread(fd, check, 20, 0));
+    assert_memory_equal(check, data, 20);
+
+    assert_int_equal(0, lseek(fd, 0, SEEK_SET));
+    char rbuf[20] = {};
+    for (int i = 0; i < 20; i += 5) {
+        uring.Read(fd, rbuf + i, 5, h.raw());
+        assert_int_equal(uring.Wait(), 1);
+        assert_int_equal(uring.Result(), 5);
+    }
+    assert_memory_equal(rbuf, data, 20);
+    close(fd);
+}
+
 void test_uring_no_sqe(void** ) {
     TUring uring(1);
     char rbuf[1] = {'k'};
@@ -2215,6 +2245,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_read_more_than_write);
     ADD_TEST(cmocka_unit_test, test_uring_write_resume);
     ADD_TEST(cmocka_unit_test, test_uring_read_resume);
+    ADD_TEST(cmocka_unit_test, test_uring_file_offset);
     ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
     // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
 #endif
