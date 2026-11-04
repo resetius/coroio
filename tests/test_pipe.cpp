@@ -152,6 +152,28 @@ void test_pipe_wait_clears_pid(void**) {
     assert_int_equal(pipe.Wait(), -1);
 }
 
+static void NoopSignalHandler(int) { }
+
+void test_pipe_wait_interrupted(void**) {
+    TLoop<TDefaultPoller> loop;
+    auto& poller = loop.Poller();
+    std::string shPath = "/bin/sh";
+
+    // No SA_RESTART: waitpid must fail with EINTR once
+    struct sigaction sa = {}, old = {};
+    sa.sa_handler = NoopSignalHandler;
+    sigemptyset(&sa.sa_mask);
+    assert_int_equal(sigaction(SIGALRM, &sa, &old), 0);
+
+    TPipe pipe(poller, shPath, {"-c", "sleep 1; exit 7"});
+    ualarm(100000, 0);
+    int rc = pipe.Wait();
+    sigaction(SIGALRM, &old, nullptr);
+
+    assert_int_equal(rc, 7);
+    assert_int_equal(pipe.Pid(), -1);
+}
+
 template<typename TPoller>
 void test_pipe_async_wait(void**) {
     TLoop<TPoller> loop;
@@ -203,6 +225,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_pipe_merge_stderr_into_stdout);
     ADD_TEST(cmocka_unit_test, test_pipe_kill_then_read);
     ADD_TEST(cmocka_unit_test, test_pipe_wait_clears_pid);
+    ADD_TEST(cmocka_unit_test, test_pipe_wait_interrupted);
     ADD_TEST(my_unit_test, test_pipe_async_wait, TSelect);
     ADD_TEST(my_unit_test, test_pipe_async_wait, TPoll);
 #ifdef __linux__
