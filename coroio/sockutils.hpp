@@ -163,7 +163,7 @@ struct TByteReader {
      * - Throws a std::runtime_error if the socket is closed (ReadSome returns 0)
      *   before the delimiter is found.
      * - If ReadSome returns a negative value, the read is retried.
-     * - An empty delimiter matches immediately and returns an empty string.
+     * - An empty delimiter returns an empty string without reading or consuming anything.
      *
      * @param delimiter The string to look for in the incoming data.
      * @return A TFuture<std::string> that completes once the delimiter is found,
@@ -173,6 +173,10 @@ struct TByteReader {
      */
     TFuture<std::string> ReadUntil(const std::string& delimiter)
     {
+        if (delimiter.empty()) {
+            co_return std::string();
+        }
+
         char tempBuffer[1024];
         size_t scanned = 0; // Buffer[0, scanned) holds no delimiter start
 
