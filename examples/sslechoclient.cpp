@@ -41,14 +41,14 @@ template<typename TPoller>
 void run(bool debug, TAddress address)
 {
     NNet::TLoop<TPoller> loop;
-    NNet::TFuture<void> h;
+    std::function<void(const char*)> sslDebugLogFunc;
     if (debug) {
-        TSslContext ctx = TSslContext::Client([&](const char* s) { std::cerr << s << "\n"; });
-        h = client<true>(loop.Poller(), ctx, std::move(address));
-    } else {
-        TSslContext ctx = TSslContext::Client();
-        h = client<false>(loop.Poller(), ctx, std::move(address));
+        sslDebugLogFunc = [](const char* s) { std::cerr << s << "\n"; };
     }
+    TSslContext ctx = TSslContext::Client(sslDebugLogFunc);
+    NNet::TFuture<void> h = debug
+        ? client<true>(loop.Poller(), ctx, std::move(address))
+        : client<false>(loop.Poller(), ctx, std::move(address));
     while (!h.done()) {
         loop.Step();
     }
@@ -57,13 +57,15 @@ void run(bool debug, TAddress address)
 
 int main(int argc, char** argv) {
     TInitializer init;
-    std::string addr;
+    std::string addr = "127.0.0.1";
     int port = 0;
     std::string method = "select";
     bool debug = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i < argc-1) {
             port = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--addr") && i < argc-1) {
+            addr = argv[++i];
         } else if (!strcmp(argv[i], "--method") && i < argc-1) {
             method = argv[++i];
         } else if (!strcmp(argv[i], "--debug")) {
