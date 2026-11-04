@@ -1681,7 +1681,7 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
 
 namespace {
 
-struct TListItem: TIntrusiveNode<TListItem> {
+struct TListItem: NDetail::TIntrusiveNode<TListItem> {
     TListItem(int value)
         : Value(value)
     { }
@@ -1689,7 +1689,7 @@ struct TListItem: TIntrusiveNode<TListItem> {
     int Value;
 };
 
-std::vector<int> ListValues(TIntrusiveList<TListItem>& list) {
+std::vector<int> ListValues(NDetail::TIntrusiveList<TListItem>& list) {
     std::vector<int> values;
     for (auto& item : list) {
         values.push_back(item.Value);
@@ -1700,7 +1700,7 @@ std::vector<int> ListValues(TIntrusiveList<TListItem>& list) {
 } // namespace
 
 void test_intrusive_list_push(void**) {
-    TIntrusiveList<TListItem> list;
+    NDetail::TIntrusiveList<TListItem> list;
     assert_true(list.Empty());
     assert_true(ListValues(list).empty());
     TListItem a(1), b(2), c(3), d(4);
@@ -1720,7 +1720,7 @@ void test_intrusive_list_push(void**) {
 void test_intrusive_list_erase(void**) {
     // The first, a middle and the last item.
     for (int erased = 0; erased < 3; erased++) {
-        TIntrusiveList<TListItem> list;
+        NDetail::TIntrusiveList<TListItem> list;
         TListItem items[3] = {0, 1, 2};
         for (auto& item : items) {
             list.PushBack(item);
@@ -1742,16 +1742,16 @@ void test_intrusive_list_erase(void**) {
         assert_true(list.Empty());
     }
 
-    TIntrusiveList<TListItem> list;
+    NDetail::TIntrusiveList<TListItem> list;
     TListItem only(7);
     list.PushBack(only);
-    TIntrusiveList<TListItem>::Erase(only);
+    NDetail::TIntrusiveList<TListItem>::Erase(only);
     assert_true(list.Empty());
     assert_false(only.IsLinked());
 }
 
 void test_intrusive_list_reinsert(void**) {
-    TIntrusiveList<TListItem> list;
+    NDetail::TIntrusiveList<TListItem> list;
     TListItem a(1), b(2);
     list.PushBack(a);
     list.PushBack(b);

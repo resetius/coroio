@@ -1,6 +1,9 @@
 #pragma once
 
+#include <assert.h>
+
 namespace NNet {
+namespace NDetail {
 
 template<typename T> class TIntrusiveList;
 
@@ -24,6 +27,7 @@ public:
 
     /// Removes the object from its list in O(1). It must be in a list.
     void Unlink() {
+        assert(IsLinked());
         Prev_->Next_ = Next_;
         Next_->Prev_ = Prev_;
         Prev_ = nullptr;
@@ -46,8 +50,8 @@ private:
  * Objects must be unlinked before they are destroyed.
  *
  * @code{.cpp}
- * struct TItem: TIntrusiveNode<TItem> { int Value = 0; };
- * TIntrusiveList<TItem> list;
+ * struct TItem: NDetail::TIntrusiveNode<TItem> { int Value = 0; };
+ * NDetail::TIntrusiveList<TItem> list;
  * TItem a, b;
  * list.PushBack(a);
  * list.PushFront(b);
@@ -99,6 +103,7 @@ public:
 
     /// The first object. The list must not be empty.
     T& Front() {
+        assert(!Empty());
         return static_cast<T&>(*Sentinel_.Next_);
     }
 
@@ -135,4 +140,5 @@ private:
     TNode Sentinel_;
 };
 
+} // namespace NDetail
 } // namespace NNet

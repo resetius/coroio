@@ -143,7 +143,7 @@ public:
 
 private:
     // OVERLAPPED is the first base: the system gets the operation as an OVERLAPPED*.
-    struct TIO: OVERLAPPED, TIntrusiveNode<TIO> {
+    struct TIO: OVERLAPPED, NDetail::TIntrusiveNode<TIO> {
         THandle handle;
         struct sockaddr* addr = nullptr; // for accept
         socklen_t* len = nullptr; // for accept
@@ -166,7 +166,7 @@ private:
 
     // Allocator to avoid dynamic memory allocation for each IOCP event structure.
     TArenaAllocator<TIO> Allocator_;
-    TIntrusiveList<TIO> Pending_; // operations whose completions are not dequeued yet
+    NDetail::TIntrusiveList<TIO> Pending_; // operations whose completions are not dequeued yet
     std::vector<OVERLAPPED_ENTRY> Entries_;
     std::vector<int> Results_; // results of the completions in ReadyEvents_, by index
     size_t NextResult_ = 0;
