@@ -10,6 +10,10 @@
 #include <iostream>
 #include <unordered_set>
 
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+#include <sanitizer/lsan_interface.h>
+#endif
+
 #include <coroio/all.hpp>
 #include <coroio/http/httpd.hpp>
 
@@ -401,7 +405,13 @@ void test_http_server_header_split_between_writes(void**) {
     listener.Listen();
 
     TWebServer<TSocket> server(std::move(listener), router);
-    server.Start();
+    {
+        // The detached accept loop never finishes, its frame is intentionally left suspended
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+        __lsan::ScopedDisabler lsanDisabler;
+#endif
+        server.Start();
+    }
 
     TSocket client(poller, serverAddr.Domain());
     std::string response;
