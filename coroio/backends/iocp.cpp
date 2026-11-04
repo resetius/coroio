@@ -26,23 +26,12 @@ TIOCp::TIO* TIOCp::NewTIO(int fd, THandle handle) {
     TIO* tio = new (Allocator_.Allocate()) TIO();
     tio->fd = fd;
     tio->handle = handle;
-    tio->next = Pending_;
-    if (Pending_) {
-        Pending_->prev = tio;
-    }
-    Pending_ = tio;
+    Pending_.PushFront(*tio);
     return tio;
 }
 
 void TIOCp::FreeTIO(TIO* tio) {
-    if (tio->prev) {
-        tio->prev->next = tio->next;
-    } else {
-        Pending_ = tio->next;
-    }
-    if (tio->next) {
-        tio->next->prev = tio->prev;
-    }
+    Pending_.Erase(*tio);
     Allocator_.Deallocate(tio);
 }
 
@@ -177,22 +166,25 @@ int TIOCp::Cancel(THandle h)
             return result;
         }
     }
-    TIO* tio = Pending_;
-    while (tio && tio->handle != h) {
-        tio = tio->next;
+    TIO* tio = nullptr;
+    for (auto& pending : Pending_) {
+        if (pending.handle == h) {
+            tio = &pending;
+            break;
+        }
     }
     if (!tio) {
         return -1;
     }
 
     tio->handle = {};
-    CancelIoEx((HANDLE)(SOCKET)tio->fd, &tio->overlapped);
+    CancelIoEx((HANDLE)(SOCKET)tio->fd, tio);
     // The system may use the operation's buffers until it completes, so wait until its
     // completion is dequeued or its OVERLAPPED is no longer pending. A handle not associated
     // with the port gets no packet; a packet that comes later is freed by Poll().
     // Other completions are kept for the next Poll().
     bool done = false;
-    while (!done && !HasOverlappedIoCompleted(&tio->overlapped)) {
+    while (!done && !HasOverlappedIoCompleted(tio)) {
         Entries_.resize(std::max(Allocator_.Count(), 1));
         DWORD fired = 0;
         if (!GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, 10, FALSE)) {
@@ -257,7 +249,7 @@ std::pair<THandle, int> TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
         DWORD transferred = 0;
         DWORD flags = 0;
         result = 0;
-        if (!WSAGetOverlappedResult(sock, &event->overlapped, &transferred, FALSE, &flags)
+        if (!WSAGetOverlappedResult(sock, event, &transferred, FALSE, &flags)
             || setsockopt(sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0) != 0)
         {
             result = -WSAGetLastError();

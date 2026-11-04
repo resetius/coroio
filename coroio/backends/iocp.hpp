@@ -4,6 +4,7 @@
 #include <coroio/socket.hpp>
 #include <coroio/poller.hpp>
 #include <coroio/arena.hpp>
+#include <coroio/intrusive_list.hpp>
 
 namespace NNet {
 
@@ -141,20 +142,18 @@ public:
     void Poll();
 
 private:
-    struct TIO {
-        OVERLAPPED overlapped;
+    // OVERLAPPED is the first base: the system gets the operation as an OVERLAPPED*.
+    struct TIO: OVERLAPPED, TIntrusiveNode<TIO> {
         THandle handle;
         struct sockaddr* addr = nullptr; // for accept
         socklen_t* len = nullptr; // for accept
         int sock = -1; // for accept
         int fd = -1;
         bool connect = false;
-        TIO* prev = nullptr; // in Pending_
-        TIO* next = nullptr;
 
-        TIO() {
-            memset(&overlapped, 0, sizeof(overlapped));
-        }
+        TIO()
+            : OVERLAPPED()
+        { }
     };
 
     long GetTimeoutMs();
@@ -167,7 +166,7 @@ private:
 
     // Allocator to avoid dynamic memory allocation for each IOCP event structure.
     TArenaAllocator<TIO> Allocator_;
-    TIO* Pending_ = nullptr; // operations whose completions are not dequeued yet
+    TIntrusiveList<TIO> Pending_; // operations whose completions are not dequeued yet
     std::vector<OVERLAPPED_ENTRY> Entries_;
     std::vector<int> Results_; // results of the completions in ReadyEvents_, by index
     size_t NextResult_ = 0;

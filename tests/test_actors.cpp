@@ -801,7 +801,7 @@ struct TMyNode : public TIntrusiveListNode<TMyNode> {
 };
 
 void test_intrusive_list(void**) {
-    using TList = TIntrusiveList<TMyNode>;
+    using TList = NActors::TIntrusiveList<TMyNode>;
     TList list;
 
     for (int i = 0; i < 10; ++i) {
