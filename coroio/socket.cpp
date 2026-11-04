@@ -31,6 +31,15 @@ int TSocketBase<void>::Create(int domain, int type) {
 }
 
 int TSocketBase<void>::Setup(int s) {
+    // On failure the object is not constructed, so nobody else will close s.
+    auto fail = [s](int err, const char* what) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        throw std::system_error(err, std::generic_category(), what);
+    };
     int value;
     socklen_t len = sizeof(value);
     [[maybe_unused]] bool isSocket = false;
@@ -42,7 +51,7 @@ int TSocketBase<void>::Setup(int s) {
 #ifdef _WIN32
             if (WSAGetLastError() != WSAENOPROTOOPT)
 #endif
-                throw std::system_error(errno, std::generic_category(), "setsockopt");
+                fail(errno, "setsockopt");
         }
     }
 
@@ -55,10 +64,10 @@ int TSocketBase<void>::Setup(int s) {
 #else
     auto flags = fcntl(s, F_GETFL, 0);
     if (flags < 0) {
-        throw std::system_error(errno, std::generic_category(), "fcntl");
+        fail(errno, "fcntl");
     }
     if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
-        throw std::system_error(errno, std::generic_category(), "fcntl");
+        fail(errno, "fcntl");
     }
 #endif
     return s;

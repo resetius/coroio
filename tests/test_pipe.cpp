@@ -140,6 +140,18 @@ void test_pipe_kill_then_read(void**) {
     assert_true(bytesRead == 0);
 }
 
+void test_pipe_wait_clears_pid(void**) {
+    TLoop<TDefaultPoller> loop;
+    auto& poller = loop.Poller();
+    std::string shPath = "/bin/sh";
+    TPipe pipe(poller, shPath, {"-c", "exit 5"});
+
+    assert_true(pipe.Pid() > 0);
+    assert_int_equal(pipe.Wait(), 5);
+    assert_int_equal(pipe.Pid(), -1);
+    assert_int_equal(pipe.Wait(), -1);
+}
+
 template<typename TPoller>
 void test_pipe_async_wait(void**) {
     TLoop<TPoller> loop;
@@ -190,6 +202,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_pipe_read_stderr);
     ADD_TEST(cmocka_unit_test, test_pipe_merge_stderr_into_stdout);
     ADD_TEST(cmocka_unit_test, test_pipe_kill_then_read);
+    ADD_TEST(cmocka_unit_test, test_pipe_wait_clears_pid);
     ADD_TEST(my_unit_test, test_pipe_async_wait, TSelect);
     ADD_TEST(my_unit_test, test_pipe_async_wait, TPoll);
 #ifdef __linux__
