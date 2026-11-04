@@ -25,10 +25,11 @@ void TKqueue::Poll()
     if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
     }
-    for (auto& ch : Changes_) {
-        int fd = ch.Fd;
+    for (const auto& pending : Changes_) {
+        int fd = pending.Fd;
         struct kevent kev = {};
         auto& ev = InEvents_[fd];
+        const auto ch = Resolve(pending, ev);
 
         if (ch.Handle) {
             if (ch.Type & TEvent::READ && ev.Read != ch.Handle) {
@@ -85,14 +86,8 @@ void TKqueue::Poll()
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
             ev.Write = {};
         }
-        if (flags & EV_EOF) {
-            if (ev.Read) {
-                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
-            }
-            if (ev.Write) {
-                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
-            }
-        }
+        // EOF is reported by each filter, so it wakes only its own waiter:
+        // waking the other one here would resume it twice.
     }
 
     ProcessTimers();

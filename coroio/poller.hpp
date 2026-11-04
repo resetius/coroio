@@ -136,16 +136,24 @@ public:
         Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP, {}});
     }
     /**
-     * @brief No-op placeholder for future cleanup by handle.
+     * @brief Cancels the wait of a coroutine destroyed while suspended on @p fd.
      *
-     * Intended to be called by destructors of unfinished futures so that
-     * pending waits can be unregistered. Currently unimplemented.
+     * Called by destructors of unfinished awaitables. Drops @p h from ready
+     * events immediately and queues removal of the backend registrations that
+     * still belong to @p h, so a newer waiter on the same descriptor number
+     * keeps its own. Call on the poller thread.
      *
-     * @param h The coroutine handle (unused).
+     * @param fd The file descriptor passed to AddRead, AddWrite or AddRemoteHup.
+     * @param h  The coroutine handle passed with it.
      */
-    void RemoveEvent(THandle /*h*/) {
-        // TODO: Add new vector for this type of removing
-        // Will be called in destuctor of unfinished futures
+    void RemoveEvent(int fd, THandle h) {
+        for (auto& event : ReadyEvents_) {
+            if (event.Handle == h) {
+                event.Handle = {};
+            }
+        }
+        MaxFd_ = std::max(MaxFd_, fd);
+        Changes_.emplace_back(TEvent{fd, 0, h});
     }
     /**
      * @brief Suspends execution until the specified time.
@@ -311,6 +319,31 @@ protected:
         ts.tv_sec = p1.count();
         ts.tv_nsec = p2.count();
         return ts;
+    }
+    /**
+     * @brief Turns a cancellation queued by RemoveEvent(int, THandle) into a removal.
+     *
+     * Other changes are returned as is.
+     *
+     * @param change A pending change.
+     * @param ev     The backend's current registrations for `change.Fd`.
+     * @return A removal of the directions still registered to the cancelled handle.
+     */
+    static TEvent Resolve(const TEvent& change, const THandlePair& ev) {
+        if (change.Type || !change.Handle) {
+            return change;
+        }
+        int type = 0;
+        if (ev.Read == change.Handle) {
+            type |= TEvent::READ;
+        }
+        if (ev.Write == change.Handle) {
+            type |= TEvent::WRITE;
+        }
+        if (ev.RHup == change.Handle) {
+            type |= TEvent::RHUP;
+        }
+        return TEvent{change.Fd, type, {}};
     }
     /// Clears the lists of ready events and pending changes.
     void Reset() {
