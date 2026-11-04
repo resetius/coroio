@@ -63,6 +63,7 @@ public:
 
         result->Next = nullptr;
         result->Prev = nullptr;
+        result->Tag = 0;
 
         assert(Size_ > 0);
         Size_--;
@@ -85,6 +86,7 @@ public:
 
         result->Next = nullptr;
         result->Prev = nullptr;
+        result->Tag = 0;
         Size_--;
         return result;
     }
