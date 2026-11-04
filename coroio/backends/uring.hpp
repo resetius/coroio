@@ -132,11 +132,20 @@ public:
      */
     void Cancel(int fd);
     /**
-     * @brief Cancels pending operations associated with a specific coroutine handle.
+     * @brief Cancels the pending operation posted with a coroutine handle.
      *
-     * @param h The coroutine handle.
+     * Called when the coroutine is destroyed while waiting for the operation.
+     * An operation not submitted yet is dropped. Otherwise it is cancelled, and
+     * the call returns only after the kernel has finished with it, so its
+     * buffers may be freed. Either way its completion is dropped, so @p h is
+     * not resumed. An operation that completed before the cancellation loses
+     * its result, e.g. the data it read.
+     *
+     * @param h The coroutine handle the operation was posted with.
+     * @return The result of the dropped completion, e.g. a descriptor accepted meanwhile,
+     *         or a negative value.
      */
-    void Cancel(std::coroutine_handle<> h);
+    int Cancel(std::coroutine_handle<> h);
     /**
      * @brief Registers a file descriptor with the IO_uring poller.
      *
@@ -164,6 +173,12 @@ public:
      * @return An integer result, such as the number of bytes transferred.
      */
     int Result();
+    /**
+     * @brief Resumes the coroutines whose operations completed.
+     *
+     * Skips completions dropped by Cancel(std::coroutine_handle<>).
+     */
+    void WakeupReadyHandles();
 
 private:
     /**
@@ -184,11 +199,15 @@ private:
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
+    /// Moves the posted completions to Reaped_, except the one of @p h, whose result goes to @p result.
+    bool Reap(std::coroutine_handle<> h, int* result);
 
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
-    std::queue<int> Results_; ///< Queue of results for completed operations.
+    std::vector<int> Results_; ///< Results of the completions in ReadyEvents_, by index.
+    size_t NextResult_ = 0; ///< Index of the result returned by the next Result() call.
+    std::vector<std::pair<THandle, int>> Reaped_; ///< Completions reaped by Cancel(), delivered by the next Wait().
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
 };
 

@@ -22,22 +22,26 @@ TIOCp::~TIOCp()
     CloseHandle(Port_);
 }
 
-TIOCp::TIO* TIOCp::NewTIO() {
-    return new (Allocator_.Allocate()) TIO();
+TIOCp::TIO* TIOCp::NewTIO(int fd, THandle handle) {
+    TIO* tio = new (Allocator_.Allocate()) TIO();
+    tio->fd = fd;
+    tio->handle = handle;
+    Pending_.PushFront(*tio);
+    return tio;
 }
 
 void TIOCp::FreeTIO(TIO* tio) {
+    Pending_.Erase(*tio);
     Allocator_.Deallocate(tio);
 }
 
 void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
     WSABUF recvBuf = {(ULONG)size, (char*)buf};
     DWORD flags = 0;
     DWORD outSize = 0;
-    auto ret = WSARecv((SOCKET)fd, &recvBuf, 1, &outSize, &flags, (WSAOVERLAPPED*)tio, nullptr);
+    auto ret = WSARecv((SOCKET)fd, &recvBuf, 1, &outSize, &flags, static_cast<OVERLAPPED*>(tio), nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
@@ -46,11 +50,10 @@ void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
 
 void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
     WSABUF sendBuf = {(ULONG)size, (char*)buf};
     DWORD outSize = 0;
-    auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
+    auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, static_cast<OVERLAPPED*>(tio), nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
@@ -59,8 +62,7 @@ void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> hand
 
 void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
     tio->addr = addr;
     tio->len = len;
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -77,7 +79,7 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine
     }
 
     DWORD dwBytesReceived = 0;
-    auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, &dwBytesReceived, (WSAOVERLAPPED*)tio);
+    auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, &dwBytesReceived, static_cast<OVERLAPPED*>(tio));
     if (ret == FALSE && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         closesocket(sock);
@@ -87,9 +89,8 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine
 
 void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
-    tio->fd = fd;
+    TIO* tio = NewTIO(fd, handle);
+    tio->connect = true;
 
     int bind_result = 0;
     if (len == sizeof(sockaddr_in)) {
@@ -113,7 +114,7 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
         throw std::system_error(WSAGetLastError(), std::generic_category(), "bind");
     }
 
-    auto ret = ConnectEx((SOCKET)fd, addr, len, nullptr, 0, nullptr, (WSAOVERLAPPED*)tio);
+    auto ret = ConnectEx((SOCKET)fd, addr, len, nullptr, 0, nullptr, static_cast<OVERLAPPED*>(tio));
     if (ret == FALSE && WSAGetLastError() != ERROR_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "ConnectEx");
@@ -122,11 +123,10 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
 
 void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
 
-    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
-    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(tio));
+    if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "ReadFile");
     }
@@ -134,11 +134,10 @@ void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 
 void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
 
-    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
-    if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(tio));
+    if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
         FreeTIO(tio);
         throw std::system_error(WSAGetLastError(), std::generic_category(), "WriteFile");
     }
@@ -153,10 +152,72 @@ void TIOCp::Cancel(int fd)
     CancelIoEx((HANDLE)(SOCKET)fd, nullptr);
 }
 
+int TIOCp::Cancel(THandle h)
+{
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        if (ReadyEvents_[i].Handle == h) {
+            ReadyEvents_[i].Handle = {};
+            return Results_[i];
+        }
+    }
+    for (auto& [handle, result] : Reaped_) {
+        if (handle == h) {
+            handle = {};
+            return result;
+        }
+    }
+    TIO* tio = nullptr;
+    for (auto& pending : Pending_) {
+        if (pending.handle == h) {
+            tio = &pending;
+            break;
+        }
+    }
+    if (!tio) {
+        return -1;
+    }
+
+    tio->handle = {};
+    CancelIoEx((HANDLE)(SOCKET)tio->fd, tio);
+    // The system may use the operation's buffers until it completes, so wait until its
+    // completion is dequeued or its OVERLAPPED is no longer pending. A handle not associated
+    // with the port gets no packet; a packet that comes later is freed by Poll().
+    // Other completions are kept for the next Poll().
+    bool done = false;
+    while (!done && !HasOverlappedIoCompleted(tio)) {
+        Entries_.resize(std::max(Allocator_.Count(), 1));
+        DWORD fired = 0;
+        if (!GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, 10, FALSE)) {
+            if (GetLastError() == WAIT_TIMEOUT) {
+                continue;
+            }
+            break; // called from destructors: do not throw
+        }
+        for (DWORD i = 0; i < fired; i++) {
+            if (!done && static_cast<TIO*>(Entries_[i].lpOverlapped) == tio) {
+                done = true;
+            }
+            auto [handle, result] = Complete(Entries_[i]);
+            if (handle) {
+                Reaped_.emplace_back(handle, result);
+            }
+        }
+    }
+    return -1;
+}
+
 int TIOCp::Result() {
-    int r = Results_.front();
-    Results_.pop();
-    return r;
+    return Results_[NextResult_++];
+}
+
+void TIOCp::WakeupReadyHandles() {
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        // Cleared before resuming, so that Cancel() finds only completions not delivered yet.
+        if (auto h = std::exchange(ReadyEvents_[i].Handle, {})) {
+            NextResult_ = i;
+            h.resume();
+        }
+    }
 }
 
 long TIOCp::GetTimeoutMs() {
@@ -164,46 +225,70 @@ long TIOCp::GetTimeoutMs() {
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+std::pair<THandle, int> TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
+{
+    TIO* event = static_cast<TIO*>(entry.lpOverlapped);
+    THandle handle = event->handle;
+    int result = -1;
+    if (!handle) {
+        // Cancelled: the memory addr and len point to belongs to the destroyed coroutine.
+        if (event->addr) {
+            closesocket((SOCKET)event->sock);
+        }
+    } else if (event->addr) {
+        sockaddr_in* remoteAddr = nullptr;
+        sockaddr_in* localAddr = nullptr;
+        int localAddrLen = 0;
+        *event->len = 0;
+        GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
+        memmove(event->addr, remoteAddr, *event->len);
+        result = event->sock;
+    } else if (event->connect) {
+        // ConnectEx transfers no bytes, its outcome is the operation status.
+        SOCKET sock = (SOCKET)event->fd;
+        DWORD transferred = 0;
+        DWORD flags = 0;
+        result = 0;
+        if (!WSAGetOverlappedResult(sock, event, &transferred, FALSE, &flags)
+            || setsockopt(sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0) != 0)
+        {
+            result = -WSAGetLastError();
+        }
+    } else {
+        result = entry.dwNumberOfBytesTransferred;
+    }
+    FreeTIO(event);
+    return {handle, result};
+}
+
 void TIOCp::Poll()
 {
     Reset();
+    Results_.clear();
+    NextResult_ = 0;
+    for (auto [h, result] : Reaped_) {
+        if (h) {
+            Results_.push_back(result);
+            ReadyEvents_.emplace_back(TEvent{-1, 0, h});
+        }
+    }
+    // Completions reaped by Cancel() are ready already: do not block.
+    DWORD timeout = Reaped_.empty() ? GetTimeoutMs() : 0;
+    Reaped_.clear();
     Entries_.resize(std::max(Allocator_.Count(), 1));
 
     DWORD fired = 0;
-    auto res = GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, GetTimeoutMs(), FALSE);
+    auto res = GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, timeout, FALSE);
     if (res == FALSE && GetLastError() != WAIT_TIMEOUT) {
         throw std::system_error(GetLastError(), std::generic_category(), "GetQueuedCompletionStatusEx");
     }
 
-    assert(Results_.empty());
-
     for (DWORD i = 0; i < fired && res == TRUE; i++) {
-        TIO* event = (TIO*)Entries_[i].lpOverlapped;
-        if (event->addr) {
-            sockaddr_in* remoteAddr = nullptr;
-            sockaddr_in* localAddr = nullptr;
-            int localAddrLen = 0;
-            *event->len = 0;
-            GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
-            memmove(event->addr, remoteAddr, *event->len);
-            Results_.push(event->sock);
-        } else if (event->fd >= 0) {
-            // ConnectEx transfers no bytes, its outcome is the operation status.
-            SOCKET sock = (SOCKET)event->fd;
-            DWORD transferred = 0;
-            DWORD flags = 0;
-            int ret = 0;
-            if (!WSAGetOverlappedResult(sock, &event->overlapped, &transferred, FALSE, &flags)
-                || setsockopt(sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0) != 0)
-            {
-                ret = -WSAGetLastError();
-            }
-            Results_.push(ret);
-        } else {
-            Results_.push(Entries_[i].dwNumberOfBytesTransferred);
+        auto [h, result] = Complete(Entries_[i]);
+        if (h) {
+            Results_.push_back(result);
+            ReadyEvents_.emplace_back(TEvent{-1, 0, h});
         }
-        ReadyEvents_.emplace_back(TEvent{-1, 0, event->handle});
-        FreeTIO(event);
     }
 
     ProcessTimers();

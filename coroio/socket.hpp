@@ -579,6 +579,9 @@ protected:
  * Instead, they should use the type defined by the poller, i.e. @c typename TPoller::TSocket.
  * Depending on the poller, this may resolve to either TSocket or TPollerDrivenSocket.
  *
+ * @note The poller must outlive every coroutine suspended on an operation of this
+ *       class: destroying such a coroutine cancels the operation in the poller.
+ *
  * @tparam T The poller type used by this socket. The poller must provide methods for
  * asynchronous operations (such as Connect, Accept, Recv, and Send) and timer management.
  */
@@ -636,12 +639,21 @@ public:
      */
     auto Accept() {
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    // The coroutine is destroyed while waiting. Close a connection accepted meanwhile.
+                    TSockOps::close(poller->Cancel(handle));
+                }
+            }
+
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, h);
+                handle = h;
             }
 
             TPollerDrivenSocket<T> await_resume() {
+                handle = {};
                 int clientfd = poller->Result();
                 if (clientfd < 0) {
                     throw std::system_error(-clientfd, std::generic_category(), "accept");
@@ -655,6 +667,7 @@ public:
 
             char addr[2*(sizeof(sockaddr_in6)+16)] = {0}; // use additional memory for windows
             socklen_t len = static_cast<socklen_t>(sizeof(addr));
+            THandle handle = {};
         };
 
         return TAwaitable{Poller_, Fd_};
@@ -679,18 +692,33 @@ public:
         }
         RemoteAddr_ = addr;
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->Cancel(handle);
+                    if (deadline != TTime::max()) {
+                        poller->RemoveTimer(timerId, deadline);
+                    }
+                }
+            }
+
             bool await_ready() const { return false; }
 
             void await_suspend(std::coroutine_handle<> h) {
                 poller->Connect(fd, addr.first, addr.second, h);
+                handle = h;
                 if (deadline != TTime::max()) {
                     timerId = poller->AddTimer(deadline, h);
                 }
             }
 
-            // Returns true if the deadline fired before the connect completed.
-            bool await_resume() {
-                return deadline != TTime::max() && poller->RemoveTimer(timerId, deadline);
+            int await_resume() {
+                auto h = std::exchange(handle, {});
+                if (deadline != TTime::max() && poller->RemoveTimer(timerId, deadline)) {
+                    // The deadline fired first: the connect is still pending, or its completion is not delivered yet.
+                    poller->Cancel(h);
+                    throw std::system_error(std::make_error_code(std::errc::timed_out));
+                }
+                return poller->Result();
             }
 
             T* poller;
@@ -698,19 +726,9 @@ public:
             std::pair<const sockaddr*, int> addr;
             TTime deadline;
             unsigned timerId = 0;
+            THandle handle = {};
         };
-        T* poller = Poller_;
-        int fd = Fd_;
-        bool timedOut = co_await TAwaitable{poller, fd, RemoteAddr()->RawAddr(), deadline};
-        if (timedOut) {
-            // The cancelled operation still completes and resumes this coroutine.
-            poller->Cancel(fd);
-            co_await std::suspend_always{};
-        }
-        int ret = poller->Result();
-        if (timedOut) {
-            throw std::system_error(std::make_error_code(std::errc::timed_out));
-        }
+        int ret = co_await TAwaitable{Poller_, Fd_, RemoteAddr()->RawAddr(), deadline};
         if (ret < 0) {
             throw std::system_error(-ret, std::generic_category(), "connect");
         }
@@ -728,12 +746,20 @@ public:
      */
     auto ReadSome(void* buf, size_t size) {
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->Cancel(handle);
+                }
+            }
+
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 poller->Recv(fd, buf, size, h);
+                handle = h;
             }
 
             auto await_resume() {
+                handle = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -757,6 +783,7 @@ public:
 
             void* buf;
             size_t size;
+            THandle handle = {};
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
@@ -774,12 +801,20 @@ public:
      */
     auto WriteSome(const void* buf, size_t size) {
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->Cancel(handle);
+                }
+            }
+
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 poller->Send(fd, buf, size, h);
+                handle = h;
             }
 
             auto await_resume() {
+                handle = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -803,6 +838,7 @@ public:
 
             const void* buf;
             size_t size;
+            THandle handle = {};
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
@@ -833,6 +869,9 @@ private:
  * Ordinary users should not choose a file handle type directly. Instead, they should use the type
  * defined by the poller (i.e. @c typename TPoller::TFileHandle), which will resolve to either
  * TFileHandle or TPollerDrivenFileHandle depending on the poller in use.
+ *
+ * @note The poller must outlive every coroutine suspended on an operation of this
+ *       class: destroying such a coroutine cancels the operation in the poller.
  *
  * @tparam T The poller type that defines the asynchronous file operations.
  */
@@ -867,12 +906,20 @@ public:
      */
     auto ReadSome(void* buf, size_t size) {
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->Cancel(handle);
+                }
+            }
+
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 poller->Read(fd, buf, size, h);
+                handle = h;
             }
 
             auto await_resume() {
+                handle = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -896,6 +943,7 @@ public:
 
             void* buf;
             size_t size;
+            THandle handle = {};
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
@@ -913,12 +961,20 @@ public:
      */
     auto WriteSome(const void* buf, size_t size) {
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->Cancel(handle);
+                }
+            }
+
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 poller->Write(fd, buf, size, h);
+                handle = h;
             }
 
             auto await_resume() {
+                handle = {};
                 auto ret = poller->Result();
                 if (ret < 0) {
 #ifdef _WIN32
@@ -942,6 +998,7 @@ public:
 
             const void* buf;
             size_t size;
+            THandle handle = {};
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};

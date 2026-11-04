@@ -4,6 +4,7 @@
 #include <coroio/socket.hpp>
 #include <coroio/poller.hpp>
 #include <coroio/arena.hpp>
+#include <coroio/intrusive_list.hpp>
 
 namespace NNet {
 
@@ -102,6 +103,20 @@ public:
      */
     void Cancel(int fd);
     /**
+     * @brief Cancels the pending operation posted with a coroutine handle.
+     *
+     * Called when the coroutine is destroyed while waiting for the operation.
+     * Cancels it with CancelIoEx and returns only after it is complete (its
+     * completion dequeued or its OVERLAPPED no longer pending), so its buffers
+     * may be freed. The completion is dropped, so @p h is not resumed. Other
+     * completions dequeued meanwhile are delivered by the next Poll().
+     *
+     * @param h The coroutine handle the operation was posted with.
+     * @return The result of the dropped completion if it was collected already
+     *         (e.g. an accepted socket), otherwise -1.
+     */
+    int Cancel(THandle h);
+    /**
      * @brief Registers a file descriptor with the IOCP.
      *
      * @param fd The file descriptor to register.
@@ -114,6 +129,12 @@ public:
      */
     int Result();
     /**
+     * @brief Resumes the coroutines whose operations completed.
+     *
+     * Skips completions dropped by Cancel(THandle).
+     */
+    void WakeupReadyHandles();
+    /**
      * @brief Polls for IOCP events.
      *
      * This method waits for asynchronous I/O events and processes their completion.
@@ -121,29 +142,35 @@ public:
     void Poll();
 
 private:
-    struct TIO {
-        OVERLAPPED overlapped;
+    // OVERLAPPED is the first base: the system gets the operation as an OVERLAPPED*.
+    struct TIO: OVERLAPPED, NDetail::TIntrusiveNode<TIO> {
         THandle handle;
         struct sockaddr* addr = nullptr; // for accept
         socklen_t* len = nullptr; // for accept
         int sock = -1; // for accept
-        int fd = -1; // for connect
+        int fd = -1;
+        bool connect = false;
 
-        TIO() {
-            memset(&overlapped, 0, sizeof(overlapped));
-        }
+        TIO()
+            : OVERLAPPED()
+        { }
     };
 
     long GetTimeoutMs();
-    TIO* NewTIO();
+    TIO* NewTIO(int fd, THandle handle);
     void FreeTIO(TIO*);
+    // Frees the operation of a dequeued completion, returns its handle and result.
+    std::pair<THandle, int> Complete(const OVERLAPPED_ENTRY& entry);
 
     HANDLE Port_;
 
     // Allocator to avoid dynamic memory allocation for each IOCP event structure.
     TArenaAllocator<TIO> Allocator_;
+    NDetail::TIntrusiveList<TIO> Pending_; // operations whose completions are not dequeued yet
     std::vector<OVERLAPPED_ENTRY> Entries_;
-    std::queue<int> Results_;
+    std::vector<int> Results_; // results of the completions in ReadyEvents_, by index
+    size_t NextResult_ = 0;
+    std::vector<std::pair<THandle, int>> Reaped_; // dequeued by Cancel(), delivered by the next Poll()
 };
 
 }
