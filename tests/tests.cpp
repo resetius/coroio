@@ -1021,10 +1021,17 @@ void test_read_write_full_ssl(void**) {
         auto sslClient = TSslSocket(std::move(client), ctx);
         co_await sslClient.Connect(caddr);
         co_await TByteWriter(sslClient).Write(data.data(), data.size());
+        // Reading the reply also consumes the TLS 1.3 session tickets;
+        // closing with unread data makes the kernel send RST instead of FIN.
+        char reply = 0;
+        co_await TByteReader(sslClient).Read(&reply, 1);
+        if (reply != 'k') {
+            throw std::runtime_error("unexpected reply");
+        }
         co_return;
     }(std::move(client), caddr, data);
 
-    std::vector<char> received(1024*1024);
+    std::vector<char> received(data.size());
     TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
         TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
@@ -1032,12 +1039,17 @@ void test_read_write_full_ssl(void**) {
         auto sslClient = TSslSocket(std::move(client), ctx);
         co_await sslClient.AcceptHandshake();
         co_await TByteReader(sslClient).Read(received.data(), received.size());
+        char reply = 'k';
+        co_await TByteWriter(sslClient).Write(&reply, 1);
         co_return;
     }(socket, received);
 
     while (!(h1.done() && h2.done())) {
         loop.Step();
     }
+
+    h1.await_resume();
+    h2.await_resume();
 
     assert_memory_equal(data.data(), received.data(), data.size());
 }
@@ -2776,7 +2788,7 @@ int main(int argc, char* argv[]) {
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_cloexec);
 #ifdef HAVE_OPENSSL
-    ADD_TEST(my_unit_test2, test_read_write_full_ssl, TSelect, TPoll);
+    ADD_TEST(my_unit_poller, test_read_write_full_ssl);
 #endif
 #endif
     ADD_TEST(my_unit_test2, test_resolver, TSelect, TPoll);
