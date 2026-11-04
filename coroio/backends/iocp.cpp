@@ -187,13 +187,18 @@ int TIOCp::Cancel(THandle h)
 
     tio->handle = {};
     CancelIoEx((HANDLE)(SOCKET)tio->fd, &tio->overlapped);
-    // The system may use the operation's buffers until its completion is dequeued,
-    // so wait for it. Other completions are kept for the next Poll().
+    // The system may use the operation's buffers until it completes, so wait until its
+    // completion is dequeued or its OVERLAPPED is no longer pending. A handle not associated
+    // with the port gets no packet; a packet that comes later is freed by Poll().
+    // Other completions are kept for the next Poll().
     bool done = false;
-    while (!done) {
+    while (!done && !HasOverlappedIoCompleted(&tio->overlapped)) {
         Entries_.resize(std::max(Allocator_.Count(), 1));
         DWORD fired = 0;
-        if (!GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, INFINITE, FALSE)) {
+        if (!GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, 10, FALSE)) {
+            if (GetLastError() == WAIT_TIMEOUT) {
+                continue;
+            }
             break; // called from destructors: do not throw
         }
         for (DWORD i = 0; i < fired; i++) {

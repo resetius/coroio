@@ -105,10 +105,10 @@ public:
      * @brief Cancels the pending operation posted with a coroutine handle.
      *
      * Called when the coroutine is destroyed while waiting for the operation.
-     * Cancels it with CancelIoEx and returns only after its completion is
-     * dequeued, so its buffers may be freed. The completion is dropped, so
-     * @p h is not resumed. Other completions dequeued meanwhile are delivered
-     * by the next Poll().
+     * Cancels it with CancelIoEx and returns only after it is complete (its
+     * completion dequeued or its OVERLAPPED no longer pending), so its buffers
+     * may be freed. The completion is dropped, so @p h is not resumed. Other
+     * completions dequeued meanwhile are delivered by the next Poll().
      *
      * @param h The coroutine handle the operation was posted with.
      * @return The result of the dropped completion if it was collected already
