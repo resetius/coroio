@@ -77,7 +77,10 @@ public:
      * Blocks the calling thread (via `waitpid`). Call after the child has finished
      * or after sending it a signal.
      *
-     * @return The exit status as returned by `waitpid` (use `WEXITSTATUS` to extract the code).
+     * Once it returns the child is reaped and `Pid()` returns `-1`.
+     *
+     * @return The child's exit code, or `-1` if it did not exit normally or was
+     *         already reaped.
      */
     int Wait();
 
@@ -87,6 +90,9 @@ public:
      * Polls `waitpid(WNOHANG)` and sleeps on the poller between attempts with a
      * backoff growing from 1 ms to 32 ms, so it works with every poller backend.
      * Once it completes the child is reaped and `Pid()` returns `-1`.
+     *
+     * The returned future refers to this `TPipe`, so the pipe must outlive the
+     * future: destroying it while the future is suspended is a use-after-free.
      *
      * @return The child's exit code, or `-1` if it did not exit normally or was
      *         already reaped.

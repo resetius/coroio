@@ -195,8 +195,10 @@ int TPipe::Wait() {
     if (PipeLow.ChildPid == -1) {
         return -1;
     }
-    waitpid(PipeLow.ChildPid, &status, 0);
-    if (WIFEXITED(status)) {
+    pid_t ret = waitpid(PipeLow.ChildPid, &status, 0);
+    // Reaped (or not our child): the destructor must not signal a reused pid.
+    PipeLow.ChildPid = -1;
+    if (ret != -1 && WIFEXITED(status)) {
         return WEXITSTATUS(status);
     }
     return -1;
