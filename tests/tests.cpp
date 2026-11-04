@@ -1424,6 +1424,165 @@ void test_uring_cancel(void** ) {
 
 #endif
 
+namespace {
+
+template<typename TPoller>
+void StepUntilDone(TLoop<TPoller>& loop, TFuture<void>& future) {
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (!future.done() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(future.done());
+    future.await_resume();
+}
+
+template<typename TSocket>
+TFuture<void> AcceptInto(TSocket& listener, std::optional<TSocket>* accepted) {
+    accepted->emplace(co_await listener.Accept());
+}
+
+template<typename TSocket>
+TFuture<void> ReadInto(TSocket& socket, char* buf, size_t size, int* got) {
+    *got = co_await socket.ReadSome(buf, size);
+}
+
+template<typename TPoller>
+std::pair<typename TPoller::TSocket, typename TPoller::TSocket>
+ConnectedPair(TLoop<TPoller>& loop, typename TPoller::TSocket& listener, const TAddress& address) {
+    using TSocket = typename TPoller::TSocket;
+    TSocket client(loop.Poller(), address.Domain());
+    std::optional<TSocket> server;
+    auto accept = AcceptInto(listener, &server);
+    auto connect = client.Connect(address);
+    StepUntilDone(loop, connect);
+    StepUntilDone(loop, accept);
+    return {std::move(client), std::move(*server)};
+}
+
+} // namespace
+
+// For pollers that perform the I/O themselves (io_uring, IOCP).
+template<typename TPoller>
+void test_destroyed_driven_reader_not_resumed(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    std::vector<std::pair<TSocket, TSocket>> pairs; // client, server
+    pairs.reserve(3);
+    for (int i = 0; i < 3; i++) {
+        pairs.emplace_back(ConnectedPair(loop, listener, address));
+    }
+
+    for (bool submitted : {false, true}) {
+        char buf[4] = {0};
+        int got = -1;
+        std::optional<TFuture<void>> reader{ReadInto(pairs[0].second, buf, sizeof(buf), &got)};
+        if (submitted) {
+            loop.Step();
+        }
+        reader.reset();
+        assert_int_equal(send(pairs[0].first.Fd(), "x", 1, 0), 1);
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        // The read was cancelled, not completed into buf: the byte is left for the next reader.
+        assert_int_equal(got, -1);
+        assert_int_equal(buf[0], 0);
+        auto next = ReadInto(pairs[0].second, buf, sizeof(buf), &got);
+        StepUntilDone(loop, next);
+        assert_int_equal(got, 1);
+        assert_int_equal(buf[0], 'x');
+    }
+
+    for (bool collected : {true, false}) {
+        // Destroyed after the reads complete, with the completions collected or not:
+        // they are dropped, and the next one still gets its own result.
+        char bufs[3][4] = {};
+        int got[3] = {-1, -1, -1};
+        std::optional<TFuture<void>> readers[3];
+        for (int i = 0; i < 3; i++) {
+            readers[i].emplace(ReadInto(pairs[i].second, bufs[i], sizeof(bufs[i]), &got[i]));
+        }
+        loop.Step();
+        assert_int_equal(send(pairs[0].first.Fd(), "x", 1, 0), 1);
+        assert_int_equal(send(pairs[1].first.Fd(), "yy", 2, 0), 2);
+        assert_int_equal(send(pairs[2].first.Fd(), "zzz", 3, 0), 3);
+        if (collected) {
+            loop.Poller().Poll();
+        }
+        readers[0].reset();
+        readers[1].reset();
+        if (collected) {
+            loop.Poller().WakeupReadyHandles();
+        }
+        StepUntilDone(loop, *readers[2]);
+        assert_int_equal(got[0], -1);
+        assert_int_equal(got[1], -1);
+        assert_int_equal(got[2], 3);
+        assert_memory_equal(bufs[2], "zzz", 3);
+    }
+}
+
+template<typename TPoller>
+void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    {
+        // Destroyed while waiting: the connection is left for the next Accept.
+        std::optional<TSocket> accepted;
+        std::optional<TFuture<void>> accept{AcceptInto(listener, &accepted)};
+        loop.Step();
+        accept.reset();
+        TSocket client(loop.Poller(), address.Domain());
+        auto connect = client.Connect(address);
+        StepUntilDone(loop, connect);
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        assert_false(accepted.has_value());
+        auto next = AcceptInto(listener, &accepted);
+        StepUntilDone(loop, next);
+        assert_true(accepted.has_value());
+    }
+
+    {
+        // Destroyed after its completion is collected: the accepted connection is closed.
+        std::optional<TSocket> accepted;
+        std::optional<TFuture<void>> accept{AcceptInto(listener, &accepted)};
+        loop.Step();
+        TSocket client(loop.Poller(), address.Domain());
+        auto [rawAddr, len] = address.RawAddr();
+        connect(client.Fd(), rawAddr, len); // in progress, completes without the poller
+        loop.Poller().Poll();
+        accept.reset();
+        loop.Poller().WakeupReadyHandles();
+        assert_false(accepted.has_value());
+        char buf[1];
+        int got = -1;
+        auto eof = ReadInto(client, buf, sizeof(buf), &got);
+        StepUntilDone(loop, eof);
+        assert_int_equal(got, 0);
+    }
+
+    {
+        // Destroyed while connecting: neither the completion nor the deadline resumes it.
+        TSocket client(loop.Poller(), address.Domain());
+        std::optional<TFuture<void>> connect{client.Connect(address, TClock::now() + std::chrono::milliseconds(50))};
+        connect.reset();
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+    }
+}
+
 void test_base64(void**) {
     std::string data = "test string";
     std::string encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
@@ -2248,7 +2407,13 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_file_offset);
     ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
     // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
+    ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TUring);
+    ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TUring);
 #endif
+#endif
+#ifdef _WIN32
+    ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TIOCp);
+    ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TIOCp);
 #endif
 
     return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);

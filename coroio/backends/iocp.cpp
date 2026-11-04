@@ -22,18 +22,33 @@ TIOCp::~TIOCp()
     CloseHandle(Port_);
 }
 
-TIOCp::TIO* TIOCp::NewTIO() {
-    return new (Allocator_.Allocate()) TIO();
+TIOCp::TIO* TIOCp::NewTIO(int fd, THandle handle) {
+    TIO* tio = new (Allocator_.Allocate()) TIO();
+    tio->fd = fd;
+    tio->handle = handle;
+    tio->next = Pending_;
+    if (Pending_) {
+        Pending_->prev = tio;
+    }
+    Pending_ = tio;
+    return tio;
 }
 
 void TIOCp::FreeTIO(TIO* tio) {
+    if (tio->prev) {
+        tio->prev->next = tio->next;
+    } else {
+        Pending_ = tio->next;
+    }
+    if (tio->next) {
+        tio->next->prev = tio->prev;
+    }
     Allocator_.Deallocate(tio);
 }
 
 void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
     WSABUF recvBuf = {(ULONG)size, (char*)buf};
     DWORD flags = 0;
     DWORD outSize = 0;
@@ -46,8 +61,7 @@ void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle)
 
 void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
     WSABUF sendBuf = {(ULONG)size, (char*)buf};
     DWORD outSize = 0;
     auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, (WSAOVERLAPPED*)tio, nullptr);
@@ -59,8 +73,7 @@ void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> hand
 
 void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
     tio->addr = addr;
     tio->len = len;
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -87,9 +100,8 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine
 
 void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
-    tio->fd = fd;
+    TIO* tio = NewTIO(fd, handle);
+    tio->connect = true;
 
     int bind_result = 0;
     if (len == sizeof(sockaddr_in)) {
@@ -122,8 +134,7 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
 
 void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
 
     auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
@@ -134,8 +145,7 @@ void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle)
 
 void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle)
 {
-    TIO* tio = NewTIO();
-    tio->handle = handle;
+    TIO* tio = NewTIO(fd, handle);
 
     auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, (WSAOVERLAPPED*)tio);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
@@ -153,10 +163,37 @@ void TIOCp::Cancel(int fd)
     CancelIoEx((HANDLE)(SOCKET)fd, nullptr);
 }
 
+int TIOCp::Cancel(THandle h)
+{
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        if (ReadyEvents_[i].Handle == h) {
+            ReadyEvents_[i].Handle = {};
+            return Results_[i];
+        }
+    }
+    for (TIO* tio = Pending_; tio; tio = tio->next) {
+        if (tio->handle == h) {
+            // Poll() frees it when its completion arrives, without resuming h.
+            tio->handle = {};
+            CancelIoEx((HANDLE)(SOCKET)tio->fd, &tio->overlapped);
+            break;
+        }
+    }
+    return -1;
+}
+
 int TIOCp::Result() {
-    int r = Results_.front();
-    Results_.pop();
-    return r;
+    return Results_[NextResult_++];
+}
+
+void TIOCp::WakeupReadyHandles() {
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        // Cleared before resuming, so that Cancel() finds only completions not delivered yet.
+        if (auto h = std::exchange(ReadyEvents_[i].Handle, {})) {
+            NextResult_ = i;
+            h.resume();
+        }
+    }
 }
 
 long TIOCp::GetTimeoutMs() {
@@ -167,6 +204,8 @@ long TIOCp::GetTimeoutMs() {
 void TIOCp::Poll()
 {
     Reset();
+    Results_.clear();
+    NextResult_ = 0;
     Entries_.resize(std::max(Allocator_.Count(), 1));
 
     DWORD fired = 0;
@@ -175,10 +214,16 @@ void TIOCp::Poll()
         throw std::system_error(GetLastError(), std::generic_category(), "GetQueuedCompletionStatusEx");
     }
 
-    assert(Results_.empty());
-
     for (DWORD i = 0; i < fired && res == TRUE; i++) {
         TIO* event = (TIO*)Entries_[i].lpOverlapped;
+        if (!event->handle) {
+            // Cancelled: its coroutine is gone, and so is the memory addr and len point to.
+            if (event->addr) {
+                closesocket((SOCKET)event->sock);
+            }
+            FreeTIO(event);
+            continue;
+        }
         if (event->addr) {
             sockaddr_in* remoteAddr = nullptr;
             sockaddr_in* localAddr = nullptr;
@@ -186,8 +231,8 @@ void TIOCp::Poll()
             *event->len = 0;
             GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
             memmove(event->addr, remoteAddr, *event->len);
-            Results_.push(event->sock);
-        } else if (event->fd >= 0) {
+            Results_.push_back(event->sock);
+        } else if (event->connect) {
             // ConnectEx transfers no bytes, its outcome is the operation status.
             SOCKET sock = (SOCKET)event->fd;
             DWORD transferred = 0;
@@ -198,9 +243,9 @@ void TIOCp::Poll()
             {
                 ret = -WSAGetLastError();
             }
-            Results_.push(ret);
+            Results_.push_back(ret);
         } else {
-            Results_.push(Entries_[i].dwNumberOfBytesTransferred);
+            Results_.push_back(Entries_[i].dwNumberOfBytesTransferred);
         }
         ReadyEvents_.emplace_back(TEvent{-1, 0, event->handle});
         FreeTIO(event);

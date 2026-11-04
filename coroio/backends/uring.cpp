@@ -91,9 +91,53 @@ void TUring::Cancel(int fd) {
     sqe->cancel_flags = (1U << 1);
 }
 
-void TUring::Cancel(std::coroutine_handle<> h) {
+int TUring::Cancel(std::coroutine_handle<> h) {
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        if (ReadyEvents_[i].Handle == h) {
+            ReadyEvents_[i].Handle = {};
+            return Results_[i];
+        }
+    }
+    for (auto& [handle, result] : Reaped_) {
+        if (handle == h) {
+            handle = {};
+            return result;
+        }
+    }
+
     struct io_uring_sqe *sqe = GetSqe();
     io_uring_prep_cancel(sqe, h.address(), 0);
+    io_uring_sqe_set_data(sqe, nullptr);
+
+    // The kernel may use the operation's buffers until its completion is posted,
+    // so wait for it. Other completions are kept for the next Wait().
+    while (true) {
+        int err = io_uring_submit_and_wait(&Ring_, 1);
+        if (err < 0 && err != -EINTR) {
+            throw std::system_error(-err, std::generic_category(), "io_uring_submit_and_wait");
+        }
+
+        struct io_uring_cqe *cqe;
+        unsigned head;
+        int completed = 0;
+        bool found = false;
+        int result = 0;
+        io_uring_for_each_cqe(&Ring_, head, cqe) {
+            completed ++;
+            void* data = reinterpret_cast<void*>(cqe->user_data);
+            if (data == h.address()) {
+                found = true;
+                result = cqe->res;
+            } else if (data != nullptr) {
+                Reaped_.emplace_back(std::coroutine_handle<>::from_address(data), cqe->res);
+            }
+        }
+        io_uring_cq_advance(&Ring_, completed);
+
+        if (found) {
+            return result;
+        }
+    }
 }
 
 void TUring::Register(int) {
@@ -112,6 +156,19 @@ int TUring::Wait(timespec ts) {
     }
 
     Reset();
+    Results_.clear();
+    NextResult_ = 0;
+
+    for (auto [h, result] : Reaped_) {
+        if (h) {
+            Results_.push_back(result);
+            ReadyEvents_.emplace_back(TEvent{-1, 0, h});
+        }
+    }
+    if (!Reaped_.empty()) {
+        Reaped_.clear();
+        ts = {0, 0}; // completions are ready already, do not block
+    }
 
 //        int nfds = 0;
 //        int timeout = 1000; // ms
@@ -135,14 +192,12 @@ int TUring::Wait(timespec ts) {
         }
     }
 
-    assert(Results_.empty());
-
     int completed = 0;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
         void* data = reinterpret_cast<void*>(cqe->user_data);
         if (data != nullptr) {
-            Results_.push(cqe->res);
+            Results_.push_back(cqe->res);
             ReadyEvents_.emplace_back(TEvent{-1, 0, std::coroutine_handle<>::from_address(data)});
         }
     }
@@ -155,9 +210,17 @@ int TUring::Wait(timespec ts) {
 }
 
 int TUring::Result() {
-    int r = Results_.front();
-    Results_.pop();
-    return r;
+    return Results_[NextResult_++];
+}
+
+void TUring::WakeupReadyHandles() {
+    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
+        // Cleared before resuming, so that Cancel() finds only completions not delivered yet.
+        if (auto h = std::exchange(ReadyEvents_[i].Handle, {})) {
+            NextResult_ = i;
+            h.resume();
+        }
+    }
 }
 
 void TUring::Submit() {

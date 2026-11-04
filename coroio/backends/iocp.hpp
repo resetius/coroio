@@ -102,6 +102,18 @@ public:
      */
     void Cancel(int fd);
     /**
+     * @brief Cancels the pending operation posted with a coroutine handle.
+     *
+     * Called when the coroutine is destroyed while waiting for the operation.
+     * Requests the cancellation with CancelIoEx and drops the completion, so
+     * @p h is not resumed.
+     *
+     * @param h The coroutine handle the operation was posted with.
+     * @return The result of the dropped completion if it was collected already
+     *         (e.g. an accepted socket), otherwise -1.
+     */
+    int Cancel(THandle h);
+    /**
      * @brief Registers a file descriptor with the IOCP.
      *
      * @param fd The file descriptor to register.
@@ -113,6 +125,12 @@ public:
      * @return An integer representing the result of the operation.
      */
     int Result();
+    /**
+     * @brief Resumes the coroutines whose operations completed.
+     *
+     * Skips completions dropped by Cancel(THandle).
+     */
+    void WakeupReadyHandles();
     /**
      * @brief Polls for IOCP events.
      *
@@ -127,7 +145,10 @@ private:
         struct sockaddr* addr = nullptr; // for accept
         socklen_t* len = nullptr; // for accept
         int sock = -1; // for accept
-        int fd = -1; // for connect
+        int fd = -1;
+        bool connect = false;
+        TIO* prev = nullptr; // in Pending_
+        TIO* next = nullptr;
 
         TIO() {
             memset(&overlapped, 0, sizeof(overlapped));
@@ -135,15 +156,17 @@ private:
     };
 
     long GetTimeoutMs();
-    TIO* NewTIO();
+    TIO* NewTIO(int fd, THandle handle);
     void FreeTIO(TIO*);
 
     HANDLE Port_;
 
     // Allocator to avoid dynamic memory allocation for each IOCP event structure.
     TArenaAllocator<TIO> Allocator_;
+    TIO* Pending_ = nullptr; // operations whose completions are not dequeued yet
     std::vector<OVERLAPPED_ENTRY> Entries_;
-    std::queue<int> Results_;
+    std::vector<int> Results_; // results of the completions in ReadyEvents_, by index
+    size_t NextResult_ = 0;
 };
 
 }
