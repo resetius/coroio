@@ -105,8 +105,10 @@ public:
      * @brief Cancels the pending operation posted with a coroutine handle.
      *
      * Called when the coroutine is destroyed while waiting for the operation.
-     * Requests the cancellation with CancelIoEx and drops the completion, so
-     * @p h is not resumed.
+     * Cancels it with CancelIoEx and returns only after its completion is
+     * dequeued, so its buffers may be freed. The completion is dropped, so
+     * @p h is not resumed. Other completions dequeued meanwhile are delivered
+     * by the next Poll().
      *
      * @param h The coroutine handle the operation was posted with.
      * @return The result of the dropped completion if it was collected already
@@ -158,6 +160,8 @@ private:
     long GetTimeoutMs();
     TIO* NewTIO(int fd, THandle handle);
     void FreeTIO(TIO*);
+    // Frees the operation of a dequeued completion, returns its handle and result.
+    std::pair<THandle, int> Complete(const OVERLAPPED_ENTRY& entry);
 
     HANDLE Port_;
 
@@ -167,6 +171,7 @@ private:
     std::vector<OVERLAPPED_ENTRY> Entries_;
     std::vector<int> Results_; // results of the completions in ReadyEvents_, by index
     size_t NextResult_ = 0;
+    std::vector<std::pair<THandle, int>> Reaped_; // dequeued by Cancel(), delivered by the next Poll()
 };
 
 }
