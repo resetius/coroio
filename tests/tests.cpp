@@ -65,6 +65,12 @@ int getport() {
     return ntohs(bound.sin_port);
 }
 
+#ifdef _WIN32
+constexpr int ConnRefused = WSAECONNREFUSED;
+#else
+constexpr int ConnRefused = ECONNREFUSED;
+#endif
+
 } // namespace
 
 using namespace NNet;
@@ -368,28 +374,78 @@ void test_connection_timeout(void**) {
     using TSocket = typename TPoller::TSocket;
     int port = getport();
     TLoop loop;
+    TAddress addr{"127.0.0.1", port};
+    TSocket socket(loop.Poller(), addr.Domain());
+    socket.Bind(addr);
+    // Once the accept queue is full, a new SYN is dropped (Linux, macOS) or
+    // refused and retried for seconds (Windows), so the connect stays pending.
+    socket.Listen(1);
+    std::vector<TSocket> queued;
     bool timeout = false;
 
-    TFuture<void> h = [](TPoller& poller, bool& timeout, int port) -> TFuture<void>
+    TFuture<void> h = [](TPoller& poller, std::vector<TSocket>& queued, bool& timeout, int port) -> TFuture<void>
     {
-        // TODO: use other addr
-        TAddress addr{"10.0.0.1", port};
-        TSocket client(poller, addr.Domain());
-        try {
-            co_await client.Connect(addr, TClock::now()+std::chrono::milliseconds(100));
-        } catch (const std::system_error& ex) {
-            if (ex.code() == std::errc::timed_out) {
-                timeout = true;
-            } else {
-                throw;
+        TAddress addr{"127.0.0.1", port};
+        while (!timeout && queued.size() < 16) {
+            TSocket client(poller, addr.Domain());
+            try {
+                co_await client.Connect(addr, TClock::now()+std::chrono::milliseconds(100));
+                queued.emplace_back(std::move(client));
+            } catch (const std::system_error& ex) {
+                if (ex.code() == std::errc::timed_out) {
+                    timeout = true;
+                } else {
+                    throw;
+                }
             }
         }
         co_return;
-    }(loop.Poller(), timeout, port);
+    }(loop.Poller(), queued, timeout, port);
 
     while (!h.done()) {
         loop.Step();
     }
+
+    assert_true(timeout);
+}
+
+template<typename TPoller>
+void test_connection_timeout_cleanup(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    int port = getport();
+    TLoop loop;
+    TAddress addr{"127.0.0.1", port};
+    TSocket socket(loop.Poller(), addr.Domain());
+    socket.Bind(addr);
+    socket.Listen();
+    TSocket client(loop.Poller(), addr.Domain());
+    bool timeout = false;
+
+    {
+        // The deadline has already passed: the timer wins, the connect itself succeeds.
+        TFuture<void> h = [](TSocket& client, bool& timeout, int port) -> TFuture<void>
+        {
+            TAddress addr{"127.0.0.1", port};
+            try {
+                co_await client.Connect(addr, TClock::now());
+            } catch (const std::system_error& ex) {
+                if (ex.code() == std::errc::timed_out) {
+                    timeout = true;
+                } else {
+                    throw;
+                }
+            }
+            co_return;
+        }(client, timeout, port);
+
+        while (!h.done()) {
+            loop.Step();
+        }
+    }
+
+    // A wait left in the poller would resume the destroyed coroutine here.
+    loop.Step();
 
     assert_true(timeout);
 }
@@ -438,33 +494,67 @@ void test_connection_refused_on_write(void**) {
     int port = getport();
     TLoop loop;
     std::error_code err;
+    bool connected = false;
 
-    TFuture<void> h = [](TPoller& poller, std::error_code* err, int port) -> TFuture<void>
+    TFuture<void> h = [](TPoller& poller, std::error_code* err, bool* connected, int port) -> TFuture<void>
     {
         TAddress addr{"127.0.0.1", port};
         TSocket clientSocket(poller, addr.Domain());
         char buffer[] = "test";
         try {
-            // set timeout (windows workaround)
-            co_await clientSocket.Connect(addr, TClock::now()+std::chrono::milliseconds(100));
+            // The deadline only guards against a hang: Windows retries a refused SYN for about 2 seconds.
+            co_await clientSocket.Connect(addr, TClock::now()+std::chrono::seconds(10));
+            *connected = true;
             co_await clientSocket.WriteSome(buffer, sizeof(buffer));
         } catch (const std::system_error& ex) {
             *err = ex.code();
         }
         co_return;
-    }(loop.Poller(), &err, port);
+    }(loop.Poller(), &err, &connected, port);
 
     while (!h.done()) {
         loop.Step();
     }
 
-    // EPIPE in MacOS
-    // std::errc::timed_out for windows
-    assert_true(err == std::errc::timed_out || err.value() == ECONNREFUSED || err.value() == EPIPE);
+    assert_false(connected);
+    assert_int_equal(err.value(), ConnRefused);
 }
 
 template<typename TPoller>
 void test_connection_refused_on_read(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    int port = getport();
+    TLoop loop;
+    std::error_code err;
+    bool connected = false;
+
+    TFuture<void> h = [](TPoller& poller, std::error_code* err, bool* connected, int port) -> TFuture<void>
+    {
+        TAddress addr{"127.0.0.1", port};
+        TSocket clientSocket(poller, addr.Domain());
+        char buffer[] = "test";
+        try {
+            // The deadline only guards against a hang: Windows retries a refused SYN for about 2 seconds.
+            co_await clientSocket.Connect(addr, TClock::now()+std::chrono::seconds(10));
+            *connected = true;
+            co_await clientSocket.ReadSome(buffer, sizeof(buffer));
+        } catch (const std::system_error& ex) {
+            *err = ex.code();
+        }
+        co_return;
+    }(loop.Poller(), &err, &connected, port);
+
+    while (!h.done()) {
+        loop.Step();
+    }
+
+    assert_false(connected);
+    assert_int_equal(err.value(), ConnRefused);
+}
+
+template<typename TPoller>
+void test_connection_refused(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = getport();
@@ -475,11 +565,8 @@ void test_connection_refused_on_read(void**) {
     {
         TAddress addr{"127.0.0.1", port};
         TSocket clientSocket(poller, addr.Domain());
-        char buffer[] = "test";
         try {
-            // set timeout (windows workaround)
-            co_await clientSocket.Connect(addr, TClock::now()+std::chrono::milliseconds(100));
-            co_await clientSocket.ReadSome(buffer, sizeof(buffer));
+            co_await clientSocket.Connect(addr);
         } catch (const std::system_error& ex) {
             *err = ex.code();
         }
@@ -490,8 +577,7 @@ void test_connection_refused_on_read(void**) {
         loop.Step();
     }
 
-    // std::errc::timed_out for windows
-    assert_true(err == std::errc::timed_out || err.value() == ECONNREFUSED);
+    assert_int_equal(err.value(), ConnRefused);
 }
 
 template<typename TPoller>
@@ -1694,7 +1780,9 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_write_after_connect);
     ADD_TEST(my_unit_poller, test_write_after_accept);
     ADD_TEST(my_unit_poller, test_connection_timeout);
+    ADD_TEST(my_unit_poller, test_connection_timeout_cleanup);
     ADD_TEST(my_unit_poller, test_remove_connection_timeout);
+    ADD_TEST(my_unit_poller, test_connection_refused);
     ADD_TEST(my_unit_poller, test_connection_refused_on_write);
     ADD_TEST(my_unit_poller, test_connection_refused_on_read);
     ADD_TEST(my_unit_poller, test_read_write_same_socket);

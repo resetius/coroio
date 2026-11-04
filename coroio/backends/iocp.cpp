@@ -89,6 +89,7 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
 {
     TIO* tio = NewTIO();
     tio->handle = handle;
+    tio->fd = fd;
 
     int bind_result = 0;
     if (len == sizeof(sockaddr_in)) {
@@ -147,9 +148,9 @@ void TIOCp::Register(int fd) {
     CreateIoCompletionPort((HANDLE)(SOCKET)fd, Port_, (ULONG_PTR)fd, 0);
 }
 
-void TIOCp::Cancel([[maybe_unused]] int fd)
+void TIOCp::Cancel(int fd)
 {
-    // TODO: implement
+    CancelIoEx((HANDLE)(SOCKET)fd, nullptr);
 }
 
 int TIOCp::Result() {
@@ -186,6 +187,18 @@ void TIOCp::Poll()
             GetAcceptExSockaddrs(event->addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, event->len);
             memmove(event->addr, remoteAddr, *event->len);
             Results_.push(event->sock);
+        } else if (event->fd >= 0) {
+            // ConnectEx transfers no bytes, its outcome is the operation status.
+            SOCKET sock = (SOCKET)event->fd;
+            DWORD transferred = 0;
+            DWORD flags = 0;
+            int ret = 0;
+            if (!WSAGetOverlappedResult(sock, &event->overlapped, &transferred, FALSE, &flags)
+                || setsockopt(sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0) != 0)
+            {
+                ret = -WSAGetLastError();
+            }
+            Results_.push(ret);
         } else {
             Results_.push(Entries_[i].dwNumberOfBytesTransferred);
         }

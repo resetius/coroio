@@ -19,6 +19,7 @@
 
 #include "poller.hpp"
 #include "address.hpp"
+#include "corochain.hpp"
 
 namespace NNet {
 
@@ -401,6 +402,7 @@ public:
      * @return An awaitable object that suspends until the connection is established.
      *
      * @note If a deadline is specified and exceeded, the awaitable will throw a timed-out error.
+     * @throws std::system_error with the socket error if the connection attempt fails.
      */
     auto Connect(const TAddress& addr, TTime deadline = TTime::max()) {
         if (RemoteAddr_.has_value()) {
@@ -419,7 +421,7 @@ public:
                     throw std::system_error(errno, std::generic_category(), "connect");
                 }
 #endif
-                return ret >= 0;
+                return (ready = (ret >= 0));
             }
 
             void await_suspend(std::coroutine_handle<> h) {
@@ -430,8 +432,25 @@ public:
             }
 
             void await_resume() {
+                if (ready) {
+                    return;
+                }
                 if (deadline != TTime::max() && poller->RemoveTimer(timerId, deadline)) {
+                    poller->RemoveEvent(fd);
                     throw std::system_error(std::make_error_code(std::errc::timed_out));
+                }
+                // Writability only means the attempt has finished, SO_ERROR tells how.
+                int err = 0;
+                socklen_t len = sizeof(err);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len) < 0) {
+#ifdef _WIN32
+                    err = WSAGetLastError();
+#else
+                    err = errno;
+#endif
+                }
+                if (err != 0) {
+                    throw std::system_error(err, std::generic_category(), "connect");
                 }
             }
 
@@ -440,6 +459,7 @@ public:
             std::pair<const sockaddr*, int> addr;
             TTime deadline;
             unsigned timerId = 0;
+            bool ready = false;
         };
         return TAwaitable{Poller_, Fd_, RemoteAddr_->RawAddr(), deadline};
     }
@@ -617,8 +637,9 @@ public:
      * @return An awaitable object for the connection operation.
      *
      * @throws std::runtime_error if the socket is already connected.
+     * @throws std::system_error with the socket error if the connection attempt fails.
      */
-    auto Connect(const TAddress& addr, TTime deadline = TTime::max()) {
+    TFuture<void> Connect(const TAddress& addr, TTime deadline = TTime::max()) {
         if (RemoteAddr_.has_value()) {
             throw std::runtime_error("Already connected");
         }
@@ -633,15 +654,9 @@ public:
                 }
             }
 
-            void await_resume() {
-                if (deadline != TTime::max() && poller->RemoveTimer(timerId, deadline)) {
-                    poller->Cancel(fd);
-                    throw std::system_error(std::make_error_code(std::errc::timed_out));
-                }
-                int ret = poller->Result();
-                if (ret < 0) {
-                    throw std::system_error(-ret, std::generic_category(), "connect");
-                }
+            // Returns true if the deadline fired before the connect completed.
+            bool await_resume() {
+                return deadline != TTime::max() && poller->RemoveTimer(timerId, deadline);
             }
 
             T* poller;
@@ -650,7 +665,21 @@ public:
             TTime deadline;
             unsigned timerId = 0;
         };
-        return TAwaitable{Poller_, Fd_, RemoteAddr()->RawAddr(), deadline};
+        T* poller = Poller_;
+        int fd = Fd_;
+        bool timedOut = co_await TAwaitable{poller, fd, RemoteAddr()->RawAddr(), deadline};
+        if (timedOut) {
+            // The cancelled operation still completes and resumes this coroutine.
+            poller->Cancel(fd);
+            co_await std::suspend_always{};
+        }
+        int ret = poller->Result();
+        if (timedOut) {
+            throw std::system_error(std::make_error_code(std::errc::timed_out));
+        }
+        if (ret < 0) {
+            throw std::system_error(-ret, std::generic_category(), "connect");
+        }
     }
 
     /**

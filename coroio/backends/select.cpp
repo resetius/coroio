@@ -59,12 +59,20 @@ void TSelect::Poll() {
     timeval tv;
     tv.tv_sec = ts.tv_sec;
     tv.tv_usec = ts.tv_nsec / 1000;
-    if (select(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &tv) < 0) {
+    fd_set exceptFds = WriteFds_;
+    if (select(InEvents_.size(), ReadFds(), WriteFds(), &exceptFds, &tv) < 0) {
 #else
     if (pselect(InEvents_.size(), ReadFds(), WriteFds(), nullptr, &ts, nullptr) < 0) {
 #endif
         throw std::system_error(errno, std::generic_category(), "select");
     }
+
+#ifdef _WIN32
+    // Windows reports a failed connect in exceptfds, not in writefds.
+    for (u_int i = 0; i < exceptFds.fd_count; ++i) {
+        FD_SET(exceptFds.fd_array[i], WriteFds());
+    }
+#endif
 
     for (int k=0; k < static_cast<int>(InEvents_.size()); ++k) {
         auto ev = InEvents_[k];
