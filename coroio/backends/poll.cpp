@@ -46,6 +46,13 @@ TPoll::TPoll()
 }
 #endif
 
+#ifdef __linux__
+TPoll::TPoll()
+{
+    SupportsRemoteHup_ = true;
+}
+#endif
+
 void TPoll::Poll()
 {
     auto ts = GetTimeout();
@@ -76,7 +83,7 @@ void TPoll::Poll()
 #ifdef __linux__
             if (ch.Type & TEvent::RHUP) {
                 pev.events |= POLLRDHUP;
-                ev.Write = ch.Handle;
+                ev.RHup = ch.Handle;
             }
 #endif
         } else if (idx != -1) {
@@ -108,6 +115,12 @@ void TPoll::Poll()
         throw std::system_error(errno, std::generic_category(), "poll");
     }
 
+    // POLLHUP and POLLRDHUP often come together: one check wakes each waiter once.
+#ifdef __linux__
+    constexpr short hangup = POLLHUP | POLLRDHUP;
+#else
+    constexpr short hangup = POLLHUP;
+#endif
     for (auto& pev : Fds_) {
         auto [ev, _] = InEvents_[pev.fd];
         if (pev.revents & POLLIN) {
@@ -116,28 +129,17 @@ void TPoll::Poll()
         if (pev.revents & POLLOUT) {
             ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::WRITE, ev.Write}); ev.Write = {};
         }
-        if (pev.revents & POLLHUP) {
+        if (pev.revents & hangup) {
             if (ev.Read) {
                 ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::READ, ev.Read});
             }
             if (ev.Write) {
                 ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::WRITE, ev.Write});
             }
-            pev.revents = pev.revents & ~POLLHUP;
-        }
-#ifdef __linux__
-        if (pev.revents & POLLRDHUP) {
-            if (ev.Read) {
-                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::READ, ev.Read});
-            }
-            if (ev.Write) {
-                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::WRITE, ev.Write});
-            }
             if (ev.RHup) {
-                ReadyEvents_.emplace_back(TEvent{pev.fd, TEvent::RHUP, ev.RHup});
+                ReadyEvents_.emplace_back(TEvent{(int)pev.fd, TEvent::RHUP, ev.RHup});
             }
         }
-#endif
     }
 
     ProcessTimers();

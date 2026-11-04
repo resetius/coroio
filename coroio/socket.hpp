@@ -232,13 +232,29 @@ public:
     /**
      * @brief Monitors the socket for remote hang-up (closure).
      *
-     * This awaitable suspends the coroutine until a remote hang-up is detected.
+     * This awaitable suspends the coroutine until the peer closes the connection
+     * or shuts down its writing side, and completes on the next loop iteration
+     * if that has already happened. Unread data does not complete it, and reads
+     * and writes on the same socket may wait at the same time.
+     *
+     * Only TEPoll, TKqueue and TPoll on Linux report remote hang-ups, see
+     * TPollerBase::SupportsRemoteHup().
      *
      * @return An awaitable object that yields a boolean value (true) once the remote hang-up
      *         is detected.
+     * @throws std::system_error with std::errc::operation_not_supported, at the call,
+     *         on other pollers (TSelect, TPoll outside Linux, TUring, TIOCp).
      */
     auto Monitor() {
+        if (!Poller_->SupportsRemoteHup()) {
+            throw std::system_error(std::make_error_code(std::errc::operation_not_supported),
+                "remote hang-up is not reported by this poller");
+        }
         struct TAwaitableClose: public TAwaitable<TAwaitableClose> {
+            bool await_ready() {
+                return (this->ready = false);
+            }
+
             void run() {
                 this->ret = true;
             }
