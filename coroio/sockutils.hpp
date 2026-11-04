@@ -154,12 +154,16 @@ struct TByteReader {
      * @brief Reads data until the given @p delimiter is encountered.
      *
      * - Searches the internal buffer for the delimiter.
-     * - If found, returns all data up to and including the delimiter.
-     * - If not found, appends the buffered data to the result and tries reading
-     *   more data from the socket, repeating until the delimiter appears.
+     * - If found, returns all data up to and including the delimiter; any bytes
+     *   after the delimiter stay in the internal buffer for the next read.
+     * - If not found, keeps the data buffered and reads more from the socket.
+     *   The delimiter may be split between reads: after each read the search
+     *   resumes just before the previously scanned end, so already scanned data
+     *   is not rescanned.
      * - Throws a std::runtime_error if the socket is closed (ReadSome returns 0)
      *   before the delimiter is found.
      * - If ReadSome returns a negative value, the read is retried.
+     * - An empty delimiter matches immediately and returns an empty string.
      *
      * @param delimiter The string to look for in the incoming data.
      * @return A TFuture<std::string> that completes once the delimiter is found,
@@ -169,20 +173,20 @@ struct TByteReader {
      */
     TFuture<std::string> ReadUntil(const std::string& delimiter)
     {
-        std::string result;
         char tempBuffer[1024];
+        size_t scanned = 0; // Buffer[0, scanned) holds no delimiter start
 
         while (true) {
-            auto pos = std::search(Buffer.begin(), Buffer.end(), delimiter.begin(), delimiter.end());
+            auto pos = std::search(Buffer.begin() + scanned, Buffer.end(), delimiter.begin(), delimiter.end());
             if (pos != Buffer.end()) {
-                size_t delimiterOffset = std::distance(Buffer.begin(), pos);
-                result.insert(result.end(), Buffer.begin(), Buffer.begin() + delimiterOffset + delimiter.size());
-                Buffer.erase(Buffer.begin(), Buffer.begin() + delimiterOffset + delimiter.size());
+                size_t size = std::distance(Buffer.begin(), pos) + delimiter.size();
+                std::string result(Buffer.begin(), Buffer.begin() + size);
+                Buffer.erase(Buffer.begin(), Buffer.begin() + size);
                 co_return result;
             }
 
-            result.insert(result.end(), Buffer.begin(), Buffer.end());
-            Buffer.clear();
+            // A delimiter may start in the last delimiter.size() - 1 bytes and end in the next read
+            scanned = Buffer.size() >= delimiter.size() ? Buffer.size() - (delimiter.size() - 1) : 0;
 
             auto readSize = co_await Socket.ReadSome(tempBuffer, sizeof(tempBuffer));
             if (readSize == 0) {
@@ -194,8 +198,6 @@ struct TByteReader {
 
             Buffer.insert(Buffer.end(), tempBuffer, tempBuffer + readSize);
         }
-
-        co_return result;
     }
 
 private:
