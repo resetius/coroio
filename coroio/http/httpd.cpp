@@ -366,6 +366,12 @@ TFuture<void> TResponse::WriteBodyChunk(const char* data, size_t size) {
 }
 
 TFuture<void> TResponse::WriteBodyFull(const std::string& data) {
+    if (!HeadersSent_) {
+        if (Headers_.find("Content-Length") == Headers_.end() && Headers_.find("Transfer-Encoding") == Headers_.end()) {
+            Headers_["Content-Length"] = std::to_string(data.size());
+        }
+        co_await SendHeaders();
+    }
     if (Chunked_) {
         // If chunked, we need to send the data in chunks
         size_t offset = 0;

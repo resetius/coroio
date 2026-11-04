@@ -471,6 +471,85 @@ void test_http_server_header_split_between_writes(void**) {
     assert_true(response.find("ok") != std::string::npos);
 }
 
+namespace {
+
+struct TWriteBodyFullRouter : IRouter {
+    bool SendHeadersFirst = false;
+
+    TFuture<void> HandleRequest(TRequest&, TResponse& response) override {
+        response.SetStatus(200);
+        if (SendHeadersFirst) {
+            response.SetHeader("Content-Length", "5");
+            co_await response.SendHeaders();
+        }
+        co_await response.WriteBodyFull("hello");
+    }
+};
+
+} // namespace
+
+void test_http_write_body_full(void**) {
+    using TSocket = TDefaultPoller::TSocket;
+
+    TWriteBodyFullRouter router;
+    TLoop<TDefaultPoller> loop;
+    auto& poller = loop.Poller();
+
+    TAddress serverAddr{"127.0.0.1", GetFreePort()};
+    TSocket listener(poller, serverAddr.Domain());
+    listener.Bind(serverAddr);
+    listener.Listen();
+
+    TWebServer<TSocket> server(std::move(listener), router);
+    {
+        // The detached accept loop never finishes, its frame is intentionally left suspended
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+        __lsan::ScopedDisabler lsanDisabler;
+#endif
+        server.Start();
+    }
+
+    auto fetch = [&](const std::string& path) {
+        TSocket client(poller, serverAddr.Domain());
+        std::string raw;
+        auto task = [](TSocket& client, TAddress& addr, TPollerBase& poller, const std::string& path, std::string& raw) -> TFuture<void> {
+            co_await client.Connect(addr);
+            TByteWriter writer(client);
+            const std::string first = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n";
+            const std::string second = "\r\n";
+            co_await writer.Write(first.data(), first.size());
+            co_await poller.Sleep(std::chrono::milliseconds(50));
+            co_await writer.Write(second.data(), second.size());
+            char buf[1024];
+            while (raw.find("hello") == std::string::npos) {
+                auto n = co_await client.ReadSome(buf, sizeof(buf));
+                if (n <= 0) {
+                    break;
+                }
+                raw.append(buf, n);
+            }
+        }(client, serverAddr, poller, path, raw);
+
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!task.done() && std::chrono::steady_clock::now() < deadline) {
+            loop.Step();
+        }
+        assert_true(task.done());
+        return raw;
+    };
+
+    const std::string expected =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 5\r\n"
+        "\r\n"
+        "hello";
+    // WriteBodyFull sends the headers itself
+    assert_string_equal(fetch("/").c_str(), expected.c_str());
+    // SendHeaders first, then WriteBodyFull: the same bytes, headers not duplicated
+    router.SendHeadersFirst = true;
+    assert_string_equal(fetch("/").c_str(), expected.c_str());
+}
+
 int main(int argc, char** argv) {
     TInitializer init;
 
@@ -492,6 +571,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_1024_boundary);
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_two_delimiters);
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_empty_delimiter);
+    ADD_TEST(cmocka_unit_test, test_http_write_body_full);
     ADD_TEST(cmocka_unit_test, test_http_server_header_split_between_writes);
 
     return _cmocka_run_group_tests("test_http", tests.data(), tests.size(), NULL, NULL);
