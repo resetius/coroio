@@ -34,37 +34,6 @@ static uint32_t rand_(uint32_t* seed) {
     return *seed;
 }
 
-// Ask the OS for a free port, so tests do not depend on fixed numbers
-// that may be taken by other services on the machine.
-int getport() {
-#ifdef _WIN32
-    using TRawSocket = SOCKET;
-    const TRawSocket invalid = INVALID_SOCKET;
-#else
-    using TRawSocket = int;
-    const TRawSocket invalid = -1;
-#endif
-    TRawSocket fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == invalid) {
-        throw std::runtime_error("getport: socket failed");
-    }
-    NNet::TAddress addr{"127.0.0.1", 0};
-    auto [raw, len] = addr.RawAddr();
-    sockaddr_in bound{};
-    socklen_t boundLen = sizeof(bound);
-    bool ok = ::bind(fd, raw, len) == 0
-        && ::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0;
-#ifdef _WIN32
-    ::closesocket(fd);
-#else
-    ::close(fd);
-#endif
-    if (!ok) {
-        throw std::runtime_error("getport: bind failed");
-    }
-    return ntohs(bound.sin_port);
-}
-
 #ifdef _WIN32
 constexpr int ConnRefused = WSAECONNREFUSED;
 #else
@@ -96,7 +65,7 @@ void test_timespec(void**) {
 }
 
 void test_addr(void**) {
-    int port = getport();
+    int port = GetFreePort();
     TAddress address("127.0.0.1", port);
     auto low = std::get<sockaddr_in>(address.Addr());
     assert_true(low.sin_port == ntohs(port));
@@ -107,7 +76,7 @@ void test_addr(void**) {
 }
 
 void test_addr6(void**) {
-    int port = getport();
+    int port = GetFreePort();
     TAddress address("::1", port);
     auto low = std::get<sockaddr_in6>(address.Addr());
     assert_true(low.sin6_port == ntohs(port));
@@ -115,7 +84,7 @@ void test_addr6(void**) {
 }
 
 void test_bad_addr(void**) {
-    int port = getport();
+    int port = GetFreePort();
     int flag = 0;
     try {
         TAddress address("wtf", port);
@@ -127,7 +96,7 @@ void test_bad_addr(void**) {
 
 template<typename TPoller>
 void test_listen(void**) {
-    int port = getport();
+    int port = GetFreePort();
     TLoop<TPoller> loop;
     TAddress address("127.0.0.1", port);
     TSocket socket(loop.Poller(), address.Domain());
@@ -137,7 +106,7 @@ void test_listen(void**) {
 
 template<typename TPoller>
 void test_accept(void**) {
-    int port = getport();
+    int port = GetFreePort();
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
@@ -181,7 +150,7 @@ void test_accept(void**) {
 #ifndef _WIN32
 template<typename TPoller>
 void test_cloexec(void**) {
-    int port = getport();
+    int port = GetFreePort();
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
@@ -228,7 +197,7 @@ template<typename TPoller>
 void test_write_after_connect(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress addr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), addr.Domain());
@@ -272,7 +241,7 @@ template<typename TPoller>
 void test_write_after_accept(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress addr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), addr.Domain());
@@ -316,7 +285,7 @@ template<typename TPoller>
 void test_read_write_same_socket(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress saddr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), saddr.Domain());
@@ -372,7 +341,7 @@ template<typename TPoller>
 void test_connection_timeout(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress addr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), addr.Domain());
@@ -413,7 +382,7 @@ template<typename TPoller>
 void test_connection_timeout_cleanup(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress addr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), addr.Domain());
@@ -454,7 +423,7 @@ template<typename TPoller>
 void test_remove_connection_timeout(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress addr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), addr.Domain());
@@ -491,7 +460,7 @@ template<typename TPoller>
 void test_connection_refused_on_write(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     std::error_code err;
     bool connected = false;
@@ -524,7 +493,7 @@ template<typename TPoller>
 void test_connection_refused_on_read(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     std::error_code err;
     bool connected = false;
@@ -557,7 +526,7 @@ template<typename TPoller>
 void test_connection_refused(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     std::error_code err;
 
@@ -642,7 +611,7 @@ void test_read_write_full(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
-    int port = getport();
+    int port = GetFreePort();
     std::vector<char> data(1024*1024);
     int cur = 0;
     for (auto& ch : data) {
@@ -686,7 +655,7 @@ void test_read_until(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
-    int port = getport();
+    int port = GetFreePort();
     std::string data = R"__(line1
 line2
 line3
@@ -752,7 +721,7 @@ void test_read_write_struct(void**) {
         cur = (cur + 1) % ('z' - 'a' + 1);
     }
 
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress saddr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), saddr.Domain());
@@ -798,7 +767,7 @@ void test_read_write_lines(void**) {
         lines.emplace_back(std::move(line));
     }
 
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress saddr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), saddr.Domain());
@@ -1026,7 +995,7 @@ void test_read_write_full_ssl(void**) {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
-    int port = getport();
+    int port = GetFreePort();
     std::vector<char> data(1024);
     int cur = 0;
     for (auto& ch : data) {
@@ -1373,7 +1342,7 @@ void test_remote_disconnect(void**) {
     bool changed = false;
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
-    int port = getport();
+    int port = GetFreePort();
     TLoop loop;
     TAddress saddr{"127.0.0.1", port};
     TSocket socket(loop.Poller(), saddr.Domain());

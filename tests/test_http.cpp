@@ -290,36 +290,6 @@ void test_http_response_handling_chunked(void**) {
 
 namespace {
 
-// Asks the OS for a free port, so the test does not depend on a fixed one
-int GetFreePort() {
-#ifdef _WIN32
-    using TRawSocket = SOCKET;
-    const TRawSocket invalid = INVALID_SOCKET;
-#else
-    using TRawSocket = int;
-    const TRawSocket invalid = -1;
-#endif
-    TRawSocket fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == invalid) {
-        throw std::runtime_error("GetFreePort: socket failed");
-    }
-    TAddress addr{"127.0.0.1", 0};
-    auto [raw, len] = addr.RawAddr();
-    sockaddr_in bound{};
-    socklen_t boundLen = sizeof(bound);
-    bool ok = ::bind(fd, raw, len) == 0
-        && ::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0;
-#ifdef _WIN32
-    ::closesocket(fd);
-#else
-    ::close(fd);
-#endif
-    if (!ok) {
-        throw std::runtime_error("GetFreePort: bind failed");
-    }
-    return ntohs(bound.sin_port);
-}
-
 // Delivers the given chunks one per ReadSome; reports a closed connection
 // when they run out, so a missed delimiter fails the test instead of hanging it.
 struct TChunkedSocket {
