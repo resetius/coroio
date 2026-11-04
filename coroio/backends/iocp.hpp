@@ -127,6 +127,7 @@ private:
         struct sockaddr* addr = nullptr; // for accept
         socklen_t* len = nullptr; // for accept
         int sock = -1; // for accept
+        int fd = -1; // for connect
 
         TIO() {
             memset(&overlapped, 0, sizeof(overlapped));
