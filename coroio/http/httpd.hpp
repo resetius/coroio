@@ -116,14 +116,16 @@ private:
  * @code
  * response.SetStatus(200);
  * response.SetHeader("Content-Type", "text/plain");
- * co_await response.SendHeaders();
- * co_await response.WriteBodyFull("hello");    // sets Content-Length automatically
+ * co_await response.WriteBodyFull("hello");    // sends headers with Content-Length, then the body
  * // -- or streaming --
- * co_await response.WriteBodyChunk(data, size); // Transfer-Encoding: chunked
+ * response.SetHeader("Transfer-Encoding", "chunked");
+ * co_await response.SendHeaders();
+ * co_await response.WriteBodyChunk(data, size);
  * @endcode
  *
- * `SetStatus` and `SetHeader` must be called **before** `SendHeaders`.
- * After `SendHeaders`, only body-write methods may be called.
+ * `SetStatus` and `SetHeader` must be called **before** the headers are sent
+ * (by `SendHeaders` or, implicitly, by `WriteBodyFull`).
+ * After that, only body-write methods may be called.
  */
 class TResponse {
 public:
@@ -137,9 +139,9 @@ public:
     /**
      * @brief Sends the status line and all accumulated headers to the client.
      *
-     * Must be called exactly once, after `SetStatus`/`SetHeader` and before any
-     * body write. If `WriteBodyFull` is used instead, `SendHeaders` is called
-     * implicitly.
+     * Call it after `SetStatus`/`SetHeader` and before any body write, except
+     * when `WriteBodyFull` is the only body write: it sends the headers itself.
+     * A repeated call has no effect.
      */
     TFuture<void> SendHeaders();
     /**
@@ -151,9 +153,11 @@ public:
      */
     TFuture<void> WriteBodyChunk(const char* data, size_t size);
     /**
-     * @brief Sends headers (with `Content-Length`) and the full body in one call.
+     * @brief Writes the full body, sending the headers first if they were not sent yet.
      *
-     * Implies `SendHeaders()` — do not call it separately when using this method.
+     * If `SendHeaders()` has not been called, sets `Content-Length` to the body
+     * size (unless `Content-Length` or `Transfer-Encoding` is already set) and
+     * sends the headers. If it has, only the body is written.
      */
     TFuture<void> WriteBodyFull(const std::string& data);
     /// Returns `true` if the connection has been closed or an error occurred.
@@ -187,7 +191,6 @@ private:
  *     TFuture<void> HandleRequest(TRequest& req, TResponse& res) override {
  *         res.SetStatus(200);
  *         res.SetHeader("Content-Type", "text/plain");
- *         co_await res.SendHeaders();
  *         co_await res.WriteBodyFull("hello");
  *     }
  * };
