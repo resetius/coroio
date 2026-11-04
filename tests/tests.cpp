@@ -1441,9 +1441,45 @@ TFuture<void> AcceptInto(TSocket& listener, std::optional<TSocket>* accepted) {
     accepted->emplace(co_await listener.Accept());
 }
 
+template<typename TFile>
+TFuture<void> ReadInto(TFile& file, char* buf, size_t size, int* got) {
+    *got = co_await file.ReadSome(buf, size);
+}
+
+template<typename TFile>
+TFuture<void> WriteFrom(TFile& file, const char* buf, size_t size, int* put) {
+    *put = co_await file.WriteSome(buf, size);
+}
+
+// Stops after the first read, waiting in the second.
 template<typename TSocket>
-TFuture<void> ReadInto(TSocket& socket, char* buf, size_t size, int* got) {
+TFuture<void> ReadTwice(TSocket& socket, char* buf, size_t size, int* got) {
     *got = co_await socket.ReadSome(buf, size);
+    *got = co_await socket.ReadSome(buf, size);
+}
+
+template<typename TSocket>
+TFuture<void> ReadThenDestroy(TSocket& socket, char* buf, size_t size, std::optional<TFuture<void>>* first, std::optional<TFuture<void>>* second) {
+    co_await socket.ReadSome(buf, size);
+    first->reset();
+    second->reset();
+}
+
+// Collects the non-zero bytes until the last one.
+template<typename TSocket>
+TFuture<void> ReadMarkers(TSocket& socket, char last, std::string* markers) {
+    char buf[4096];
+    while (markers->empty() || markers->back() != last) {
+        int n = co_await socket.ReadSome(buf, sizeof(buf));
+        if (n == 0) {
+            break;
+        }
+        for (int i = 0; i < n; i++) {
+            if (buf[i]) {
+                markers->push_back(buf[i]);
+            }
+        }
+    }
 }
 
 template<typename TPoller>
@@ -1471,8 +1507,8 @@ void test_destroyed_driven_reader_not_resumed(void**) {
     listener.Bind(address);
     listener.Listen();
     std::vector<std::pair<TSocket, TSocket>> pairs; // client, server
-    pairs.reserve(3);
-    for (int i = 0; i < 3; i++) {
+    pairs.reserve(4);
+    for (int i = 0; i < 4; i++) {
         pairs.emplace_back(ConnectedPair(loop, listener, address));
     }
 
@@ -1524,6 +1560,29 @@ void test_destroyed_driven_reader_not_resumed(void**) {
         assert_int_equal(got[2], 3);
         assert_memory_equal(bufs[2], "zzz", 3);
     }
+
+    {
+        // Destroyed by a coroutine resumed in the same batch: one resumed before it
+        // and waiting again, and one whose completion comes after it.
+        char bufs[4][4] = {};
+        int got[4] = {-1, -1, -1, -1};
+        std::optional<TFuture<void>> again{ReadTwice(pairs[0].second, bufs[0], sizeof(bufs[0]), &got[0])};
+        std::optional<TFuture<void>> after{ReadInto(pairs[2].second, bufs[2], sizeof(bufs[2]), &got[2])};
+        auto destroyer = ReadThenDestroy(pairs[1].second, bufs[1], sizeof(bufs[1]), &again, &after);
+        auto last = ReadInto(pairs[3].second, bufs[3], sizeof(bufs[3]), &got[3]);
+        loop.Step();
+        assert_int_equal(send(pairs[0].first.Fd(), "a", 1, 0), 1);
+        assert_int_equal(send(pairs[1].first.Fd(), "b", 1, 0), 1);
+        assert_int_equal(send(pairs[2].first.Fd(), "cc", 2, 0), 2);
+        assert_int_equal(send(pairs[3].first.Fd(), "dddd", 4, 0), 4);
+        StepUntilDone(loop, destroyer);
+        StepUntilDone(loop, last);
+        assert_false(again.has_value());
+        assert_false(after.has_value());
+        assert_int_equal(got[0], 1);
+        assert_int_equal(got[3], 4);
+        assert_memory_equal(bufs[3], "dddd", 4);
+    }
 }
 
 template<typename TPoller>
@@ -1573,15 +1632,228 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
     }
 
     {
-        // Destroyed while connecting: neither the completion nor the deadline resumes it.
-        TSocket client(loop.Poller(), address.Domain());
-        std::optional<TFuture<void>> connect{client.Connect(address, TClock::now() + std::chrono::milliseconds(50))};
+        // Destroyed while connecting, kept pending by a full accept queue (see
+        // test_connection_timeout): neither the completion nor the deadline resumes it.
+        TAddress fullAddress{"127.0.0.1", GetFreePort()};
+        TSocket full(loop.Poller(), fullAddress.Domain());
+        full.Bind(fullAddress);
+        full.Listen(1);
+        std::vector<TSocket> clients;
+        clients.reserve(16); // a pending Connect refers to its socket
+        std::optional<TFuture<void>> connect;
+        TTime deadline;
+        for (int i = 0; i < 16 && (!connect || connect->done()); i++) {
+            clients.emplace_back(loop.Poller(), fullAddress.Domain());
+            deadline = TClock::now() + std::chrono::seconds(1);
+            connect.emplace(clients.back().Connect(fullAddress, deadline));
+            for (int j = 0; j < 3 && !connect->done(); j++) {
+                loop.Step();
+            }
+        }
+        assert_false(connect->done());
         connect.reset();
-        for (int i = 0; i < 3; i++) {
+        while (TClock::now() < deadline + std::chrono::milliseconds(100)) {
             loop.Step();
         }
     }
 }
+
+#ifdef HAVE_URING
+// An operation not submitted yet is dropped without reaching the kernel, so
+// nothing is consumed on behalf of the destroyed coroutine.
+void test_uring_destroyed_before_submit(void**) {
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    auto [client, server] = ConnectedPair(loop, listener, address);
+
+    assert_int_equal(send(client.Fd(), "x", 1, 0), 1);
+    char buf[4] = {0};
+    int got = -1;
+    std::optional<TFuture<void>> reader{ReadInto(server, buf, sizeof(buf), &got)};
+    reader.reset();
+    auto next = ReadInto(server, buf, sizeof(buf), &got);
+    StepUntilDone(loop, next);
+    assert_int_equal(got, 1);
+    assert_int_equal(buf[0], 'x');
+
+    TSocket other(loop.Poller(), address.Domain());
+    auto connect = other.Connect(address);
+    StepUntilDone(loop, connect);
+    std::optional<TSocket> accepted;
+    std::optional<TFuture<void>> accept{AcceptInto(listener, &accepted)};
+    accept.reset();
+    auto nextAccept = AcceptInto(listener, &accepted);
+    StepUntilDone(loop, nextAccept);
+    assert_true(accepted.has_value());
+    assert_int_equal(send(other.Fd(), "y", 1, 0), 1);
+    auto check = ReadInto(*accepted, buf, sizeof(buf), &got);
+    StepUntilDone(loop, check);
+    assert_int_equal(got, 1);
+    assert_int_equal(buf[0], 'y');
+}
+
+void test_uring_destroyed_file_reader_and_writer(void**) {
+    TLoop<TUring> loop;
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    TUring::TFileHandle in(p[0], loop.Poller());
+    TUring::TFileHandle out(p[1], loop.Poller());
+
+    // The byte comes before the read is submitted, or after.
+    for (bool submitted : {false, true}) {
+        char buf[4] = {0};
+        int got = -1;
+        std::optional<TFuture<void>> reader{ReadInto(in, buf, sizeof(buf), &got)};
+        if (submitted) {
+            loop.Step();
+        } else {
+            assert_int_equal(write(p[1], "x", 1), 1);
+        }
+        reader.reset();
+        if (submitted) {
+            assert_int_equal(write(p[1], "x", 1), 1);
+        }
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        assert_int_equal(got, -1);
+        assert_int_equal(buf[0], 0);
+        auto next = ReadInto(in, buf, sizeof(buf), &got);
+        StepUntilDone(loop, next);
+        assert_int_equal(got, 1);
+        assert_int_equal(buf[0], 'x');
+    }
+
+    // Destroyed while the pipe is full: its byte is not written.
+    int size = fcntl(p[1], F_GETPIPE_SZ);
+    assert_true(size > 0);
+    std::vector<char> fill(size, 0);
+    assert_int_equal(write(p[1], fill.data(), size), size);
+    int put = -1;
+    std::optional<TFuture<void>> writer{WriteFrom(out, "w", 1, &put)};
+    loop.Step();
+    writer.reset();
+    for (int done = 0; done < size; ) {
+        auto n = read(p[0], fill.data(), size - done);
+        assert_true(n > 0);
+        done += n;
+    }
+    assert_int_equal(put, -1);
+    auto next = WriteFrom(out, "v", 1, &put);
+    StepUntilDone(loop, next);
+    char buf[4] = {0};
+    int got = -1;
+    auto reader = ReadInto(in, buf, sizeof(buf), &got);
+    StepUntilDone(loop, reader);
+    assert_int_equal(got, 1);
+    assert_int_equal(buf[0], 'v');
+}
+
+void test_uring_destroyed_socket_writer(void**) {
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    auto [client, server] = ConnectedPair(loop, listener, address);
+
+    char fill[4096] = {0};
+    while (send(client.Fd(), fill, sizeof(fill), MSG_DONTWAIT) > 0) { }
+    assert_true(errno == EAGAIN || errno == EWOULDBLOCK);
+    int put = -1;
+    std::optional<TFuture<void>> writer{WriteFrom(client, "w", 1, &put)};
+    loop.Step();
+    writer.reset();
+
+    // Only the next writer's byte follows the filler.
+    std::string markers;
+    auto drain = ReadMarkers(server, 'v', &markers);
+    auto next = WriteFrom(client, "v", 1, &put);
+    StepUntilDone(loop, next);
+    StepUntilDone(loop, drain);
+    assert_string_equal(markers.c_str(), "v");
+}
+
+// Completions collected by a Wait() not followed by WakeupReadyHandles() are
+// kept by the next Wait(): a destroyed coroutine drops its completion there
+// instead of waiting for one that will not come again.
+void test_uring_destroyed_after_repeated_wait(void**) {
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    auto [client, server] = ConnectedPair(loop, listener, address);
+    auto [otherClient, otherServer] = ConnectedPair(loop, listener, address);
+
+    char buf[4] = {0};
+    int got = -1;
+    char otherBuf[4] = {0};
+    int otherGot = -1;
+    std::optional<TFuture<void>> reader{ReadInto(server, buf, sizeof(buf), &got)};
+    auto other = ReadInto(otherServer, otherBuf, sizeof(otherBuf), &otherGot);
+    loop.Step();
+    assert_int_equal(send(client.Fd(), "x", 1, 0), 1);
+    assert_int_equal(send(otherClient.Fd(), "yy", 2, 0), 2);
+    loop.Poller().Poll();
+    loop.Poller().Poll();
+    reader.reset();
+    loop.Poller().WakeupReadyHandles();
+    StepUntilDone(loop, other);
+    assert_int_equal(got, -1);
+    assert_int_equal(otherGot, 2);
+    assert_memory_equal(otherBuf, "yy", 2);
+}
+
+// Cancel() reaps more completions than the CQ holds; the ones of live
+// coroutines are delivered by the next Wait(), each with its own result.
+void test_uring_destroyed_reader_with_full_cq(void**) {
+    TUring uring(4); // room for 8 completions
+    constexpr int count = 16;
+    std::vector<TUring::TSocket> sockets;
+    sockets.reserve(count);
+    int peers[count];
+    for (int i = 0; i < count; i++) {
+        int sp[2];
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+        sockets.emplace_back(sp[0], uring);
+        peers[i] = sp[1];
+    }
+    char bufs[count][1] = {};
+    int got[count];
+    std::optional<TFuture<void>> readers[count];
+    for (int i = 0; i < count; i++) {
+        got[i] = -1;
+        readers[i].emplace(ReadInto(sockets[i], bufs[i], 1, &got[i]));
+    }
+    uring.Wait({0, 0});
+    for (int i = 0; i < count; i++) {
+        char c = 'a' + i;
+        assert_int_equal(write(peers[i], &c, 1), 1);
+    }
+    readers[count - 2].reset();
+    readers[1].reset();
+    for (int i = 0; i < 3; i++) {
+        uring.Wait({0, 0});
+        uring.WakeupReadyHandles();
+    }
+    for (int i = 0; i < count; i++) {
+        if (i == 1 || i == count - 2) {
+            assert_int_equal(got[i], -1);
+        } else {
+            assert_int_equal(got[i], 1);
+            assert_int_equal(bufs[i][0], 'a' + i);
+        }
+        close(peers[i]);
+    }
+}
+#endif
 
 void test_base64(void**) {
     std::string data = "test string";
@@ -2409,6 +2681,11 @@ int main(int argc, char* argv[]) {
     // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TUring);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TUring);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_before_submit);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_file_reader_and_writer);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_socket_writer);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_repeated_wait);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_reader_with_full_cq);
 #endif
 #endif
 #ifdef _WIN32
