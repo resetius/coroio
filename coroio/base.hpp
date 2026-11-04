@@ -43,6 +43,7 @@ struct THandlePair {
 struct TEvent {
     int Fd;
     enum {
+        CANCEL = 0, // queued by TPollerBase::RemoveEvent(int, THandle); matches no event
         READ = 1,
         WRITE = 2,
         RHUP = 4

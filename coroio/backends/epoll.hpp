@@ -70,6 +70,7 @@ private:
 #endif
 
     std::vector<THandlePair> InEvents_;  ///< All registered events.
+    std::vector<uint32_t> Generations_;  ///< Per descriptor, bumped on each new registration and stored in its epoll data.
     std::vector<epoll_event> OutEvents_; ///< Events returned from epoll_wait.
 };
 

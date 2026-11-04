@@ -24,6 +24,9 @@ namespace NNet {
  * loop.Loop();                                   // runs until Stop() is called
  * @endcode
  *
+ * @note The loop must outlive every socket using its poller and every coroutine
+ *       suspended on one: destroying such a coroutine cancels its wait in the poller.
+ *
  * @tparam TPoller Polling backend: TEPoll, TKqueue, TIOCp, TUring, TPoll, TSelect, etc.
  */
 template<typename TPoller>

@@ -3,6 +3,8 @@
 #include <thread>
 #include <chrono>
 #include <array>
+#include <deque>
+#include <list>
 #include <exception>
 #include <sstream>
 #include <stdarg.h>
@@ -1693,6 +1695,420 @@ void test_notifier_destroy_before_poll(void**) {
     loop.Step();
 }
 
+void SetNonBlocking(int fd) {
+    int flags = fcntl(fd, F_GETFL);
+    assert_true(flags >= 0);
+    assert_int_equal(fcntl(fd, F_SETFL, flags | O_NONBLOCK), 0);
+}
+
+void FillSendBuffer(int fd) {
+    char buf[4096] = {0};
+    for (size_t size : {sizeof(buf), size_t(1)}) {
+        while (write(fd, buf, size) > 0) { }
+        assert_true(errno == EAGAIN || errno == EWOULDBLOCK);
+    }
+}
+
+void Drain(int fd) {
+    char buf[4096];
+    while (read(fd, buf, sizeof(buf)) > 0) { }
+}
+
+// Gives a waiter on the other end something to read, or room to write.
+void MakeReady(bool write, int peer) {
+    if (write) {
+        Drain(peer);
+    } else {
+        assert_int_equal(::write(peer, "r", 1), 1);
+    }
+}
+
+template<typename TFileHandle>
+TFuture<void> ReadByte(TFileHandle& handle, char* byte) {
+    co_await handle.ReadSome(byte, 1);
+}
+
+template<typename TFileHandle>
+TFuture<void> WriteByte(TFileHandle& handle) {
+    char byte = 'w';
+    co_await handle.WriteSome(&byte, 1);
+}
+
+// The inner frame, the one the poller resumes, is freed as soon as it completes.
+template<typename TFileHandle>
+TFuture<void> CountRead(TFileHandle& handle, char* byte, int* resumed) {
+    try {
+        co_await ReadByte(handle, byte);
+    } catch (const std::system_error&) {
+        // ECONNRESET after hangup
+    }
+    ++*resumed;
+}
+
+template<typename TFileHandle>
+TFuture<void> CountWrite(TFileHandle& handle, int* resumed) {
+    try {
+        co_await WriteByte(handle);
+    } catch (const std::system_error&) {
+        // EPIPE after hangup
+    }
+    ++*resumed;
+}
+
+template<typename TPoller>
+void test_destroyed_waiter_not_resumed(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    enum { PENDING, REGISTERED, COLLECTED, CANCELLED_BY_TIMER, REPLACED };
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    for (bool write : {false, true}) {
+        for (int stage : {PENDING, REGISTERED, COLLECTED, CANCELLED_BY_TIMER, REPLACED}) {
+            int fds[2];
+            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+            TFileHandle handle(fds[0], loop.Poller());
+            SetNonBlocking(fds[1]);
+            char byte = 0;
+            auto wait = [&]() {
+                return write ? WriteByte(handle) : ReadByte(handle, &byte);
+            };
+            if (write) {
+                FillSendBuffer(fds[0]);
+            }
+            std::optional<TFuture<void>> waiter{wait()};
+            assert_false(waiter->done());
+            if (stage != PENDING) {
+                loop.Step();
+            }
+            switch (stage) {
+            case PENDING:
+            case REGISTERED:
+                waiter.reset();
+                MakeReady(write, fds[1]);
+                loop.Step();
+                loop.Step();
+                break;
+            case COLLECTED:
+                MakeReady(write, fds[1]);
+                loop.Poller().Poll();
+                waiter.reset();
+                loop.Poller().WakeupReadyHandles();
+                break;
+            case CANCELLED_BY_TIMER: {
+                auto cancel = CancelNotifierWait(loop.Poller(), waiter);
+                MakeReady(write, fds[1]);
+                loop.Step();
+                assert_true(cancel.done());
+                cancel.await_resume();
+                assert_false(waiter.has_value());
+                break;
+            }
+            case REPLACED:
+                // The new waiter registers before the old one is destroyed.
+                *waiter = wait();
+                MakeReady(write, fds[1]);
+                Complete(loop, *waiter);
+                break;
+            }
+
+            // The descriptor still serves the next waiter.
+            if (write) {
+                FillSendBuffer(fds[0]);
+            } else {
+                Drain(fds[0]);
+            }
+            auto next = wait();
+            assert_false(next.done());
+            loop.Step();
+            MakeReady(write, fds[1]);
+            Complete(loop, next);
+            close(fds[1]);
+        }
+    }
+}
+
+template<typename TPoller>
+void test_reused_descriptor_wakes_new_waiter(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    // shared: the old description stays open in another process, like a forked child
+    for (bool shared : {false, true}) {
+        for (bool registered : {false, true}) {
+            int oldFds[2];
+            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds), 0);
+            auto oldHandle = std::make_unique<TFileHandle>(oldFds[0], loop.Poller());
+            char oldByte = 0;
+            int oldResumed = 0;
+            auto oldWait = CountRead(*oldHandle, &oldByte, &oldResumed);
+            if (registered) {
+                loop.Step();
+            }
+            int kept = shared ? fcntl(oldFds[0], F_DUPFD, 64) : -1;
+            oldHandle.reset();
+
+            int newFds[2];
+            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
+            assert_int_equal(newFds[0], oldFds[0]);
+            TFileHandle newHandle(newFds[0], loop.Poller());
+            char newByte = 0;
+            int newResumed = 0;
+            auto newWait = CountRead(newHandle, &newByte, &newResumed);
+            if (shared) {
+                assert_int_equal(write(oldFds[1], "o", 1), 1);
+            }
+            assert_int_equal(write(newFds[1], "n", 1), 1);
+            Complete(loop, newWait);
+            loop.Step();
+            loop.Step();
+            assert_int_equal(newResumed, 1);
+            assert_int_equal(newByte, 'n');
+            assert_int_equal(oldResumed, 0);
+            assert_false(oldWait.done());
+
+            if (kept >= 0) {
+                close(kept);
+            }
+            close(oldFds[1]);
+            close(newFds[1]);
+        }
+    }
+}
+
+template<typename TSocket>
+TFuture<void> AcceptOne(TSocket& listener) {
+    co_await listener.Accept();
+}
+
+template<typename TSocket>
+TFuture<void> ConnectUntil(TSocket& socket, TAddress address, TTime deadline) {
+    co_await socket.Connect(address, deadline);
+}
+
+template<typename TSocket>
+TFuture<void> CountConnect(TSocket& socket, TAddress address, TTime deadline, int* resumed) {
+    try {
+        co_await ConnectUntil(socket, address, deadline);
+    } catch (const std::system_error&) {
+        // timed out
+    }
+    ++*resumed;
+}
+
+template<typename TPoller>
+void test_destroyed_accept_and_connect_not_resumed(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    std::optional<TFuture<void>> accept{AcceptOne(listener)};
+    loop.Step();
+    accept.reset();
+    TSocket client(loop.Poller(), address.Domain());
+    std::optional<TFuture<void>> connect{ConnectUntil(client, address, TTime::max())};
+    connect.reset();
+    for (int i = 0; i < 3; i++) {
+        loop.Step();
+    }
+
+    // The timer fires in the same iteration in which the connection is writable.
+    TSocket other(loop.Poller(), address.Domain());
+    int resumed = 0;
+    auto timedOut = CountConnect(other, address, TClock::now(), &resumed);
+    for (int i = 0; i < 3; i++) {
+        loop.Step();
+    }
+    assert_true(timedOut.done());
+    assert_int_equal(resumed, 1);
+}
+
+template<typename TPoller>
+void test_reuse_after_closing_several(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    int oldFds[2][2];
+    std::unique_ptr<TFileHandle> oldHandles[2];
+    std::optional<TFuture<void>> oldWaits[2];
+    char oldBytes[2] = {0};
+    for (int i = 0; i < 2; i++) {
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds[i]), 0);
+        oldHandles[i] = std::make_unique<TFileHandle>(oldFds[i][0], loop.Poller());
+        oldWaits[i].emplace(ReadByte(*oldHandles[i], &oldBytes[i]));
+    }
+    loop.Step();
+    // Both registrations are removed in one iteration, the later one first.
+    oldHandles[1].reset();
+    oldHandles[0].reset();
+    loop.Step();
+
+    int newFds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
+    TFileHandle newHandles[2] = {{newFds[0], loop.Poller()}, {newFds[1], loop.Poller()}};
+    char newBytes[2] = {0};
+    int resumed[2] = {0};
+    TFuture<void> newWaits[2] = {
+        CountRead(newHandles[0], &newBytes[0], &resumed[0]),
+        CountRead(newHandles[1], &newBytes[1], &resumed[1]),
+    };
+    loop.Step();
+    assert_int_equal(write(newFds[0], "0", 1), 1);
+    assert_int_equal(write(newFds[1], "1", 1), 1);
+    Complete(loop, newWaits[0]);
+    Complete(loop, newWaits[1]);
+    assert_int_equal(newBytes[0], '1');
+    assert_int_equal(newBytes[1], '0');
+    assert_false(oldWaits[0]->done());
+    assert_false(oldWaits[1]->done());
+
+    close(oldFds[0][1]);
+    close(oldFds[1][1]);
+}
+
+template<typename TPoller>
+void test_hangup_wakes_reader_and_writer_once(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    TFileHandle handle(fds[0], loop.Poller());
+    FillSendBuffer(fds[0]);
+    char byte = 0;
+    int reads = 0;
+    int writes = 0;
+    auto reader = CountRead(handle, &byte, &reads);
+    auto writer = CountWrite(handle, &writes);
+    loop.Step();
+    close(fds[1]);
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (!(reader.done() && writer.done()) && TClock::now() < deadline) {
+        loop.Step();
+    }
+    loop.Step();
+    loop.Step();
+    assert_int_equal(reads, 1);
+    assert_int_equal(writes, 1);
+}
+
+template<typename TSocket>
+TFuture<void> ServeRequest(TSocket client) {
+    try {
+        auto header = co_await TByteReader(client).ReadUntil("\r\n\r\n");
+        if (header.starts_with("GET /slow")) {
+            // The response comes later, e.g. from a child process.
+            co_await client.Poller()->Yield();
+        }
+        co_await TByteWriter(client).Write("OK", 2);
+    } catch (const std::exception&) {
+        // the client went away
+    }
+}
+
+template<typename TPoller>
+TFuture<void> AcceptRequests(
+    typename TPoller::TSocket& listener,
+    std::list<TFuture<void>>& handlers,
+    std::deque<int>& inherited)
+{
+    while (true) {
+        auto client = co_await listener.Accept();
+        // A child forked meanwhile holds the descriptor until it exits.
+        inherited.push_back(dup(client.Fd()));
+        handlers.push_back(ServeRequest(std::move(client)));
+    }
+}
+
+template<typename TPoller>
+TFuture<void> SendRequest(TPoller& poller, TAddress address, std::string path, bool abort, int* completed) {
+    using TSocket = typename TPoller::TSocket;
+    TSocket socket(poller, address.Domain());
+    // Reset on close: no TIME_WAIT, so repeated runs do not run out of ports.
+    linger reset{1, 0};
+    if (setsockopt(socket.Fd(), SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)) < 0) {
+        throw std::system_error(errno, std::generic_category(), "setsockopt");
+    }
+    co_await socket.Connect(address);
+    // The header terminator is split between the two parts.
+    std::string start = "GET " + path + " HTTP/1.1\r\nHost: x\r\n";
+    co_await TByteWriter(socket).Write(start.data(), start.size());
+    // Let the server accept and wait for the rest of the request.
+    co_await poller.Sleep(std::chrono::milliseconds(1));
+    if (abort) {
+        co_return;
+    }
+    co_await TByteWriter(socket).Write("\r\n", 2);
+    char response[2];
+    co_await TByteReader(socket).Read(response, sizeof(response));
+    co_await poller.Yield();
+    ++*completed;
+}
+
+template<typename TPoller>
+void test_short_connections(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen(1024);
+    std::list<TFuture<void>> handlers;
+    std::list<TFuture<void>> clients;
+    std::deque<int> inherited;
+    auto server = AcceptRequests<TPoller>(listener, handlers, inherited);
+    auto reap = [](std::list<TFuture<void>>& futures) {
+        for (auto it = futures.begin(); it != futures.end(); ) {
+            if (it->done()) {
+                try {
+                    it->await_resume();
+                } catch (const std::exception& ex) {
+                    fail_msg("%s", ex.what());
+                }
+                it = futures.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+
+    uint32_t seed = 31337;
+    int requests = 0;
+    int started = 0;
+    int completed = 0;
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (requests < 300 && TClock::now() < deadline) {
+        while (clients.size() < 8 && requests < 300) {
+            auto kind = rand_(&seed) % 3;
+            bool abort = kind == 0;
+            requests++;
+            started += !abort;
+            clients.push_back(SendRequest(loop.Poller(), address, kind == 1 ? "/slow" : "/", abort, &completed));
+        }
+        loop.Step();
+        reap(clients);
+        reap(handlers);
+        while (inherited.size() > 16) {
+            close(inherited.front());
+            inherited.pop_front();
+        }
+    }
+    const auto drain = TClock::now() + std::chrono::seconds(5);
+    while (!clients.empty() && TClock::now() < drain) {
+        loop.Step();
+        reap(clients);
+        reap(handlers);
+    }
+    assert_true(clients.empty());
+    assert_int_equal(completed, started);
+    for (int fd : inherited) {
+        close(fd);
+    }
+}
+
 } // namespace
 #endif // _WIN32
 
@@ -1719,14 +2135,32 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_notifier_cancel_ready_from_timer, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_notifier_cancel_collected_event, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_notifier_destroy_before_poll, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_destroyed_waiter_not_resumed, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_reused_descriptor_wakes_new_waiter, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_reuse_after_closing_several, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_destroyed_accept_and_connect_not_resumed, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_hangup_wakes_reader_and_writer_once, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_short_connections, TSelect, TPoll);
 #ifdef __linux__
     ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TEPoll);
     ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TEPoll);
     ADD_TEST(my_unit_test, test_notifier_destroy_before_poll, TEPoll);
+    ADD_TEST(my_unit_test, test_destroyed_waiter_not_resumed, TEPoll);
+    ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TEPoll);
+    ADD_TEST(my_unit_test, test_reuse_after_closing_several, TEPoll);
+    ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TEPoll);
+    ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TEPoll);
+    ADD_TEST(my_unit_test, test_short_connections, TEPoll);
 #elif defined(__APPLE__) || defined(__FreeBSD__)
     ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TKqueue);
     ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TKqueue);
     ADD_TEST(my_unit_test, test_notifier_destroy_before_poll, TKqueue);
+    ADD_TEST(my_unit_test, test_destroyed_waiter_not_resumed, TKqueue);
+    ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TKqueue);
+    ADD_TEST(my_unit_test, test_reuse_after_closing_several, TKqueue);
+    ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TKqueue);
+    ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TKqueue);
+    ADD_TEST(my_unit_test, test_short_connections, TKqueue);
 #endif
 #endif
 

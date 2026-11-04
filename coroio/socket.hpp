@@ -144,6 +144,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                this->handle = h;
                 this->poller->AddRead(this->fd, h);
             }
         };
@@ -171,6 +172,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                this->handle = h;
                 this->poller->AddRead(this->fd, h);
             }
         };
@@ -194,6 +196,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                this->handle = h;
                 this->poller->AddWrite(this->fd, h);
             }
         };
@@ -220,6 +223,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                this->handle = h;
                 this->poller->AddWrite(this->fd, h);
             }
         };
@@ -240,6 +244,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                this->handle = h;
                 this->poller->AddRemoteHup(this->fd, h);
             }
         };
@@ -263,12 +268,20 @@ public:
 protected:
     template<typename T>
     struct TAwaitable {
+        ~TAwaitable() {
+            if (handle) {
+                // The coroutine is destroyed while waiting.
+                poller->RemoveEvent(fd, handle);
+            }
+        }
+
         bool await_ready() {
             SafeRun();
             return (ready = (ret >= 0));
         }
 
         int await_resume() {
+            handle = {};
             if (!ready) {
                 SafeRun();
             }
@@ -293,6 +306,7 @@ protected:
         void* b = nullptr; size_t s = 0;
         int ret = -1;
         bool ready = false;
+        THandle handle = {};
     };
 };
 
@@ -410,6 +424,15 @@ public:
         }
         RemoteAddr_ = addr;
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->RemoveEvent(fd, handle);
+                    if (deadline != TTime::max()) {
+                        poller->RemoveTimer(timerId, deadline);
+                    }
+                }
+            }
+
             bool await_ready() {
                 int ret = connect(fd, addr.first, addr.second);
 #ifdef _WIN32
@@ -425,6 +448,7 @@ public:
             }
 
             void await_suspend(std::coroutine_handle<> h) {
+                handle = h;
                 poller->AddWrite(fd, h);
                 if (deadline != TTime::max()) {
                     timerId = poller->AddTimer(deadline, h);
@@ -432,6 +456,7 @@ public:
             }
 
             void await_resume() {
+                handle = {};
                 if (ready) {
                     return;
                 }
@@ -460,6 +485,7 @@ public:
             TTime deadline;
             unsigned timerId = 0;
             bool ready = false;
+            THandle handle = {};
         };
         return TAwaitable{Poller_, Fd_, RemoteAddr_->RawAddr(), deadline};
     }
@@ -475,11 +501,18 @@ public:
      */
     auto Accept() {
         struct TAwaitable {
+            ~TAwaitable() {
+                if (handle) {
+                    poller->RemoveEvent(fd, handle);
+                }
+            }
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
+                handle = h;
                 poller->AddRead(fd, h);
             }
             TSocket await_resume() {
+                handle = {};
                 char clientaddr[sizeof(sockaddr_in6)];
                 socklen_t len = static_cast<socklen_t>(sizeof(sockaddr_in6));
 
@@ -504,6 +537,7 @@ public:
 
             TPollerBase* poller;
             int fd;
+            THandle handle = {};
         };
 
         return TAwaitable{Poller_, Fd_};

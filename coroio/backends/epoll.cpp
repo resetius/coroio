@@ -15,6 +15,10 @@ int epoll_pwait2(HANDLE ephnd, struct epoll_event* events, int maxevents, const 
     return epoll_wait(ephnd, events, maxevents, timeout);
 }
 #endif
+
+uint64_t Pack(int fd, uint32_t generation) {
+    return (static_cast<uint64_t>(generation) << 32) | static_cast<uint32_t>(fd);
+}
 }
 
 #ifdef __linux__
@@ -50,13 +54,17 @@ void TEPoll::Poll() {
 
     if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
+        Generations_.resize(MaxFd_+1);
     }
 
-    for (const auto& ch : Changes_) {
-        int fd = ch.Fd;
+    for (const auto& pending : Changes_) {
+        int fd = pending.Fd;
         auto& ev  = InEvents_[fd];
+        const auto ch = ResolveCancel(pending, ev);
+        if (!ch.Type) {
+            continue;
+        }
         epoll_event eev = {};
-        eev.data.fd = fd;
         bool change = false;
         bool newEv = false;
         if (ch.Handle) {
@@ -101,6 +109,7 @@ void TEPoll::Poll() {
         }
 
         if (newEv) {
+            eev.data.u64 = Pack(fd, ++Generations_[fd]);
             if (epoll_ctl(Fd_, EPOLL_CTL_ADD, fd, &eev) < 0) {
                 throw std::system_error(errno, std::generic_category(), "epoll_ctl");
             }
@@ -112,8 +121,10 @@ void TEPoll::Poll() {
                 }
             }
         } else if (change) {
+            eev.data.u64 = Pack(fd, Generations_[fd]);
             if (epoll_ctl(Fd_, EPOLL_CTL_MOD, fd, &eev) < 0) {
                 if (errno == ENOENT) {
+                    eev.data.u64 = Pack(fd, ++Generations_[fd]);
                     if (epoll_ctl(Fd_, EPOLL_CTL_ADD, fd, &eev) < 0) {
                         throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                     }
@@ -137,7 +148,12 @@ void TEPoll::Poll() {
     }
 
     for (int i = 0; i < nfds; ++i) {
-        int fd = OutEvents_[i].data.fd;
+        int fd = static_cast<uint32_t>(OutEvents_[i].data.u64);
+        if (OutEvents_[i].data.u64 != Pack(fd, Generations_[fd])) {
+            // Left by a closed descriptor whose file is still open elsewhere
+            // (e.g. inherited by a child): epoll_ctl can no longer remove it.
+            continue;
+        }
         auto ev = InEvents_[fd];
         if ((OutEvents_[i].events & EPOLLIN) && ev.Read) {
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
