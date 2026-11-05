@@ -3166,13 +3166,72 @@ void test_destroyed_monitor_not_resumed(void**) {
 }
 
 template<typename TSocket>
-TFuture<void> ServeRequest(TSocket client) {
+TFuture<void> AcceptAfterReset(TSocket& listener, int* resets, int* accepted) {
+    auto reset = co_await listener.Accept();
+    char byte;
     try {
+        co_await reset.ReadSome(&byte, 1);
+    } catch (const std::system_error& ex) {
+        *resets += ex.code().value() == ECONNRESET;
+    }
+    co_await listener.Accept();
+    ++*accepted;
+}
+
+template<typename TPoller>
+void test_accept_reset_connection(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    auto [addr, len] = address.RawAddr();
+    // The peer resets the first connection before the server accepts it.
+    int aborted = socket(address.Domain(), SOCK_STREAM, 0);
+    assert_int_equal(connect(aborted, addr, len), 0);
+    linger reset{1, 0};
+    assert_int_equal(setsockopt(aborted, SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)), 0);
+    close(aborted);
+    // Loopback keeps the order, so the reset arrives before this handshake.
+    int next = socket(address.Domain(), SOCK_STREAM, 0);
+    assert_int_equal(connect(next, addr, len), 0);
+
+    int resets = 0;
+    int accepted = 0;
+    auto accept = AcceptAfterReset(listener, &resets, &accepted);
+    for (int i = 0; i < 10 && !accept.done(); i++) {
+        loop.Step();
+    }
+    close(next);
+    assert_true(accept.done());
+    try {
+        accept.await_resume();
+    } catch (const std::exception& ex) {
+        fail_msg("%s", ex.what());
+    }
+    assert_int_equal(resets, 1);
+    assert_int_equal(accepted, 1);
+}
+
+struct TShortRequest {
+    const char* Kind = "";
+    const char* Stage = "";
+    TTime Start = TClock::now();
+    TFuture<void> Future;
+};
+
+template<typename TSocket>
+TFuture<void> ServeRequest(TSocket client, const char** stage) {
+    try {
+        *stage = "read header";
         auto header = co_await TByteReader(client).ReadUntil("\r\n\r\n");
         if (header.starts_with("GET /slow")) {
             // The response comes later, e.g. from a child process.
+            *stage = "slow";
             co_await client.Poller()->Yield();
         }
+        *stage = "write";
         co_await TByteWriter(client).Write("OK", 2);
     } catch (const std::exception&) {
         // the client went away
@@ -3182,19 +3241,21 @@ TFuture<void> ServeRequest(TSocket client) {
 template<typename TPoller>
 TFuture<void> AcceptRequests(
     typename TPoller::TSocket& listener,
-    std::list<TFuture<void>>& handlers,
+    std::list<TShortRequest>& handlers,
     std::deque<int>& inherited)
 {
     while (true) {
         auto client = co_await listener.Accept();
         // A child forked meanwhile holds the descriptor until it exits.
         inherited.push_back(dup(client.Fd()));
-        handlers.push_back(ServeRequest(std::move(client)));
+        auto& handler = handlers.emplace_back();
+        handler.Kind = "handler";
+        handler.Future = ServeRequest(std::move(client), &handler.Stage);
     }
 }
 
 template<typename TPoller>
-TFuture<void> SendRequest(TPoller& poller, TAddress address, std::string path, bool abort, int* completed) {
+TFuture<void> SendRequest(TPoller& poller, TAddress address, std::string path, bool abort, int* completed, const char** stage) {
     using TSocket = typename TPoller::TSocket;
     TSocket socket(poller, address.Domain());
     // Reset on close: no TIME_WAIT, so repeated runs do not run out of ports.
@@ -3202,18 +3263,24 @@ TFuture<void> SendRequest(TPoller& poller, TAddress address, std::string path, b
     if (setsockopt(socket.Fd(), SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)) < 0) {
         throw std::system_error(errno, std::generic_category(), "setsockopt");
     }
+    *stage = "connect";
     co_await socket.Connect(address);
     // The header terminator is split between the two parts.
     std::string start = "GET " + path + " HTTP/1.1\r\nHost: x\r\n";
+    *stage = "write";
     co_await TByteWriter(socket).Write(start.data(), start.size());
     // Let the server accept and wait for the rest of the request.
+    *stage = "sleep";
     co_await poller.Sleep(std::chrono::milliseconds(1));
     if (abort) {
         co_return;
     }
+    *stage = "write rest";
     co_await TByteWriter(socket).Write("\r\n", 2);
     char response[2];
+    *stage = "read";
     co_await TByteReader(socket).Read(response, sizeof(response));
+    *stage = "yield";
     co_await poller.Yield();
     ++*completed;
 }
@@ -3227,21 +3294,31 @@ void test_short_connections(void**) {
     TSocket listener(loop.Poller(), address.Domain());
     listener.Bind(address);
     listener.Listen(1024);
-    std::list<TFuture<void>> handlers;
-    std::list<TFuture<void>> clients;
+    std::list<TShortRequest> handlers;
+    std::list<TShortRequest> clients;
     std::deque<int> inherited;
     auto server = AcceptRequests<TPoller>(listener, handlers, inherited);
-    auto reap = [](std::list<TFuture<void>>& futures) {
-        for (auto it = futures.begin(); it != futures.end(); ) {
-            if (it->done()) {
+    auto reap = [](std::list<TShortRequest>& requests) {
+        for (auto it = requests.begin(); it != requests.end(); ) {
+            if (it->Future.done()) {
                 try {
-                    it->await_resume();
+                    it->Future.await_resume();
                 } catch (const std::exception& ex) {
                     fail_msg("%s", ex.what());
                 }
-                it = futures.erase(it);
+                it = requests.erase(it);
             } else {
                 ++it;
+            }
+        }
+    };
+    // The accept loop ends only with an error.
+    auto checkServer = [&server]() {
+        if (server.done()) {
+            try {
+                server.await_resume();
+            } catch (const std::exception& ex) {
+                fail_msg("accept loop: %s", ex.what());
             }
         }
     };
@@ -3257,11 +3334,14 @@ void test_short_connections(void**) {
             bool abort = kind == 0;
             requests++;
             started += !abort;
-            clients.push_back(SendRequest(loop.Poller(), address, kind == 1 ? "/slow" : "/", abort, &completed));
+            auto& client = clients.emplace_back();
+            client.Kind = abort ? "aborted client" : kind == 1 ? "slow client" : "normal client";
+            client.Future = SendRequest(loop.Poller(), address, kind == 1 ? "/slow" : "/", abort, &completed, &client.Stage);
         }
         loop.Step();
         reap(clients);
         reap(handlers);
+        checkServer();
         while (inherited.size() > 16) {
             close(inherited.front());
             inherited.pop_front();
@@ -3272,8 +3352,23 @@ void test_short_connections(void**) {
         loop.Step();
         reap(clients);
         reap(handlers);
+        checkServer();
     }
-    assert_true(clients.empty());
+    if (!clients.empty()) {
+        const auto now = TClock::now();
+        auto age = [&now](const TShortRequest& request) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(now - request.Start).count();
+        };
+        std::ostringstream report;
+        report << "stuck: requests=" << requests << " started=" << started << " completed=" << completed
+            << " clients=" << clients.size() << " handlers=" << handlers.size();
+        for (const auto* pending : {&clients, &handlers}) {
+            for (const auto& request : *pending) {
+                report << "\n" << request.Kind << ": " << request.Stage << " for " << age(request) << " ms";
+            }
+        }
+        fail_msg("%s", report.str().c_str());
+    }
     assert_int_equal(completed, started);
     for (int fd : inherited) {
         close(fd);
@@ -3384,6 +3479,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_any_simultaneous);
     ADD_TEST(my_unit_poller, test_all_simultaneous);
     ADD_TEST(my_unit_poller, test_any_pending_loser);
+    ADD_TEST(my_unit_poller, test_accept_reset_connection);
 #ifdef HAVE_OPENSSL
     ADD_TEST(my_unit_poller, test_read_write_full_ssl);
 #endif

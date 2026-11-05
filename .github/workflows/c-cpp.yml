@@ -31,7 +31,9 @@ jobs:
     - name: make
       run: cmake --build build
     - name: test
-      run: cmake --build build --target test
+      run: |
+        cd build
+        ctest --output-on-failure
     - name: test-log
       if: failure()
       run: cat build/Testing/Temporary/LastTest.log
@@ -117,7 +119,7 @@ jobs:
     - name: Run Tests
       run: |
           cd build
-          ctest -C Debug
+          ctest -C Debug --output-on-failure
     - name: Publish Unit Test Results
       uses: EnricoMi/publish-unit-test-result-action/macos@v2
       if: always()
