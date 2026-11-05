@@ -1264,10 +1264,12 @@ void test_any_simultaneous(void**) {
         *result = co_await Any(std::move(futures));
     }(loop.Poller(), fds1, fds2, &resumed, &result);
 
-    while (!task.done()) {
+    for (int i = 0; i < 100 && !task.done(); ++i) {
         loop.Step();
     }
+    assert_true(task.done());
     assert_int_equal(result, 1);
+    assert_int_equal(resumed, 1);
 
     // The loser must not be resumed by events left over from the winning iteration.
     loop.Step();
@@ -1302,9 +1304,10 @@ void test_all_simultaneous(void**) {
         *results = co_await All(std::move(futures));
     }(loop.Poller(), fds1, fds2, &results);
 
-    while (!task.done()) {
+    for (int i = 0; i < 100 && !task.done(); ++i) {
         loop.Step();
     }
+    assert_true(task.done());
     assert_true(results == (std::vector<int>{'a', 'b'}));
 
     loop.Step();
@@ -1336,9 +1339,10 @@ void test_any_pending_loser(void**) {
         *result = co_await Any(std::move(futures));
     }(loop.Poller(), fds1, fds2, &resumed, &result);
 
-    while (!task.done()) {
+    for (int i = 0; i < 100 && !task.done(); ++i) {
         loop.Step();
     }
+    assert_true(task.done());
     assert_int_equal(result, 1);
     assert_int_equal(resumed, 1);
     assert_true(IsClosed(fds2[0]));
