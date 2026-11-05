@@ -264,6 +264,15 @@ size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
     return Tail - Head;
 }
 
+void TZeroCopyEnvelopeReaderV2::ReleaseDrained(std::unique_ptr<TChunk> chunk) {
+    // Live blobs still point into the chunk, the blob deleter recycles it later
+    if (chunk->UseCount == 0) {
+        FreeChunks.emplace_back(std::move(chunk));
+    } else {
+        UsedChunks.PushBack(std::move(chunk));
+    }
+}
+
 template<size_t size>
 bool TZeroCopyEnvelopeReaderV2::CopyOut(char* buf) {
     if (!SealedChunks.Empty()) {
@@ -272,7 +281,7 @@ bool TZeroCopyEnvelopeReaderV2::CopyOut(char* buf) {
             return false;
         }
         if (chunk->CopyOut<size>(buf)) {
-            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
+            ReleaseDrained(SealedChunks.PopFront());
         }
     } else {
         if (CurrentChunk->Size() < size) [[unlikely]] {
@@ -292,7 +301,7 @@ void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
         auto sizeToCopy = std::min(size, chunk->Size());
         assert(sizeToCopy > 0);
         if (chunk->CopyOut(buf, sizeToCopy)) {
-            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
+            ReleaseDrained(SealedChunks.PopFront());
         }
         buf += sizeToCopy;
         size -= sizeToCopy;
