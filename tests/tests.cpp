@@ -1427,26 +1427,6 @@ void test_monitor_unsupported(void**) {
 
 #ifdef __linux__
 
-namespace {
-
-struct TTestSuspendPromise;
-
-struct TTestSuspendTask : std::coroutine_handle<TTestSuspendPromise>
-{
-    using promise_type = TTestSuspendPromise;
-};
-
-struct TTestSuspendPromise
-{
-    TTestSuspendTask get_return_object() { return { TTestSuspendTask::from_promise(*this) }; }
-    std::suspend_always initial_suspend() { return {}; }
-    std::suspend_always final_suspend() noexcept { return {}; }
-    void return_void() {}
-    void unhandled_exception() {}
-};
-
-} // namespace
-
 #ifdef HAVE_URING
 void test_uring_create(void**) {
     TUring uring(256);
@@ -1622,23 +1602,6 @@ void test_uring_no_sqe(void** ) {
     }
 }
 #endif
-
-/* temporary disable
-void test_uring_cancel(void** ) {
-    TUring uring(16);
-
-    char rbuf[1] = {'k'};
-    int p[2]; assert_int_equal(0, pipe(p));
-    assert_int_equal(1, write(p[1], rbuf, 1));
-    assert_int_equal(1, write(p[1], rbuf, 1));
-    TTestSuspendTask h = []() -> TTestSuspendTask { co_return; }();
-    uring.Read(p[0], rbuf, 1, h);
-    uring.Cancel(h);
-    assert_int_equal(1, uring.Wait());
-    assert_true(rbuf[0] == 'k');
-    h.destroy();
-}
-*/
 
 #endif
 
@@ -3448,7 +3411,6 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_file_offset);
     ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
     ADD_TEST(cmocka_unit_test, test_uring_wait_result_without_wakeup);
-    // ADD_TEST(cmocka_unit_test, test_uring_cancel); // temporary disable
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TUring);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TUring);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_before_submit);

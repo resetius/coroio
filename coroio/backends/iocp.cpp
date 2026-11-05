@@ -23,10 +23,7 @@ TIOCp::~TIOCp()
 }
 
 void TIOCp::Prepare(TOperation& op, int fd) {
-    THandle handle = op.Handle;
-    op = TOperation();
-    op.Handle = handle;
-    op.Fd = fd;
+    op.Reset(fd);
 }
 
 void TIOCp::Throw(TOperation& op, int err, const std::error_category& category, const char* what) {

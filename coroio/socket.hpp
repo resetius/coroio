@@ -590,7 +590,7 @@ protected:
  * @brief Socket type driven by the poller's implementation.
  *
  * This class is used when socket operations (read, write, connect, etc.) are defined
- * by the poller—in other words, when these operations depend on the underlying poller
+ * by the poller, in other words, when these operations depend on the underlying poller
  * (e.g. for high-performance I/O using uring or IOCP).
  *
  * Ordinary users should not worry about selecting the appropriate socket type.
@@ -892,6 +892,13 @@ private:
  *
  * @note The poller must outlive every coroutine suspended on an operation of this
  *       class: destroying such a coroutine cancels the operation in the poller.
+ *
+ * @warning Unlike TPollerDrivenSocket, this class does not register its handle with the
+ *          poller. On TIOCp the handle is therefore not associated with the completion port,
+ *          so file handles are not supported there: their operations get no completion packet
+ *          and are never delivered, and TIOCp::Cancel() relies on there being no packet. The
+ *          handle must not be associated with the port: Cancel() would then return while a
+ *          packet still points to the operation. See GitHub issues #156 and #158.
  *
  * @tparam T The poller type that defines the asynchronous file operations.
  */

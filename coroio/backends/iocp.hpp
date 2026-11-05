@@ -36,12 +36,20 @@ namespace NNet {
  * @endcode
  *
  * @note This class is specific to Windows and uses IOCP for high-performance I/O.
+ *
+ * @warning File handles are not supported. TPollerDrivenFileHandle does not register its
+ * handle, so the handle is not associated with the port: its reads and writes get no
+ * completion packet and their coroutines are never resumed. Cancel(TOperation&) relies on
+ * that: for a file operation it returns once the OVERLAPPED is no longer pending, without
+ * waiting for a packet. A file handle must not be associated with the port, e.g. by
+ * Register(): Cancel() would then return while a packet still points to the operation.
+ * Support for file I/O belongs to GitHub issues #156 and #158.
  */
 class TIOCp: public TPollerBase {
 public:
     /// Alias for the poller-driven socket type.
     using TSocket = NNet::TPollerDrivenSocket<TIOCp>;
-    /// Alias for the poller-driven file handle type.
+    /// Alias for the poller-driven file handle type. Not supported: its operations are never delivered, see TIOCp.
     using TFileHandle = NNet::TPollerDrivenFileHandle<TIOCp>;
 
     /**
@@ -67,6 +75,20 @@ public:
         int Fd = -1;
         bool Connect = false;
         bool File = false;
+
+        // Resets the OVERLAPPED and every field except Handle for a new operation on fd.
+        // A field added above must be reset here too.
+        void Reset(int fd) {
+            static_cast<OVERLAPPED&>(*this) = OVERLAPPED();
+            Result = 0;
+            Index = 0;
+            Addr = nullptr;
+            Len = nullptr;
+            Sock = -1;
+            Fd = fd;
+            Connect = false;
+            File = false;
+        }
     };
 
     TIOCp();

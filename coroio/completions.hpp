@@ -15,8 +15,14 @@ namespace NDetail {
  * The poller refers to it from posting until the completion is delivered or
  * Cancel() returns, and the awaitable cancels the operation in its destructor,
  * so it outlives every reference. Index lets Cancel() find it in O(1).
+ * The poller and the system keep its address, so it can be neither copied
+ * nor moved.
  */
 struct TOperationState {
+    TOperationState() = default;
+    TOperationState(const TOperationState&) = delete;
+    TOperationState& operator=(const TOperationState&) = delete;
+
     THandle Handle; ///< Coroutine to resume, set by the caller before posting. Cleared when posting fails, the completion is delivered or the operation is cancelled, so it is set while the operation is pending.
     int Result = 0; ///< Result of the completion, e.g. the number of bytes transferred.
     unsigned Index = 0; ///< Position of the completion in TCompletions once taken; before that, whatever the poller keeps there.

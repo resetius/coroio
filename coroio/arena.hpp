@@ -1,26 +1,29 @@
 #pragma once
 
 #include <stack>
+#include <vector>
 
 namespace NNet {
 
 /**
  * @class TArenaAllocator
- * @brief Arena allocator to preallocate memory for IOCP events.
+ * @brief Arena allocator for objects of one type that are often created and destroyed.
  *
- * This class implements an arena allocator that preallocates memory in blocks (of size @c PoolSize)
- * to avoid individual heap allocations for each IOCP event structure. This is necessary for efficiency
- * when working with the IOCP API, which may require frequent allocation and deallocation of event objects.
+ * This class preallocates memory in pools of @c PoolSize objects and reuses the freed slots,
+ * so that each object does not need its own heap allocation. It hands out raw storage:
+ * construct the object in it with placement new and destroy the object before giving the
+ * storage back.
  *
- * @tparam T The type of object to allocate (e.g. IOCP event structure).
+ * @tparam T The type of object to allocate.
  * @tparam PoolSize The number of objects in each preallocated pool (default is 1024).
  *
  * @code{.cpp}
  * // Example usage:
- * TArenaAllocator<TIO> allocator;
- * TIO* ioEvent = allocator.allocate();
- * // use ioEvent...
- * allocator.deallocate(ioEvent);
+ * TArenaAllocator<TItem> allocator;
+ * TItem* item = new (allocator.Allocate()) TItem();
+ * // use item...
+ * item->~TItem();
+ * allocator.Deallocate(item);
  * @endcode
  */
 template<typename T, size_t PoolSize = 1024>
