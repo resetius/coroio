@@ -1,4 +1,4 @@
-#include "notifier.h"
+#include "notifier.hpp"
 
 #ifndef _WIN32
 

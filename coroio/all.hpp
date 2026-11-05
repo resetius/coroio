@@ -14,7 +14,7 @@
 #include "init.hpp"
 #include "address.hpp"
 #include "poller.hpp"
-#include "notifier.h"
+#include "notifier.hpp"
 
 #include <coroio/backends/select.hpp>
 #include <coroio/backends/poll.hpp>
