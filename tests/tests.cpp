@@ -16,6 +16,15 @@
 #include <coroio/ws/utils.hpp>
 #include <coroio/dns/resolver.hpp>
 #include <coroio/completions.hpp>
+#include <coroio/http/httpd.hpp>
+
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #include <unordered_set>
 
@@ -134,7 +143,7 @@ void test_accept(void**) {
     TFuture<void> h2 = [](TSocket* socket, TSocket* clientSocket) -> TFuture<void>
     {
         try {
-            *clientSocket = std::move(co_await socket->Accept());
+            *clientSocket = std::move((co_await socket->Accept()).value());
         } catch (const std::exception& ex) {
             std::cerr << "Error on accept: " << ex.what() << std::endl;
         }
@@ -177,7 +186,7 @@ void test_cloexec(void**) {
     TFuture<void> h2 = [](TSocket* socket, TSocket* accepted) -> TFuture<void>
     {
         try {
-            *accepted = std::move(co_await socket->Accept());
+            *accepted = std::move((co_await socket->Accept()).value());
         } catch (const std::exception& ex) {
             std::cerr << "Error on accept: " << ex.what() << std::endl;
         }
@@ -225,7 +234,7 @@ void test_write_after_connect(void**) {
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         try {
-            TSocket clientSocket = std::move(co_await socket->Accept());
+            TSocket clientSocket = std::move((co_await socket->Accept()).value());
             co_await clientSocket.ReadSome(buf, size);
         } catch (const std::exception& ex) {
             std::cerr << "Error2: " << ex.what() << "\n";
@@ -269,7 +278,7 @@ void test_write_after_accept(void**) {
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         try {
-            TSocket clientSocket = std::move(co_await socket->Accept());
+            TSocket clientSocket = std::move((co_await socket->Accept()).value());
             auto s = co_await clientSocket.WriteSome(buf, size);
         } catch (const std::exception& ex) {
             std::cerr << "Error2: " << ex.what() << "\n";
@@ -308,7 +317,7 @@ void test_read_write_same_socket(void**) {
 
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
-        TSocket clientSocket = std::move(co_await socket->Accept());
+        TSocket clientSocket = std::move((co_await socket->Accept()).value());
         char b[128] = "Hello from server";
         co_await clientSocket.WriteSomeYield(b, sizeof(b));
         co_await clientSocket.ReadSomeYield(buf, size);
@@ -641,7 +650,7 @@ void test_read_write_full(void**) {
     std::vector<char> received(1024*1024);
     TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         co_await TByteReader(client).Read(received.data(), received.size());
         co_return;
     }(socket, received);
@@ -685,7 +694,7 @@ line9
     std::vector<std::string> received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         auto reader = TByteReader(client);
         auto line1 = co_await reader.ReadUntil("\n");
         auto line2 = co_await reader.ReadUntil("\n");
@@ -744,7 +753,7 @@ void test_read_write_struct(void**) {
     Test received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         received = co_await TStructReader<Test, TSocket>(client).Read();
         co_return;
     }(socket, received);
@@ -791,7 +800,7 @@ void test_read_write_lines(void**) {
     std::vector<std::string> received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         auto reader = TLineReader<TSocket>(client, 16);
         TLine line;
         do {
@@ -1035,7 +1044,7 @@ void test_read_write_full_ssl(void**) {
     TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
         TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         auto sslClient = TSslSocket(std::move(client), ctx);
         co_await sslClient.AcceptHandshake();
         co_await TByteReader(sslClient).Read(received.data(), received.size());
@@ -1386,7 +1395,7 @@ void test_remote_disconnect(void**) {
 
     TFuture<void> h2 = [](TPoller& poller, TSocket* socket, bool* closed) -> TFuture<void>
     {
-        auto clientSocket = co_await socket->Accept();
+        auto clientSocket = (co_await socket->Accept()).value();
         // Monitor() must not complete while the connection is open.
         co_await poller.Sleep(std::chrono::milliseconds(100));
         *closed = true;
@@ -1619,7 +1628,7 @@ void StepUntilDone(TLoop<TPoller>& loop, TFuture<void>& future) {
 
 template<typename TSocket>
 TFuture<void> AcceptInto(TSocket& listener, std::optional<TSocket>* accepted) {
-    accepted->emplace(co_await listener.Accept());
+    accepted->emplace((co_await listener.Accept()).value());
 }
 
 template<typename TFile>
@@ -1906,8 +1915,8 @@ void test_driven_accept_not_listening(void**) {
     bool failed = false;
     auto accept = [](TSocket& socket, std::optional<TSocket>* accepted, bool* failed) -> TFuture<void> {
         try {
-            accepted->emplace(co_await socket.Accept());
-        } catch (const std::system_error&) {
+            accepted->emplace((co_await socket.Accept()).value());
+        } catch (const std::exception&) {
             *failed = true;
         }
     }(socket, &accepted, &failed);
@@ -1915,6 +1924,126 @@ void test_driven_accept_not_listening(void**) {
     assert_true(failed);
     assert_false(accepted.has_value());
 }
+
+#ifndef _WIN32
+template<typename TSocket>
+TFuture<void> AcceptResult(TSocket& listener, std::optional<std::expected<TSocket, int>>* result) {
+    result->emplace(co_await listener.Accept());
+}
+
+int ConnectTo(const TAddress& address) {
+    int fd = socket(address.Domain(), SOCK_STREAM, 0);
+    auto [addr, len] = address.RawAddr();
+    assert_int_equal(connect(fd, addr, len), 0);
+    return fd;
+}
+
+// Readiness of a connection that someone else accepts first is returned as EAGAIN.
+template<typename TPoller>
+void test_accept_after_spurious_readiness(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    std::optional<std::expected<TSocket, int>> result;
+    auto accept = AcceptResult(listener, &result);
+    int first = ConnectTo(address);
+    loop.Poller().Poll();
+    int stolen = ::accept(listener.Fd(), nullptr, nullptr);
+    loop.Poller().WakeupReadyHandles();
+    StepUntilDone(loop, accept);
+    if (stolen >= 0) { // a completion-based poller accepts before the steal
+        assert_int_equal(result->error_or(0), EAGAIN);
+        int second = ConnectTo(address);
+        auto next = AcceptResult(listener, &result);
+        StepUntilDone(loop, next);
+        close(second);
+        close(stolen);
+    }
+    assert_true(result->has_value());
+    close(first);
+}
+
+template<typename TPoller>
+void test_accept_closed_listener(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TSocket listener(loop.Poller(), AF_INET);
+    listener.Close();
+    std::optional<std::expected<TSocket, int>> result;
+    auto accept = AcceptResult(listener, &result);
+    try {
+        StepUntilDone(loop, accept);
+        fail_msg("no exception");
+    } catch (const std::system_error& ex) {
+        assert_int_equal(ex.code().value(), EBADF);
+    }
+}
+
+struct TOkRouter: IRouter {
+    TFuture<void> HandleRequest(TRequest&, TResponse& response) override {
+        co_await response.WriteBodyFull("ok");
+    }
+};
+
+// The web server goes on accepting after the descriptors have run out.
+template<typename TPoller>
+void test_accept_after_descriptor_shortage(void**) {
+    // The detached accept loop and the handler of the refused connection are left suspended.
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+    __lsan::ScopedDisabler lsanDisabler;
+#endif
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    TOkRouter router;
+    std::vector<std::string> log;
+    TWebServer<TSocket> server(std::move(listener), router, [&log](const std::string& line) {
+        log.push_back(line);
+    });
+    server.Start();
+
+    // Nothing is asserted until the limit is restored: the tests share the process.
+    int refused = socket(address.Domain(), SOCK_STREAM, 0);
+    rlimit saved, low;
+    getrlimit(RLIMIT_NOFILE, &saved);
+    low = saved;
+    low.rlim_cur = std::min<rlim_t>(saved.rlim_cur, refused + 32);
+    setrlimit(RLIMIT_NOFILE, &low);
+    std::vector<int> filler;
+    for (int fd; (fd = dup(refused)) >= 0; ) {
+        filler.push_back(fd);
+    }
+    auto [addr, len] = address.RawAddr();
+    int connected = connect(refused, addr, len);
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (log.empty() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    for (int fd : filler) {
+        close(fd);
+    }
+    setrlimit(RLIMIT_NOFILE, &saved);
+    assert_int_equal(connected, 0);
+
+    int client = ConnectTo(address);
+    const char request[] = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    assert_int_equal(send(client, request, sizeof(request) - 1, 0), sizeof(request) - 1);
+    char response[16] = {};
+    while (recv(client, response, sizeof(response) - 1, MSG_DONTWAIT) < 0 && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_string_equal(response, "HTTP/1.1 200 OK");
+    assert_true(log.front().starts_with("Accept failed: "));
+    close(client);
+    close(refused);
+}
+#endif
 
 namespace {
 
@@ -3167,7 +3296,7 @@ void test_destroyed_monitor_not_resumed(void**) {
 
 template<typename TSocket>
 TFuture<void> AcceptAfterReset(TSocket& listener, int* resets, int* accepted) {
-    auto reset = co_await listener.Accept();
+    auto reset = (co_await listener.Accept()).value();
     char byte;
     try {
         co_await reset.ReadSome(&byte, 1);
@@ -3245,7 +3374,7 @@ TFuture<void> AcceptRequests(
     std::deque<int>& inherited)
 {
     while (true) {
-        auto client = co_await listener.Accept();
+        auto client = (co_await listener.Accept()).value();
         // A child forked meanwhile holds the descriptor until it exits.
         inherited.push_back(dup(client.Fd()));
         auto& handler = handlers.emplace_back();
@@ -3456,6 +3585,11 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_timeout);
     ADD_TEST(my_unit_poller, test_timeout2);
     ADD_TEST(my_unit_poller, test_accept);
+#ifndef _WIN32
+    ADD_TEST(my_unit_poller, test_accept_after_spurious_readiness);
+    ADD_TEST(my_unit_poller, test_accept_closed_listener);
+    ADD_TEST(my_unit_poller, test_accept_after_descriptor_shortage);
+#endif
     ADD_TEST(my_unit_poller, test_write_after_connect);
     ADD_TEST(my_unit_poller, test_write_after_accept);
     ADD_TEST(my_unit_poller, test_connection_timeout);

@@ -180,8 +180,11 @@ public:
      * @return A fully-handshaked `TSslSocket` ready for `ReadSome`/`WriteSome`.
      */
     TFuture<TSslSocket<TSocket>> Accept() {
-        auto underlying = std::move(co_await Socket.Accept());
-        auto socket = TSslSocket(std::move(underlying), *Ctx);
+        auto underlying = co_await Socket.Accept();
+        if (!underlying) {
+            throw std::system_error(underlying.error(), std::system_category(), "accept");
+        }
+        auto socket = TSslSocket(std::move(*underlying), *Ctx);
         co_await socket.AcceptHandshake();
         co_return std::move(socket);
     }

@@ -35,7 +35,7 @@ TVoidTask server(TLoop* loop)
     try {
         while (true) {
             auto client = co_await socket.Accept();
-            client_handler(std::move(client), loop);
+            client_handler(std::move(client.value()), loop);
         }
     } catch (const std::exception& ex) {
         std::cout << "Exception: " << ex.what() << "\n";

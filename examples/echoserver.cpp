@@ -48,7 +48,7 @@ TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
 
     while (true) {
         auto client = co_await socket.Accept();
-        client_handler<debug>(std::move(client), buffer_size);
+        client_handler<debug>(std::move(client.value()), buffer_size);
     }
     co_return;
 }

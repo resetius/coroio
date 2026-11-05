@@ -1,6 +1,7 @@
 #pragma once
 
 #include <coroio/socket.hpp>
+#include <coroio/accept_errors.hpp>
 #include <coroio/corochain.hpp>
 #include <coroio/sockutils.hpp>
 
@@ -241,11 +242,22 @@ public:
      *
      * Runs forever, accepting connections and spawning a per-connection handler
      * coroutine for each. Returns immediately (the loop is detached).
+     *
+     * Accept errors are reported only to the logger, so without one they are
+     * silent. After an error that is not transient the loop sleeps 100 ms and
+     * accepts again.
      */
     TVoidTask Start() {
         while (true) {
             auto clientSocket = co_await ServerSocket.Accept();
-            HandleClient(std::move(clientSocket));
+            if (clientSocket) {
+                HandleClient(std::move(*clientSocket));
+            } else if (!IsTransientAcceptError(clientSocket.error())) {
+                if (Logger) {
+                    Logger("Accept failed: " + std::system_category().message(clientSocket.error()));
+                }
+                co_await ServerSocket.Poller()->Sleep(std::chrono::milliseconds(100));
+            }
         }
     }
 

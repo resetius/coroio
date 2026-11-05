@@ -5,6 +5,7 @@
 #include "node.hpp"
 #include "queue.hpp"
 
+#include <coroio/accept_errors.hpp>
 #include <coroio/arena.hpp>
 #include <coroio/sockutils.hpp>
 
@@ -341,13 +342,18 @@ private:
         }
     }
 
+    // Suspends at the end instead of freeing itself: the destructor destroys Handles.
     template<typename TSocket, typename TEnvelopeReader>
-    TVoidTask InboundServe(TSocket socket) {
+    TVoidSuspendedTask InboundServe(TSocket socket) {
         while (true) {
             auto client = co_await socket.Accept();
-            InboundConnection<TSocket, TEnvelopeReader>(std::move(client));
+            if (client) {
+                InboundConnection<TSocket, TEnvelopeReader>(std::move(*client));
+            } else if (!IsTransientAcceptError(client.error())) {
+                if (Logger_) Logger_("Accept failed: " + std::system_category().message(client.error()));
+                co_await Poller->Sleep(std::chrono::milliseconds(100));
+            }
         }
-        co_return;
     }
 
     template<typename TSocket, typename TEnvelopeReader>
