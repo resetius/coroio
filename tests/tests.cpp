@@ -3224,6 +3224,7 @@ TFuture<void> AcceptRequests(
         // A child forked meanwhile holds the descriptor until it exits.
         inherited.push_back(dup(client.Fd()));
         auto& handler = handlers.emplace_back();
+        handler.Kind = "handler";
         handler.Future = ServeRequest(std::move(client), &handler.Stage);
     }
 }
@@ -3309,7 +3310,7 @@ void test_short_connections(void**) {
             requests++;
             started += !abort;
             auto& client = clients.emplace_back();
-            client.Kind = abort ? "aborted" : kind == 1 ? "slow" : "normal";
+            client.Kind = abort ? "aborted client" : kind == 1 ? "slow client" : "normal client";
             client.Future = SendRequest(loop.Poller(), address, kind == 1 ? "/slow" : "/", abort, &completed, &client.Stage);
         }
         loop.Step();
@@ -3336,11 +3337,10 @@ void test_short_connections(void**) {
         std::ostringstream report;
         report << "stuck: requests=" << requests << " started=" << started << " completed=" << completed
             << " clients=" << clients.size() << " handlers=" << handlers.size();
-        for (const auto& client : clients) {
-            report << "\nclient " << client.Kind << ": " << client.Stage << " for " << age(client) << " ms";
-        }
-        for (const auto& handler : handlers) {
-            report << "\nhandler: " << handler.Stage << " for " << age(handler) << " ms";
+        for (const auto* pending : {&clients, &handlers}) {
+            for (const auto& request : *pending) {
+                report << "\n" << request.Kind << ": " << request.Stage << " for " << age(request) << " ms";
+            }
         }
         fail_msg("%s", report.str().c_str());
     }
