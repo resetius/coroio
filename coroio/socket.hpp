@@ -233,9 +233,10 @@ public:
      * @brief Monitors the socket for remote hang-up (closure).
      *
      * This awaitable suspends the coroutine until the peer closes the connection
-     * or shuts down its writing side, and completes on the next loop iteration
-     * if that has already happened. Unread data does not complete it, and reads
-     * and writes on the same socket may wait at the same time.
+     * or shuts down its writing side, or the descriptor reports an error, and
+     * completes on the next loop iteration if that has already happened. Unread
+     * data does not complete it, and reads and writes on the same socket may wait
+     * at the same time.
      *
      * Only TEPoll, TKqueue and TPoll on Linux report remote hang-ups, see
      * TPollerBase::SupportsRemoteHup().

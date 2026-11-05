@@ -107,9 +107,10 @@ public:
      * @brief Registers a remote hang-up (RHUP) interest on a file descriptor.
      *
      * `h` will be resumed by `WakeupReadyHandles()` once the peer closes the
-     * connection or shuts down its writing side, on the next loop iteration if
-     * that has already happened. Unread data does not resume it. A reader and
-     * a writer may wait on the same descriptor at the same time.
+     * connection or shuts down its writing side, or the descriptor reports an
+     * error (e.g. the write end of a pipe whose read end is closed), on the next
+     * loop iteration if that has already happened. Unread data does not resume
+     * it. A reader and a writer may wait on the same descriptor at the same time.
      *
      * Only TEPoll, TKqueue and TPoll on Linux report remote hang-ups, see
      * SupportsRemoteHup().

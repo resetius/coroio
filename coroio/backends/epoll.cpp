@@ -162,8 +162,9 @@ void TEPoll::Poll() {
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
             ev.Write = {};
         }
-        // EPOLLHUP and EPOLLRDHUP often come together: one check wakes each waiter once.
-        if (OutEvents_[i].events & (EPOLLHUP | EPOLLRDHUP)) {
+        // Errors and hang-ups, often reported together, wake every waiter once: an
+        // error that wakes nobody would be reported again on every call.
+        if (OutEvents_[i].events & (EPOLLHUP | EPOLLRDHUP | EPOLLERR)) {
             if (ev.Read) {
                 ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
             }

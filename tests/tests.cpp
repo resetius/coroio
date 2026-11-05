@@ -2180,6 +2180,48 @@ void test_monitor_pipe(void**) {
 }
 
 template<typename TPoller>
+void test_monitor_pipe_write_end(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    for (bool registered : {false, true}) {
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+        int p[2];
+        assert_int_equal(pipe(p), 0);
+        TFileHandle handle(p[1], loop.Poller());
+        FillSendBuffer(p[1]);
+        if (!registered) {
+            close(p[0]);
+        }
+        int hangups = 0;
+        int writes = 0;
+        auto monitor = CountHangup(handle, &hangups);
+        auto writer = CountWrite(handle, &writes);
+        if (registered) {
+            loop.Step();
+            loop.Step();
+            assert_false(monitor.done());
+            assert_false(writer.done());
+            close(p[0]);
+        }
+        // Linux reports only an error on the write end.
+        for (int i = 0; i < 3 && !(monitor.done() && writer.done()); i++) {
+            loop.Step();
+        }
+        assert_true(monitor.done() && writer.done());
+        loop.Step();
+        loop.Step();
+        assert_int_equal(hangups, 1);
+        assert_int_equal(writes, 1);
+
+        // With both waiters gone the error is not reported any more.
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(50));
+        auto start = TClock::now();
+        loop.Step();
+        assert_true(TClock::now() - start >= std::chrono::milliseconds(25));
+    }
+}
+
+template<typename TPoller>
 void test_destroyed_monitor_not_resumed(void**) {
     using TFileHandle = typename TPoller::TFileHandle;
     enum { PENDING, REGISTERED, COLLECTED, REPLACED };
@@ -2400,6 +2442,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_monitor_ignores_unread_data, TPoll, TEPoll);
     ADD_TEST(my_unit_test2, test_monitor_after_hangup, TPoll, TEPoll);
     ADD_TEST(my_unit_test2, test_monitor_pipe, TPoll, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_pipe_write_end, TPoll, TEPoll);
     ADD_TEST(my_unit_test2, test_destroyed_monitor_not_resumed, TPoll, TEPoll);
 #elif defined(__APPLE__) || defined(__FreeBSD__)
     ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TKqueue);
@@ -2415,6 +2458,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_monitor_ignores_unread_data, TKqueue);
     ADD_TEST(my_unit_test, test_monitor_after_hangup, TKqueue);
     ADD_TEST(my_unit_test, test_monitor_pipe, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_pipe_write_end, TKqueue);
     ADD_TEST(my_unit_test, test_destroyed_monitor_not_resumed, TKqueue);
 #endif
 #endif

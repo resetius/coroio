@@ -115,11 +115,12 @@ void TPoll::Poll()
         throw std::system_error(errno, std::generic_category(), "poll");
     }
 
-    // POLLHUP and POLLRDHUP often come together: one check wakes each waiter once.
+    // Errors and hang-ups, often reported together, wake every waiter once: an
+    // error that wakes nobody would be reported again on every call.
 #ifdef __linux__
-    constexpr short hangup = POLLHUP | POLLRDHUP;
+    constexpr short hangup = POLLHUP | POLLRDHUP | POLLERR;
 #else
-    constexpr short hangup = POLLHUP;
+    constexpr short hangup = POLLHUP | POLLERR;
 #endif
     for (auto& pev : Fds_) {
         auto [ev, _] = InEvents_[pev.fd];
