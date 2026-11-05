@@ -44,43 +44,43 @@ TUring::~TUring() {
     close(EpollFd_);
 }
 
-void TUring::Read(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Read(int fd, void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_read(sqe, fd, buf, size, -1);
     //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-    SetData(sqe, handle, op);
+    SetData(sqe, op);
 }
 
-void TUring::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Write(int fd, const void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_write(sqe, fd, buf, size, -1);
     //memcpy(Buffer_.data(), buf, size);
     //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-    SetData(sqe, handle, op);
+    SetData(sqe, op);
 }
 
-void TUring::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Recv(int fd, void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_recv(sqe, fd, buf, size, 0);
-    SetData(sqe, handle, op);
+    SetData(sqe, op);
 }
 
-void TUring::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Send(int fd, const void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_send(sqe, fd, buf, size, 0);
-    SetData(sqe, handle, op);
+    SetData(sqe, op);
 }
 
-void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_accept(sqe, fd, addr, len, SOCK_CLOEXEC);
-    SetData(sqe, handle, op);
+    SetData(sqe, op);
 }
 
-void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_connect(sqe, fd, addr, len);
-    SetData(sqe, handle, op);
+    SetData(sqe, op);
 }
 
 void TUring::Cancel(int fd) {
@@ -91,8 +91,7 @@ void TUring::Cancel(int fd) {
     sqe->cancel_flags = (1U << 1);
 }
 
-void TUring::SetData(io_uring_sqe* sqe, std::coroutine_handle<> handle, TOperation& op) {
-    op.Handle = handle;
+void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
     op.Index = Ring_.sq.sqe_tail - 1;
     io_uring_sqe_set_data(sqe, &op);
 }

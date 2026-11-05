@@ -1326,7 +1326,8 @@ void test_uring_write(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     TUring::TOperation op;
-    uring.Write(p[1], buf, 1, std::noop_coroutine(), op);
+    op.Handle = std::noop_coroutine();
+    uring.Write(p[1], buf, 1, op);
     assert_int_equal(uring.Wait(), 1);
     int err = read(p[0], rbuf, 1);
     assert_true(rbuf[0] == 'e');
@@ -1340,7 +1341,8 @@ void test_uring_read(void**) {
     assert_int_equal(0, pipe(p));
     assert_int_equal(1, write(p[1], buf, 1));
     TUring::TOperation op;
-    uring.Read(p[0], rbuf, 1, std::noop_coroutine(), op);
+    op.Handle = std::noop_coroutine();
+    uring.Read(p[0], rbuf, 1, op);
     assert_int_equal(uring.Wait(), 1);
     assert_true(rbuf[0] == 'e');
 }
@@ -1354,7 +1356,8 @@ void test_uring_read_more_than_write(void**) {
     assert_int_equal(1, write(p[1], buf, 1));
     TFuture<void> h = []() -> TFuture<void> { co_return; }();
     TUring::TOperation op;
-    uring.Read(p[0], rbuf, sizeof(rbuf), h.raw(), op);
+    op.Handle = h.raw();
+    uring.Read(p[0], rbuf, sizeof(rbuf), op);
     assert_int_equal(uring.Wait(), 1);
     assert_int_equal(op.Result, 1);
     assert_true(rbuf[0] == 'e');
@@ -1373,7 +1376,8 @@ void test_uring_write_resume(void**) {
         *r = op->Result;
         co_return;
     }(&op, &r);
-    uring.Write(p[1], buf, 1, h.raw(), op);
+    op.Handle = h.raw();
+    uring.Write(p[1], buf, 1, op);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -1397,7 +1401,8 @@ void test_uring_read_resume(void**) {
         co_return;
     }(&op, &r);
     assert_int_equal(1, write(p[1], buf, 1));
-    uring.Read(p[0], rbuf, 1, h.raw(), op);
+    op.Handle = h.raw();
+    uring.Read(p[0], rbuf, 1, op);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -1416,7 +1421,8 @@ void test_uring_file_offset(void**) {
     const char data[] = "0123456789abcdefghij";
     for (int i = 0; i < 20; i += 5) {
         TUring::TOperation op;
-        uring.Write(fd, data + i, 5, std::noop_coroutine(), op);
+        op.Handle = std::noop_coroutine();
+        uring.Write(fd, data + i, 5, op);
         assert_int_equal(uring.Wait(), 1);
         uring.WakeupReadyHandles();
         assert_int_equal(op.Result, 5);
@@ -1430,7 +1436,8 @@ void test_uring_file_offset(void**) {
     char rbuf[20] = {};
     for (int i = 0; i < 20; i += 5) {
         TUring::TOperation op;
-        uring.Read(fd, rbuf + i, 5, std::noop_coroutine(), op);
+        op.Handle = std::noop_coroutine();
+        uring.Read(fd, rbuf + i, 5, op);
         assert_int_equal(uring.Wait(), 1);
         uring.WakeupReadyHandles();
         assert_int_equal(op.Result, 5);
@@ -1449,11 +1456,13 @@ void test_uring_wait_result_without_wakeup(void**) {
     TFuture<void> h2 = []() -> TFuture<void> { co_return; }();
     TUring::TOperation op1, op2;
     assert_int_equal(1, write(p[1], "a", 1));
-    uring.Read(p[0], rbuf, sizeof(rbuf), h1.raw(), op1);
+    op1.Handle = h1.raw();
+    uring.Read(p[0], rbuf, sizeof(rbuf), op1);
     assert_int_equal(uring.Wait(), 1);
     assert_int_equal(op1.Result, 1);
     assert_int_equal(3, write(p[1], "bcd", 3));
-    uring.Read(p[0], rbuf, sizeof(rbuf), h2.raw(), op2);
+    op2.Handle = h2.raw();
+    uring.Read(p[0], rbuf, sizeof(rbuf), op2);
     assert_int_equal(uring.Wait(), 1);
     assert_int_equal(op2.Result, 3);
     assert_int_equal(op1.Result, 1);
@@ -1468,8 +1477,10 @@ void test_uring_no_sqe(void** ) {
     assert_int_equal(1, write(p[1], rbuf, 1));
     assert_int_equal(1, write(p[1], rbuf, 1));
     TUring::TOperation op1, op2;
-    uring.Read(p[0], rbuf, 1, std::noop_coroutine(), op1);
-    uring.Read(p[0], rbuf, 1, std::noop_coroutine(), op2);
+    op1.Handle = std::noop_coroutine();
+    uring.Read(p[0], rbuf, 1, op1);
+    op2.Handle = std::noop_coroutine();
+    uring.Read(p[0], rbuf, 1, op2);
     int k = uring.Wait();
     assert_true(k == 1 || k == 2);
     if (k == 1) {
@@ -1784,6 +1795,29 @@ void test_destroyed_driven_reader_among_many(void**) {
     StepUntilDone(loop, next);
     assert_int_equal(got[0], 1);
     assert_int_equal(bufs[0][0], 'a' + (count / 2) % 26);
+}
+
+// Accept on a socket that is not listening fails. On IOCP AcceptEx fails at
+// once, so nothing is posted and the awaitable has nothing to cancel.
+template<typename TPoller>
+void test_driven_accept_not_listening(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket socket(loop.Poller(), address.Domain());
+    socket.Bind(address);
+    std::optional<TSocket> accepted;
+    bool failed = false;
+    auto accept = [](TSocket& socket, std::optional<TSocket>* accepted, bool* failed) -> TFuture<void> {
+        try {
+            accepted->emplace(co_await socket.Accept());
+        } catch (const std::system_error&) {
+            *failed = true;
+        }
+    }(socket, &accepted, &failed);
+    StepUntilDone(loop, accept);
+    assert_true(failed);
+    assert_false(accepted.has_value());
 }
 
 namespace {
@@ -3323,6 +3357,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_repeated_wait);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_reader_with_full_cq);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TUring);
+    ADD_TEST(my_unit_test, test_driven_accept_not_listening, TUring);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_queued_and_submitted_readers);
 #endif
 #endif
@@ -3330,6 +3365,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TIOCp);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TIOCp);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TIOCp);
+    ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
 #endif
     ADD_TEST(cmocka_unit_test, test_intrusive_list_push);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_erase);

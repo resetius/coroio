@@ -49,7 +49,8 @@ namespace NNet {
  *
  * // Post an asynchronous read. op must stay in place until it is delivered or cancelled.
  * TUring::TOperation op;
- * uringPoller.Read(socketFd, buffer, bufferSize, coroutineHandle, op);
+ * op.Handle = coroutineHandle;
+ * uringPoller.Read(socketFd, buffer, bufferSize, op);
  *
  * // Poll for I/O completions.
  * int ret = uringPoller.Wait();
@@ -68,7 +69,9 @@ public:
     /**
      * @brief State of one operation, kept by the caller.
      *
-     * Its address is the operation's user_data, so it must stay in place until
+     * Set TOperation::Handle to the coroutine to resume before posting the
+     * operation; if posting throws, it is reset. The address of the state is
+     * the operation's user_data, so it must stay in place until
      * WakeupReadyHandles() delivers the completion or Cancel() returns.
      * The result of the completion is in TOperation::Result.
      */
@@ -87,60 +90,54 @@ public:
      * @param fd The file descriptor.
      * @param buf Buffer where data is to be stored.
      * @param size Number of bytes to read.
-     * @param handle Coroutine handle to resume upon completion.
-     * @param op State of the operation.
+     * @param op State of the operation, with the coroutine to resume upon completion.
      */
-    void Read(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
+    void Read(int fd, void* buf, int size, TOperation& op);
     /**
      * @brief Posts an asynchronous write operation.
      *
      * @param fd The file descriptor.
      * @param buf Buffer with data to write.
      * @param size Number of bytes to write.
-     * @param handle Coroutine handle to resume upon completion.
-     * @param op State of the operation.
+     * @param op State of the operation, with the coroutine to resume upon completion.
      */
-    void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
+    void Write(int fd, const void* buf, int size, TOperation& op);
     /**
      * @brief Posts an asynchronous receive operation.
      *
      * @param fd The file descriptor.
      * @param buf Buffer where received data will be stored.
      * @param size Maximum number of bytes to receive.
-     * @param handle Coroutine handle to resume upon completion.
-     * @param op State of the operation.
+     * @param op State of the operation, with the coroutine to resume upon completion.
      */
-    void Recv(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
+    void Recv(int fd, void* buf, int size, TOperation& op);
     /**
      * @brief Posts an asynchronous send operation.
      *
      * @param fd The file descriptor.
      * @param buf Buffer containing data to send.
      * @param size Number of bytes to send.
-     * @param handle Coroutine handle to resume upon completion.
-     * @param op State of the operation.
+     * @param op State of the operation, with the coroutine to resume upon completion.
      */
-    void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
+    void Send(int fd, const void* buf, int size, TOperation& op);
     /**
      * @brief Posts an asynchronous accept operation.
      *
      * @param fd The listening socket descriptor.
      * @param addr Pointer to a sockaddr structure where the client address is stored.
      * @param len Pointer to the length of the address structure.
-     * @param handle Coroutine handle to resume upon acceptance.
-     * @param op State of the operation.
+     * @param op State of the operation, with the coroutine to resume upon acceptance.
      */
-    void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle, TOperation& op);
+    void Accept(int fd, struct sockaddr* addr, socklen_t* len, TOperation& op);
     /**
      * @brief Posts an asynchronous connect operation.
      *
      * @param fd The socket descriptor.
      * @param addr Pointer to the destination address.
      * @param len Size of the destination address structure.
-     * @param handle Coroutine handle to resume upon connection.
-     * @param op State of the operation.
+     * @param op State of the operation, with the coroutine to resume upon connection.
      */
-    void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle, TOperation& op);
+    void Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op);
     /**
      * @brief Cancels pending operations on the specified file descriptor.
      *
@@ -207,11 +204,20 @@ private:
         }
         return r;
     }
+    /// Obtains an SQE for @p op. If that throws, op.Handle is reset: the operation is not posted.
+    io_uring_sqe* GetSqe(TOperation& op) {
+        try {
+            return GetSqe();
+        } catch (...) {
+            op.Handle = {};
+            throw;
+        }
+    }
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
     /// Points the SQE just obtained to @p op and records its position in the SQ.
-    void SetData(io_uring_sqe* sqe, std::coroutine_handle<> handle, TOperation& op);
+    void SetData(io_uring_sqe* sqe, TOperation& op);
     /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.
     bool Reap(TOperation& op, int* result);
 

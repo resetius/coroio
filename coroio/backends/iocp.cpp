@@ -23,16 +23,18 @@ TIOCp::~TIOCp()
 }
 
 void TIOCp::Prepare(TOperation& op, int fd) {
+    THandle handle = op.Handle;
     op = TOperation();
+    op.Handle = handle;
     op.Fd = fd;
 }
 
-void TIOCp::Posted(TOperation& op, THandle handle) {
-    op.Handle = handle;
-    InFlight_++;
+void TIOCp::Throw(TOperation& op, int err, const std::error_category& category, const char* what) {
+    op.Handle = {};
+    throw std::system_error(err, category, what);
 }
 
-void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op)
+void TIOCp::Recv(int fd, void* buf, int size, TOperation& op)
 {
     Prepare(op, fd);
     WSABUF recvBuf = {(ULONG)size, (char*)buf};
@@ -40,24 +42,24 @@ void TIOCp::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle, TO
     DWORD outSize = 0;
     auto ret = WSARecv((SOCKET)fd, &recvBuf, 1, &outSize, &flags, static_cast<OVERLAPPED*>(&op), nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
+        Throw(op, WSAGetLastError(), std::generic_category(), "WSARecv");
     }
-    Posted(op, handle);
+    InFlight_++;
 }
 
-void TIOCp::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op)
+void TIOCp::Send(int fd, const void* buf, int size, TOperation& op)
 {
     Prepare(op, fd);
     WSABUF sendBuf = {(ULONG)size, (char*)buf};
     DWORD outSize = 0;
     auto ret = WSASend((SOCKET)fd, &sendBuf, 1, &outSize, 0, static_cast<OVERLAPPED*>(&op), nullptr);
     if (ret != 0 && WSAGetLastError() != WSA_IO_PENDING) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "WSARecv");
+        Throw(op, WSAGetLastError(), std::generic_category(), "WSARecv");
     }
-    Posted(op, handle);
+    InFlight_++;
 }
 
-void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle, TOperation& op)
+void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, TOperation& op)
 {
     Prepare(op, fd);
     op.Addr = addr;
@@ -65,24 +67,24 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     op.Sock = (int)sock;
     if (sock == INVALID_SOCKET) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "socket");
+        Throw(op, WSAGetLastError(), std::generic_category(), "socket");
     }
     u_long mode = 1;
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
         closesocket(sock);
-        throw std::system_error(WSAGetLastError(), std::system_category(), "ioctlsocket");
+        Throw(op, WSAGetLastError(), std::system_category(), "ioctlsocket");
     }
 
     DWORD dwBytesReceived = 0;
     auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, &dwBytesReceived, static_cast<OVERLAPPED*>(&op));
     if (ret == FALSE && WSAGetLastError() != WSA_IO_PENDING) {
         closesocket(sock);
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "AcceptEx");
+        Throw(op, WSAGetLastError(), std::generic_category(), "AcceptEx");
     }
-    Posted(op, handle);
+    InFlight_++;
 }
 
-void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle, TOperation& op)
+void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op)
 {
     Prepare(op, fd);
     op.Connect = true;
@@ -105,38 +107,38 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_
     }
 
     if (bind_result != 0) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "bind");
+        Throw(op, WSAGetLastError(), std::generic_category(), "bind");
     }
 
     auto ret = ConnectEx((SOCKET)fd, addr, len, nullptr, 0, nullptr, static_cast<OVERLAPPED*>(&op));
     if (ret == FALSE && WSAGetLastError() != ERROR_IO_PENDING) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "ConnectEx");
+        Throw(op, WSAGetLastError(), std::generic_category(), "ConnectEx");
     }
-    Posted(op, handle);
+    InFlight_++;
 }
 
-void TIOCp::Read(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op)
+void TIOCp::Read(int fd, void* buf, int size, TOperation& op)
 {
     Prepare(op, fd);
     op.File = true;
 
     auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(&op));
     if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "ReadFile");
+        Throw(op, WSAGetLastError(), std::generic_category(), "ReadFile");
     }
-    Posted(op, handle);
+    InFlight_++;
 }
 
-void TIOCp::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op)
+void TIOCp::Write(int fd, const void* buf, int size, TOperation& op)
 {
     Prepare(op, fd);
     op.File = true;
 
     auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(&op));
     if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
-        throw std::system_error(WSAGetLastError(), std::generic_category(), "WriteFile");
+        Throw(op, WSAGetLastError(), std::generic_category(), "WriteFile");
     }
-    Posted(op, handle);
+    InFlight_++;
 }
 
 void TIOCp::Register(int fd) {

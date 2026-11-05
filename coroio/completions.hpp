@@ -17,7 +17,7 @@ namespace NDetail {
  * so it outlives every reference. Index lets Cancel() find it in O(1).
  */
 struct TOperationState {
-    THandle Handle; ///< Coroutine to resume. Set when the operation is posted, cleared when it is delivered or cancelled.
+    THandle Handle; ///< Coroutine to resume, set by the caller before posting. Cleared when posting fails, the completion is delivered or the operation is cancelled, so it is set while the operation is pending.
     int Result = 0; ///< Result of the completion, e.g. the number of bytes transferred.
     unsigned Index = 0; ///< Position of the completion in TCompletions once taken; before that, whatever the poller keeps there.
 };

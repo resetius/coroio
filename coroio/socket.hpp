@@ -671,7 +671,8 @@ public:
 
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, h, op);
+                op.Handle = h;
+                poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, op);
             }
 
             TPollerDrivenSocket<T> await_resume() {
@@ -726,7 +727,8 @@ public:
             bool await_ready() const { return false; }
 
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Connect(fd, addr.first, addr.second, h, op);
+                op.Handle = h;
+                poller->Connect(fd, addr.first, addr.second, op);
                 if (deadline != TTime::max()) {
                     timerId = poller->AddTimer(deadline, h);
                 }
@@ -774,7 +776,8 @@ public:
 
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Recv(fd, buf, size, h, op);
+                op.Handle = h;
+                poller->Recv(fd, buf, size, op);
             }
 
             auto await_resume() {
@@ -827,7 +830,8 @@ public:
 
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Send(fd, buf, size, h, op);
+                op.Handle = h;
+                poller->Send(fd, buf, size, op);
             }
 
             auto await_resume() {
@@ -930,7 +934,8 @@ public:
 
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Read(fd, buf, size, h, op);
+                op.Handle = h;
+                poller->Read(fd, buf, size, op);
             }
 
             auto await_resume() {
@@ -983,7 +988,8 @@ public:
 
             bool await_ready() const { return false; }
             void await_suspend(std::coroutine_handle<> h) {
-                poller->Write(fd, buf, size, h, op);
+                op.Handle = h;
+                poller->Write(fd, buf, size, op);
             }
 
             auto await_resume() {
