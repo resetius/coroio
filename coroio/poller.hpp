@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <queue>
+#include <system_error>
 #include <assert.h>
 
 #include "base.hpp"
@@ -103,14 +104,38 @@ public:
         Changes_.emplace_back(TEvent{fd, TEvent::WRITE, h});
     }
     /**
-     * @brief Registers a remote hang-up (RHUP) event.
+     * @brief Registers a remote hang-up (RHUP) interest on a file descriptor.
+     *
+     * `h` will be resumed by `WakeupReadyHandles()` once the peer closes the
+     * connection or shuts down its writing side, or the descriptor reports an
+     * error (e.g. the write end of a pipe whose read end is closed), on the next
+     * loop iteration if that has already happened. Unread data does not resume
+     * it. A reader and a writer may wait on the same descriptor at the same time.
+     *
+     * Only TEPoll, TKqueue and TPoll on Linux report remote hang-ups, see
+     * SupportsRemoteHup().
      *
      * @param fd The file descriptor.
      * @param h  The coroutine handle to resume when the remote end closes the connection.
+     * @throws std::system_error with std::errc::operation_not_supported on
+     *         other backends (TSelect, TPoll outside Linux, TUring, TIOCp).
      */
     void AddRemoteHup(int fd, THandle h) {
+        if (!SupportsRemoteHup_) {
+            throw std::system_error(std::make_error_code(std::errc::operation_not_supported),
+                "remote hang-up is not reported by this poller");
+        }
         MaxFd_ = std::max(MaxFd_, fd);
         Changes_.emplace_back(TEvent{fd, TEvent::RHUP, h});
+    }
+    /**
+     * @brief Tells whether the backend reports remote hang-ups.
+     *
+     * @return True for TEPoll, TKqueue and TPoll on Linux; AddRemoteHup() and
+     *         TSocketBase::Monitor() throw on other backends.
+     */
+    bool SupportsRemoteHup() const {
+        return SupportsRemoteHup_;
     }
     /**
      * @brief Removes registered events for a specific file descriptor.
@@ -387,6 +412,7 @@ protected:
     }
 
     int MaxFd_ = 0; ///< Highest file descriptor in use.
+    bool SupportsRemoteHup_ = false; ///< Set by the constructors of backends that report remote hang-ups.
     std::vector<TEvent> Changes_; ///< Pending changes (registered events).
     std::vector<TEvent> ReadyEvents_; ///< Events ready to wake up their coroutines.
     unsigned TimerId_ = 0; ///< Counter for generating unique timer IDs.

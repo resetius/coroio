@@ -4,12 +4,24 @@
 
 namespace NNet {
 
+namespace {
+
+// EVFILT_READ serves both the reader and the RHUP waiter. Without a reader it
+// is edge triggered: unread data would make a level triggered filter fire on
+// every call.
+int ReadFilterFlags(const THandlePair& ev) {
+    return ev.Read ? EV_ADD : ev.RHup ? EV_ADD | EV_CLEAR : 0;
+}
+
+} // namespace
+
 TKqueue::TKqueue()
     : Fd_(kqueue())
 {
     if (Fd_ < 0) {
         throw std::system_error(errno, std::generic_category(), "kqueue");
     }
+    SupportsRemoteHup_ = true;
 }
 
 TKqueue::~TKqueue()
@@ -30,11 +42,10 @@ void TKqueue::Poll()
         struct kevent kev = {};
         auto& ev = InEvents_[fd];
         const auto ch = ResolveCancel(pending, ev);
+        const auto prev = ev;
 
         if (ch.Handle) {
-            if (ch.Type & TEvent::READ && ev.Read != ch.Handle) {
-                EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, nullptr);
-                ChangeList_.emplace_back(kev);
+            if (ch.Type & TEvent::READ) {
                 ev.Read = ch.Handle;
             }
             if (ch.Type & TEvent::WRITE && ev.Write != ch.Handle) {
@@ -42,10 +53,11 @@ void TKqueue::Poll()
                 ChangeList_.emplace_back(kev);
                 ev.Write = ch.Handle;
             }
+            if (ch.Type & TEvent::RHUP) {
+                ev.RHup = ch.Handle;
+            }
         } else {
-            if (ch.Type & TEvent::READ && ev.Read) {
-                EV_SET(&kev, fd, EVFILT_READ, EV_DELETE | EV_CLEAR, 0, 0, nullptr);
-                ChangeList_.emplace_back(kev);
+            if (ch.Type & TEvent::READ) {
                 ev.Read = {};
             }
             if (ch.Type & TEvent::WRITE && ev.Write) {
@@ -53,6 +65,23 @@ void TKqueue::Poll()
                 ChangeList_.emplace_back(kev);
                 ev.Write = {};
             }
+            if (ch.Type & TEvent::RHUP) {
+                ev.RHup = {};
+            }
+        }
+
+        const int prevFlags = ReadFilterFlags(prev);
+        const int flags = ReadFilterFlags(ev);
+        if (prevFlags && prevFlags != flags) {
+            EV_SET(&kev, fd, EVFILT_READ, EV_DELETE, 0, 0, nullptr);
+            ChangeList_.emplace_back(kev);
+        }
+        // Adding an existing filter again rearms it, so a new RHUP waiter also
+        // sees an EOF that has already been reported.
+        const bool rearm = ev.Read != prev.Read || (ch.Handle && (ch.Type & TEvent::RHUP));
+        if (flags && (flags != prevFlags || rearm)) {
+            EV_SET(&kev, fd, EVFILT_READ, flags, 0, 0, nullptr);
+            ChangeList_.emplace_back(kev);
         }
     }
 
@@ -86,8 +115,11 @@ void TKqueue::Poll()
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
             ev.Write = {};
         }
-        // EOF is reported by each filter, so it wakes only its own waiter:
-        // waking the other one here would resume it twice.
+        if (filter == EVFILT_READ && (flags & EV_EOF) && ev.RHup) {
+            ReadyEvents_.emplace_back(TEvent{fd, TEvent::RHUP, ev.RHup});
+        }
+        // EOF is reported by each filter, so it wakes only the waiters of that
+        // filter: waking the others here would resume them twice.
     }
 
     ProcessTimers();

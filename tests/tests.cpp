@@ -1227,6 +1227,70 @@ void test_futures_all(void**) {
     assert_true(ok == 1);
 }
 
+template<typename TPoller>
+void test_remote_disconnect(void**) {
+    using TLoop = TLoop<TPoller>;
+    using TSocket = typename TPoller::TSocket;
+    int port = GetFreePort();
+    TLoop loop;
+    TAddress saddr{"127.0.0.1", port};
+    TSocket socket(loop.Poller(), saddr.Domain());
+    socket.Bind(saddr);
+    socket.Listen();
+    bool closed = false;
+    bool monitored = false;
+
+    TFuture<void> h1 = [](TPoller& poller, int port, const bool* closed, bool* monitored) -> TFuture<void>
+    {
+        TAddress addr{"127.0.0.1", port};
+        auto clientSocket = TSocket(poller, addr.Domain());
+        co_await clientSocket.Connect(addr);
+        bool hungUp = co_await clientSocket.Monitor();
+        *monitored = hungUp && *closed;
+        co_return;
+    }(loop.Poller(), port, &closed, &monitored);
+
+    TFuture<void> h2 = [](TPoller& poller, TSocket* socket, bool* closed) -> TFuture<void>
+    {
+        auto clientSocket = co_await socket->Accept();
+        // Monitor() must not complete while the connection is open.
+        co_await poller.Sleep(std::chrono::milliseconds(100));
+        *closed = true;
+        clientSocket.Close();
+        co_return;
+    }(loop.Poller(), &socket, &closed);
+
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (!(h1.done() && h2.done()) && TClock::now() < deadline) {
+        loop.Step();
+    }
+
+    assert_true(h1.done() && h2.done());
+    h1.await_resume();
+    h2.await_resume();
+    assert_true(monitored);
+}
+
+template<typename TPoller>
+void test_monitor_unsupported(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TSocket socket(loop.Poller(), AF_INET);
+    for (bool direct : {false, true}) {
+        bool thrown = false;
+        try {
+            if (direct) {
+                loop.Poller().AddRemoteHup(socket.Fd(), {});
+            } else {
+                socket.Monitor();
+            }
+        } catch (const std::system_error& ex) {
+            thrown = ex.code() == std::errc::operation_not_supported;
+        }
+        assert_true(thrown);
+    }
+}
+
 #ifdef __linux__
 
 namespace {
@@ -1401,42 +1465,6 @@ void test_uring_no_sqe(void** ) {
     }
 }
 #endif
-
-template<typename TPoller>
-void test_remote_disconnect(void**) {
-    bool changed = false;
-    using TLoop = TLoop<TPoller>;
-    using TSocket = typename TPoller::TSocket;
-    int port = GetFreePort();
-    TLoop loop;
-    TAddress saddr{"127.0.0.1", port};
-    TSocket socket(loop.Poller(), saddr.Domain());
-    socket.Bind(saddr);
-    socket.Listen();
-
-    TFuture<void> h1 = [](TPoller& poller, bool *changed, int port) -> TFuture<void>
-    {
-        TAddress addr{"127.0.0.1", port};
-        auto clientSocket = TSocket(poller, addr.Domain());
-        co_await clientSocket.Connect(addr);
-        co_await clientSocket.Monitor();
-        *changed = true;
-        co_return;
-    }(loop.Poller(), &changed, port);
-
-    TFuture<void> h2 = [](TSocket* socket) -> TFuture<void>
-    {
-        auto clientSocket = co_await socket->Accept();
-        clientSocket.Close();
-        co_return;
-    }(&socket);
-
-    while (!(h1.done() && h2.done())) {
-        loop.Step();
-    }
-
-    assert_true(changed);
-}
 
 /* temporary disable
 void test_uring_cancel(void** ) {
@@ -2581,6 +2609,271 @@ void test_hangup_wakes_reader_and_writer_once(void**) {
     assert_int_equal(writes, 1);
 }
 
+template<typename TPoller>
+void test_reader_beside_blocked_writer(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    // The writer registers in the same iteration as the reader, or in the next one.
+    for (bool sameIteration : {true, false}) {
+        int fds[2];
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        TFileHandle handle(fds[0], loop.Poller());
+        SetNonBlocking(fds[1]);
+        FillSendBuffer(fds[0]);
+        char byte = 0;
+        int reads = 0;
+        int writes = 0;
+        auto reader = CountRead(handle, &byte, &reads);
+        if (!sameIteration) {
+            loop.Step();
+        }
+        auto writer = CountWrite(handle, &writes);
+        loop.Step();
+
+        assert_int_equal(write(fds[1], "r", 1), 1);
+        Complete(loop, reader);
+        assert_int_equal(byte, 'r');
+        assert_false(writer.done());
+        Drain(fds[1]);
+        Complete(loop, writer);
+        assert_int_equal(reads, 1);
+        assert_int_equal(writes, 1);
+        close(fds[1]);
+    }
+}
+
+template<typename TFileHandle>
+TFuture<void> WaitHangup(TFileHandle& handle) {
+    co_await handle.Monitor();
+}
+
+template<typename TFileHandle>
+TFuture<void> CountHangup(TFileHandle& handle, int* resumed) {
+    co_await WaitHangup(handle);
+    ++*resumed;
+}
+
+template<typename TPoller>
+void test_monitor_with_reader_and_writer(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    TFileHandle handle(fds[0], loop.Poller());
+    SetNonBlocking(fds[1]);
+    FillSendBuffer(fds[0]);
+    char byte = 0;
+    int hangups = 0;
+    int reads = 0;
+    int writes = 0;
+    auto monitor = CountHangup(handle, &hangups);
+    loop.Step();
+    // Both join the registered monitor in one iteration.
+    auto reader = CountRead(handle, &byte, &reads);
+    auto writer = CountWrite(handle, &writes);
+    loop.Step();
+
+    // Data and room to write wake only their own waiters.
+    assert_int_equal(write(fds[1], "r", 1), 1);
+    Complete(loop, reader);
+    assert_int_equal(byte, 'r');
+    Drain(fds[1]);
+    Complete(loop, writer);
+    loop.Step();
+    loop.Step();
+    assert_false(monitor.done());
+
+    // The hang-up wakes the monitor and a new reader, each once.
+    auto last = CountRead(handle, &byte, &reads);
+    loop.Step();
+    close(fds[1]);
+    Complete(loop, monitor);
+    Complete(loop, last);
+    loop.Step();
+    loop.Step();
+    assert_int_equal(hangups, 1);
+    assert_int_equal(reads, 2);
+    assert_int_equal(writes, 1);
+}
+
+template<typename TPoller>
+void test_monitor_ignores_unread_data(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(50));
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    TFileHandle handle(fds[0], loop.Poller());
+    int hangups = 0;
+    auto monitor = CountHangup(handle, &hangups);
+    loop.Step();
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    loop.Step();
+    // The byte nobody reads must not make every poll return at once.
+    auto start = TClock::now();
+    loop.Step();
+    assert_true(TClock::now() - start >= std::chrono::milliseconds(25));
+    assert_false(monitor.done());
+
+    close(fds[1]);
+    Complete(loop, monitor);
+    assert_int_equal(hangups, 1);
+}
+
+template<typename TFileHandle>
+TFuture<void> CountHangups(TFileHandle& handle, int count, int* resumed) {
+    for (int i = 0; i < count; i++) {
+        co_await handle.Monitor();
+        ++*resumed;
+    }
+}
+
+template<typename TPoller>
+void test_monitor_after_hangup(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    TFileHandle handle(fds[0], loop.Poller());
+    int hangups = 0;
+    // The second wait starts when the first one is resumed.
+    auto twice = CountHangups(handle, 2, &hangups);
+    loop.Step();
+    loop.Step();
+    assert_int_equal(hangups, 0);
+    assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
+    Complete(loop, twice);
+    assert_int_equal(hangups, 2);
+
+    auto late = CountHangups(handle, 1, &hangups);
+    Complete(loop, late);
+    assert_int_equal(hangups, 3);
+    close(fds[1]);
+}
+
+template<typename TPoller>
+void test_monitor_pipe(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    TFileHandle handle(p[0], loop.Poller());
+    int hangups = 0;
+    auto monitor = CountHangup(handle, &hangups);
+    loop.Step();
+    loop.Step();
+    assert_false(monitor.done());
+    close(p[1]);
+    Complete(loop, monitor);
+    assert_int_equal(hangups, 1);
+}
+
+template<typename TPoller>
+void test_monitor_pipe_write_end(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    for (bool registered : {false, true}) {
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+        int p[2];
+        assert_int_equal(pipe(p), 0);
+        TFileHandle handle(p[1], loop.Poller());
+        FillSendBuffer(p[1]);
+        if (!registered) {
+            close(p[0]);
+        }
+        int hangups = 0;
+        int writes = 0;
+        auto monitor = CountHangup(handle, &hangups);
+        auto writer = CountWrite(handle, &writes);
+        if (registered) {
+            loop.Step();
+            loop.Step();
+            assert_false(monitor.done());
+            assert_false(writer.done());
+            close(p[0]);
+        }
+        // Linux reports only an error on the write end.
+        for (int i = 0; i < 3 && !(monitor.done() && writer.done()); i++) {
+            loop.Step();
+        }
+        assert_true(monitor.done() && writer.done());
+        loop.Step();
+        loop.Step();
+        assert_int_equal(hangups, 1);
+        assert_int_equal(writes, 1);
+
+        // With both waiters gone the error is not reported any more.
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(50));
+        auto start = TClock::now();
+        loop.Step();
+        assert_true(TClock::now() - start >= std::chrono::milliseconds(25));
+    }
+}
+
+template<typename TPoller>
+void test_destroyed_monitor_not_resumed(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    enum { PENDING, REGISTERED, COLLECTED, REPLACED };
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    for (int stage : {PENDING, REGISTERED, COLLECTED, REPLACED}) {
+        int fds[2];
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        TFileHandle handle(fds[0], loop.Poller());
+        char byte = 0;
+        int reads = 0;
+        int hangups = 0;
+        auto reader = CountRead(handle, &byte, &reads);
+        std::optional<TFuture<void>> monitor{CountHangup(handle, &hangups)};
+        if (stage != PENDING) {
+            loop.Step();
+        }
+        switch (stage) {
+        case PENDING:
+        case REGISTERED:
+            monitor.reset();
+            break;
+        case COLLECTED:
+            assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
+            loop.Poller().Poll();
+            monitor.reset();
+            loop.Poller().WakeupReadyHandles();
+            break;
+        case REPLACED:
+            // The new waiter registers before the old one is destroyed.
+            *monitor = CountHangup(handle, &hangups);
+            break;
+        }
+        loop.Step();
+
+        // The reader keeps its registration.
+        if (stage != COLLECTED) {
+            assert_int_equal(write(fds[1], "r", 1), 1);
+        }
+        Complete(loop, reader);
+        assert_int_equal(reads, 1);
+
+        // The descriptor still serves a new waiter, also after the hang-up.
+        if (!monitor) {
+            monitor.emplace(CountHangup(handle, &hangups));
+        }
+        loop.Step();
+        if (stage != COLLECTED) {
+            assert_int_equal(hangups, 0);
+            assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
+        }
+        Complete(loop, *monitor);
+        loop.Step();
+        loop.Step();
+        assert_int_equal(hangups, 1);
+        close(fds[1]);
+    }
+}
+
 template<typename TSocket>
 TFuture<void> ServeRequest(TSocket client) {
     try {
@@ -2727,6 +3020,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_reuse_after_closing_several, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_destroyed_accept_and_connect_not_resumed, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_hangup_wakes_reader_and_writer_once, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_reader_beside_blocked_writer, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_short_connections, TSelect, TPoll);
 #ifdef __linux__
     ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TEPoll);
@@ -2737,7 +3031,14 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TEPoll);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TEPoll);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TEPoll);
+    ADD_TEST(my_unit_test, test_reader_beside_blocked_writer, TEPoll);
     ADD_TEST(my_unit_test, test_short_connections, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_with_reader_and_writer, TPoll, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_ignores_unread_data, TPoll, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_after_hangup, TPoll, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_pipe, TPoll, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_pipe_write_end, TPoll, TEPoll);
+    ADD_TEST(my_unit_test2, test_destroyed_monitor_not_resumed, TPoll, TEPoll);
 #elif defined(__APPLE__) || defined(__FreeBSD__)
     ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TKqueue);
     ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TKqueue);
@@ -2747,7 +3048,14 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TKqueue);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TKqueue);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TKqueue);
+    ADD_TEST(my_unit_test, test_reader_beside_blocked_writer, TKqueue);
     ADD_TEST(my_unit_test, test_short_connections, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_with_reader_and_writer, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_ignores_unread_data, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_after_hangup, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_pipe, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_pipe_write_end, TKqueue);
+    ADD_TEST(my_unit_test, test_destroyed_monitor_not_resumed, TKqueue);
 #endif
 #endif
 
@@ -2793,9 +3101,18 @@ int main(int argc, char* argv[]) {
 #endif
     ADD_TEST(my_unit_test2, test_resolver, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_resolve_bad_name, TSelect, TPoll);
+    ADD_TEST(my_unit_test, test_monitor_unsupported, TSelect);
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    ADD_TEST(my_unit_test, test_remote_disconnect, TKqueue);
+    ADD_TEST(my_unit_test, test_monitor_unsupported, TPoll);
+#elif defined(_WIN32)
+    ADD_TEST(my_unit_test, test_remote_disconnect, TEPoll);
+    ADD_TEST(my_unit_test2, test_monitor_unsupported, TPoll, TIOCp);
+#endif
 #ifdef __linux__
     ADD_TEST(my_unit_test2, test_remote_disconnect, TPoll, TEPoll);
 #ifdef HAVE_URING
+    ADD_TEST(my_unit_test, test_monitor_unsupported, TUring);
     ADD_TEST(cmocka_unit_test, test_uring_create);
     ADD_TEST(cmocka_unit_test, test_uring_write);
     ADD_TEST(cmocka_unit_test, test_uring_read);

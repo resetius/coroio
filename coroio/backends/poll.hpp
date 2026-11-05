@@ -43,12 +43,12 @@ public:
     /// Alias for the file handle type.
     using TFileHandle = NNet::TFileHandle;
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     /**
-     * @brief Default constructor for Windows.
+     * @brief Default constructor for Windows and Linux.
      *
      * On Windows, additional initialization (such as setting up a dummy socket)
-     * is performed.
+     * is performed. On Linux, remote hang-ups are reported (POLLRDHUP).
      */
     TPoll();
 #endif

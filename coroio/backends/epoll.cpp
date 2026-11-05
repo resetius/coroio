@@ -35,6 +35,7 @@ TEPoll::TEPoll()
     if (Fd_ ==  invalid_handle) {
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
+    SupportsRemoteHup_ = true;
 }
 
 TEPoll::~TEPoll()
@@ -70,17 +71,14 @@ void TEPoll::Poll() {
         if (ch.Handle) {
             newEv = ev.Empty();
             if (ch.Type & TEvent::READ) {
-                eev.events |= EPOLLIN;
                 change |= ev.Read != ch.Handle;
                 ev.Read = ch.Handle;
             }
             if (ch.Type & TEvent::WRITE) {
-                eev.events |= EPOLLOUT;
                 change |= ev.Write != ch.Handle;
                 ev.Write = ch.Handle;
             }
             if (ch.Type & TEvent::RHUP) {
-                eev.events |= EPOLLRDHUP;
                 change |= ev.RHup != ch.Handle;
                 ev.RHup = ch.Handle;
             }
@@ -97,15 +95,16 @@ void TEPoll::Poll() {
                 change |= !!ev.RHup;
                 ev.RHup = {};
             }
-            if (ev.Read) {
-                eev.events |= EPOLLIN;
-            }
-            if (ev.Write) {
-                eev.events |= EPOLLOUT;
-            }
-            if (ev.RHup) {
-                eev.events |= EPOLLRDHUP;
-            }
+        }
+        // EPOLL_CTL_MOD replaces the whole mask: keep the other waiters of the descriptor.
+        if (ev.Read) {
+            eev.events |= EPOLLIN;
+        }
+        if (ev.Write) {
+            eev.events |= EPOLLOUT;
+        }
+        if (ev.RHup) {
+            eev.events |= EPOLLRDHUP;
         }
 
         if (newEv) {
@@ -163,15 +162,9 @@ void TEPoll::Poll() {
             ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
             ev.Write = {};
         }
-        if (OutEvents_[i].events & EPOLLHUP) {
-            if (ev.Read) {
-                ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
-            }
-            if (ev.Write) {
-                ReadyEvents_.emplace_back(TEvent{fd, TEvent::WRITE, ev.Write});
-            }
-        }
-        if (OutEvents_[i].events & EPOLLRDHUP) {
+        // Errors and hang-ups, often reported together, wake every waiter once: an
+        // error that wakes nobody would be reported again on every call.
+        if (OutEvents_[i].events & (EPOLLHUP | EPOLLRDHUP | EPOLLERR)) {
             if (ev.Read) {
                 ReadyEvents_.emplace_back(TEvent{fd, TEvent::READ, ev.Read});
             }
