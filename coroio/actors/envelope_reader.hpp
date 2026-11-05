@@ -64,6 +64,10 @@ private:
     THeader Header;
 };
 
+/**
+ * Envelope reader that hands out payloads as blobs pointing into its chunks.
+ * A blob must not outlive the reader: the blob deleter uses the chunk's Parent.
+ */
 class TZeroCopyEnvelopeReaderV2 {
 public:
     TZeroCopyEnvelopeReaderV2(size_t chunkSize = 1024 * 1024, size_t lowWatermark = 64 * 1024);
@@ -89,6 +93,7 @@ private:
     struct TChunk;
 
     void Rotate();
+    void ReleaseDrained(std::unique_ptr<TChunk> chunk);
     template<size_t size>
     bool CopyOut(char* buf);
     void CopyOut(char* buf, size_t size);
