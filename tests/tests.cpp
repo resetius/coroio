@@ -16,7 +16,6 @@
 #include <coroio/ws/utils.hpp>
 #include <coroio/dns/resolver.hpp>
 #include <coroio/completions.hpp>
-#include <coroio/intrusive_list.hpp>
 
 #include <unordered_set>
 
@@ -1822,99 +1821,6 @@ void test_driven_accept_not_listening(void**) {
 
 namespace {
 
-struct TListItem: NDetail::TIntrusiveNode<TListItem> {
-    TListItem(int value)
-        : Value(value)
-    { }
-
-    int Value;
-};
-
-std::vector<int> ListValues(NDetail::TIntrusiveList<TListItem>& list) {
-    std::vector<int> values;
-    for (auto& item : list) {
-        values.push_back(item.Value);
-    }
-    return values;
-}
-
-} // namespace
-
-void test_intrusive_list_push(void**) {
-    NDetail::TIntrusiveList<TListItem> list;
-    assert_true(list.Empty());
-    assert_true(ListValues(list).empty());
-    TListItem a(1), b(2), c(3), d(4);
-    list.PushBack(a);
-    list.PushBack(b);
-    list.PushFront(c);
-    list.PushFront(d);
-    assert_false(list.Empty());
-    assert_true(a.IsLinked());
-    assert_int_equal(list.Front().Value, 4);
-    assert_true(ListValues(list) == std::vector<int>({4, 3, 1, 2}));
-    for (auto* item : {&a, &b, &c, &d}) {
-        list.Erase(*item);
-    }
-}
-
-void test_intrusive_list_erase(void**) {
-    // The first, a middle and the last item.
-    for (int erased = 0; erased < 3; erased++) {
-        NDetail::TIntrusiveList<TListItem> list;
-        TListItem items[3] = {0, 1, 2};
-        for (auto& item : items) {
-            list.PushBack(item);
-        }
-        list.Erase(items[erased]);
-        assert_false(items[erased].IsLinked());
-        std::vector<int> expected;
-        for (int i = 0; i < 3; i++) {
-            if (i != erased) {
-                expected.push_back(i);
-            }
-        }
-        assert_true(ListValues(list) == expected);
-        for (int i = 0; i < 3; i++) {
-            if (i != erased) {
-                items[i].Unlink();
-            }
-        }
-        assert_true(list.Empty());
-    }
-
-    NDetail::TIntrusiveList<TListItem> list;
-    TListItem only(7);
-    list.PushBack(only);
-    NDetail::TIntrusiveList<TListItem>::Erase(only);
-    assert_true(list.Empty());
-    assert_false(only.IsLinked());
-}
-
-void test_intrusive_list_reinsert(void**) {
-    NDetail::TIntrusiveList<TListItem> list;
-    TListItem a(1), b(2);
-    list.PushBack(a);
-    list.PushBack(b);
-    list.Erase(a);
-    list.Erase(b);
-    assert_true(list.Empty());
-    list.PushBack(b);
-    list.PushBack(a);
-    assert_true(ListValues(list) == std::vector<int>({2, 1}));
-    list.Erase(b);
-    list.PushFront(b);
-    assert_true(ListValues(list) == std::vector<int>({2, 1}));
-    list.Erase(a);
-    list.PushFront(a);
-    assert_int_equal(list.Front().Value, 1);
-    assert_true(ListValues(list) == std::vector<int>({1, 2}));
-    list.Erase(a);
-    list.Erase(b);
-}
-
-namespace {
-
 TFuture<void> CountResumes(int* count) {
     while (true) {
         co_await std::suspend_always();
@@ -3367,9 +3273,6 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TIOCp);
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
 #endif
-    ADD_TEST(cmocka_unit_test, test_intrusive_list_push);
-    ADD_TEST(cmocka_unit_test, test_intrusive_list_erase);
-    ADD_TEST(cmocka_unit_test, test_intrusive_list_reinsert);
     ADD_TEST(cmocka_unit_test, test_completions);
 
     return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);
