@@ -16,6 +16,15 @@
 #include <coroio/ws/utils.hpp>
 #include <coroio/dns/resolver.hpp>
 #include <coroio/completions.hpp>
+#include <coroio/http/httpd.hpp>
+
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #include <unordered_set>
 
@@ -1916,6 +1925,126 @@ void test_driven_accept_not_listening(void**) {
     assert_false(accepted.has_value());
 }
 
+#ifndef _WIN32
+template<typename TSocket>
+TFuture<void> AcceptResult(TSocket& listener, std::optional<std::expected<TSocket, int>>* result) {
+    result->emplace(co_await listener.Accept());
+}
+
+int ConnectTo(const TAddress& address) {
+    int fd = socket(address.Domain(), SOCK_STREAM, 0);
+    auto [addr, len] = address.RawAddr();
+    assert_int_equal(connect(fd, addr, len), 0);
+    return fd;
+}
+
+// Readiness of a connection that someone else accepts first is returned as EAGAIN.
+template<typename TPoller>
+void test_accept_after_spurious_readiness(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    std::optional<std::expected<TSocket, int>> result;
+    auto accept = AcceptResult(listener, &result);
+    int first = ConnectTo(address);
+    loop.Poller().Poll();
+    int stolen = ::accept(listener.Fd(), nullptr, nullptr);
+    loop.Poller().WakeupReadyHandles();
+    StepUntilDone(loop, accept);
+    if (stolen >= 0) { // a completion-based poller accepts before the steal
+        assert_int_equal(result->error_or(0), EAGAIN);
+        int second = ConnectTo(address);
+        auto next = AcceptResult(listener, &result);
+        StepUntilDone(loop, next);
+        close(second);
+        close(stolen);
+    }
+    assert_true(result->has_value());
+    close(first);
+}
+
+template<typename TPoller>
+void test_accept_closed_listener(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TSocket listener(loop.Poller(), AF_INET);
+    listener.Close();
+    std::optional<std::expected<TSocket, int>> result;
+    auto accept = AcceptResult(listener, &result);
+    try {
+        StepUntilDone(loop, accept);
+        fail_msg("no exception");
+    } catch (const std::system_error& ex) {
+        assert_int_equal(ex.code().value(), EBADF);
+    }
+}
+
+struct TOkRouter: IRouter {
+    TFuture<void> HandleRequest(TRequest&, TResponse& response) override {
+        co_await response.WriteBodyFull("ok");
+    }
+};
+
+// The web server goes on accepting after the descriptors have run out.
+template<typename TPoller>
+void test_accept_after_descriptor_shortage(void**) {
+    // The detached accept loop and the handler of the refused connection are left suspended.
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+    __lsan::ScopedDisabler lsanDisabler;
+#endif
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    TOkRouter router;
+    std::vector<std::string> log;
+    TWebServer<TSocket> server(std::move(listener), router, [&log](const std::string& line) {
+        log.push_back(line);
+    });
+    server.Start();
+
+    // Nothing is asserted until the limit is restored: the tests share the process.
+    int refused = socket(address.Domain(), SOCK_STREAM, 0);
+    rlimit saved, low;
+    getrlimit(RLIMIT_NOFILE, &saved);
+    low = saved;
+    low.rlim_cur = std::min<rlim_t>(saved.rlim_cur, refused + 32);
+    setrlimit(RLIMIT_NOFILE, &low);
+    std::vector<int> filler;
+    for (int fd; (fd = dup(refused)) >= 0; ) {
+        filler.push_back(fd);
+    }
+    auto [addr, len] = address.RawAddr();
+    int connected = connect(refused, addr, len);
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (log.empty() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    for (int fd : filler) {
+        close(fd);
+    }
+    setrlimit(RLIMIT_NOFILE, &saved);
+    assert_int_equal(connected, 0);
+
+    int client = ConnectTo(address);
+    const char request[] = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    assert_int_equal(send(client, request, sizeof(request) - 1, 0), sizeof(request) - 1);
+    char response[16] = {};
+    while (recv(client, response, sizeof(response) - 1, MSG_DONTWAIT) < 0 && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_string_equal(response, "HTTP/1.1 200 OK");
+    assert_true(log.front().starts_with("Accept failed: "));
+    close(client);
+    close(refused);
+}
+#endif
+
 namespace {
 
 TFuture<void> CountResumes(int* count) {
@@ -3456,6 +3585,11 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_timeout);
     ADD_TEST(my_unit_poller, test_timeout2);
     ADD_TEST(my_unit_poller, test_accept);
+#ifndef _WIN32
+    ADD_TEST(my_unit_poller, test_accept_after_spurious_readiness);
+    ADD_TEST(my_unit_poller, test_accept_closed_listener);
+    ADD_TEST(my_unit_poller, test_accept_after_descriptor_shortage);
+#endif
     ADD_TEST(my_unit_poller, test_write_after_connect);
     ADD_TEST(my_unit_poller, test_write_after_accept);
     ADD_TEST(my_unit_poller, test_connection_timeout);
