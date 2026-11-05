@@ -2052,6 +2052,40 @@ void test_hangup_wakes_reader_and_writer_once(void**) {
     assert_int_equal(writes, 1);
 }
 
+template<typename TPoller>
+void test_reader_beside_blocked_writer(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    // The writer registers in the same iteration as the reader, or in the next one.
+    for (bool sameIteration : {true, false}) {
+        int fds[2];
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        TFileHandle handle(fds[0], loop.Poller());
+        SetNonBlocking(fds[1]);
+        FillSendBuffer(fds[0]);
+        char byte = 0;
+        int reads = 0;
+        int writes = 0;
+        auto reader = CountRead(handle, &byte, &reads);
+        if (!sameIteration) {
+            loop.Step();
+        }
+        auto writer = CountWrite(handle, &writes);
+        loop.Step();
+
+        assert_int_equal(write(fds[1], "r", 1), 1);
+        Complete(loop, reader);
+        assert_int_equal(byte, 'r');
+        assert_false(writer.done());
+        Drain(fds[1]);
+        Complete(loop, writer);
+        assert_int_equal(reads, 1);
+        assert_int_equal(writes, 1);
+        close(fds[1]);
+    }
+}
+
 template<typename TFileHandle>
 TFuture<void> WaitHangup(TFileHandle& handle) {
     co_await handle.Monitor();
@@ -2429,6 +2463,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_reuse_after_closing_several, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_destroyed_accept_and_connect_not_resumed, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_hangup_wakes_reader_and_writer_once, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_reader_beside_blocked_writer, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_short_connections, TSelect, TPoll);
 #ifdef __linux__
     ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TEPoll);
@@ -2439,6 +2474,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TEPoll);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TEPoll);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TEPoll);
+    ADD_TEST(my_unit_test, test_reader_beside_blocked_writer, TEPoll);
     ADD_TEST(my_unit_test, test_short_connections, TEPoll);
     ADD_TEST(my_unit_test2, test_monitor_with_reader_and_writer, TPoll, TEPoll);
     ADD_TEST(my_unit_test2, test_monitor_ignores_unread_data, TPoll, TEPoll);
@@ -2455,6 +2491,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TKqueue);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TKqueue);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TKqueue);
+    ADD_TEST(my_unit_test, test_reader_beside_blocked_writer, TKqueue);
     ADD_TEST(my_unit_test, test_short_connections, TKqueue);
     ADD_TEST(my_unit_test, test_monitor_with_reader_and_writer, TKqueue);
     ADD_TEST(my_unit_test, test_monitor_ignores_unread_data, TKqueue);
