@@ -75,6 +75,20 @@ public:
         int Fd = -1;
         bool Connect = false;
         bool File = false;
+
+        // Resets the OVERLAPPED and every field except Handle for a new operation on fd.
+        // A field added above must be reset here too.
+        void Reset(int fd) {
+            static_cast<OVERLAPPED&>(*this) = OVERLAPPED();
+            Result = 0;
+            Index = 0;
+            Addr = nullptr;
+            Len = nullptr;
+            Sock = -1;
+            Fd = fd;
+            Connect = false;
+            File = false;
+        }
     };
 
     TIOCp();
