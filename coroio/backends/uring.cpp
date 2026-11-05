@@ -44,43 +44,43 @@ TUring::~TUring() {
     close(EpollFd_);
 }
 
-void TUring::Read(int fd, void* buf, int size, std::coroutine_handle<> handle) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Read(int fd, void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_read(sqe, fd, buf, size, -1);
     //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-    io_uring_sqe_set_data(sqe, handle.address());
+    SetData(sqe, op);
 }
 
-void TUring::Write(int fd, const void* buf, int size, std::coroutine_handle<> handle) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Write(int fd, const void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_write(sqe, fd, buf, size, -1);
     //memcpy(Buffer_.data(), buf, size);
     //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-    io_uring_sqe_set_data(sqe, handle.address());
+    SetData(sqe, op);
 }
 
-void TUring::Recv(int fd, void* buf, int size, std::coroutine_handle<> handle) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Recv(int fd, void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_recv(sqe, fd, buf, size, 0);
-    io_uring_sqe_set_data(sqe, handle.address());
+    SetData(sqe, op);
 }
 
-void TUring::Send(int fd, const void* buf, int size, std::coroutine_handle<> handle) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Send(int fd, const void* buf, int size, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_send(sqe, fd, buf, size, 0);
-    io_uring_sqe_set_data(sqe, handle.address());
+    SetData(sqe, op);
 }
 
-void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_accept(sqe, fd, addr, len, SOCK_CLOEXEC);
-    io_uring_sqe_set_data(sqe, handle.address());
+    SetData(sqe, op);
 }
 
-void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle) {
-    struct io_uring_sqe *sqe = GetSqe();
+void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op) {
+    struct io_uring_sqe *sqe = GetSqe(op);
     io_uring_prep_connect(sqe, fd, addr, len);
-    io_uring_sqe_set_data(sqe, handle.address());
+    SetData(sqe, op);
 }
 
 void TUring::Cancel(int fd) {
@@ -91,27 +91,25 @@ void TUring::Cancel(int fd) {
     sqe->cancel_flags = (1U << 1);
 }
 
-int TUring::Cancel(std::coroutine_handle<> h) {
-    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
-        if (ReadyEvents_[i].Handle == h) {
-            ReadyEvents_[i].Handle = {};
-            return Results_[i];
-        }
-    }
-    for (auto& [handle, result] : Reaped_) {
-        if (handle == h) {
-            handle = {};
-            return result;
-        }
+void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
+    op.Index = Ring_.sq.sqe_tail - 1;
+    io_uring_sqe_set_data(sqe, &op);
+}
+
+int TUring::Cancel(TOperation& op) {
+    op.Handle = {};
+    if (Completions_.Drop(op)) {
+        return op.Result;
     }
 
     // Not submitted yet: the kernel has not seen the operation, so it can be dropped as is.
     // Without SQPOLL the kernel reads SQEs only in io_uring_enter, so this holds from *khead;
-    // with SQPOLL only sqe_head..sqe_tail could be rewritten.
-    auto data = reinterpret_cast<__u64>(h.address());
-    for (unsigned i = *Ring_.sq.khead; i != Ring_.sq.sqe_tail; i++) {
-        struct io_uring_sqe *sqe = &Ring_.sq.sqes[i & *Ring_.sq.kring_mask];
-        if (sqe->user_data == data) {
+    // with SQPOLL only sqe_head..sqe_tail could be rewritten. The position comes round again
+    // after 2^32 SQEs, so the entry is checked to be still the operation's.
+    unsigned head = *Ring_.sq.khead;
+    if (op.Index - head < Ring_.sq.sqe_tail - head) {
+        struct io_uring_sqe *sqe = &Ring_.sq.sqes[op.Index & *Ring_.sq.kring_mask];
+        if (sqe->user_data == reinterpret_cast<__u64>(&op)) {
             io_uring_prep_nop(sqe);
             io_uring_sqe_set_data(sqe, nullptr);
             return -ECANCELED;
@@ -127,16 +125,16 @@ int TUring::Cancel(std::coroutine_handle<> h) {
     while (!(sqe = io_uring_get_sqe(&Ring_))) {
         // The SQ is full. Submitting it fails while the CQ overflows, so drain that too.
         int err = io_uring_submit(&Ring_);
-        if (Reap(h, &result) || failed(err)) {
+        if (Reap(op, &result) || failed(err)) {
             return result;
         }
     }
-    io_uring_prep_cancel(sqe, h.address(), 0);
+    io_uring_prep_cancel(sqe, &op, 0);
     io_uring_sqe_set_data(sqe, nullptr);
 
     // The kernel may use the operation's buffers until its completion is posted,
     // so wait for it. Other completions are kept for the next Wait().
-    while (!Reap(h, &result)) {
+    while (!Reap(op, &result)) {
         if (failed(io_uring_submit_and_wait(&Ring_, 1))) {
             break;
         }
@@ -144,19 +142,19 @@ int TUring::Cancel(std::coroutine_handle<> h) {
     return result;
 }
 
-bool TUring::Reap(std::coroutine_handle<> h, int* result) {
+bool TUring::Reap(TOperation& op, int* result) {
     struct io_uring_cqe *cqe;
     unsigned head;
     int completed = 0;
     bool found = false;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
-        void* data = reinterpret_cast<void*>(cqe->user_data);
-        if (data == h.address()) {
+        auto* other = static_cast<TOperation*>(io_uring_cqe_get_data(cqe));
+        if (other == &op) {
             found = true;
             *result = cqe->res;
-        } else if (data != nullptr) {
-            Reaped_.emplace_back(std::coroutine_handle<>::from_address(data), cqe->res);
+        } else if (other != nullptr) {
+            Completions_.Reap(other, cqe->res);
         }
     }
     io_uring_cq_advance(&Ring_, completed);
@@ -178,25 +176,8 @@ int TUring::Wait(timespec ts) {
         Cancel(ev.Fd);
     }
 
-    // Collected by the previous call, but not delivered: WakeupReadyHandles() was not called.
-    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
-        if (ReadyEvents_[i].Handle) {
-            Reaped_.emplace_back(ReadyEvents_[i].Handle, Results_[i]);
-        }
-    }
-
     Reset();
-    Results_.clear();
-    NextResult_ = 0;
-
-    for (auto [h, result] : Reaped_) {
-        if (h) {
-            Results_.push_back(result);
-            ReadyEvents_.emplace_back(TEvent{-1, 0, h});
-        }
-    }
-    if (!Reaped_.empty()) {
-        Reaped_.clear();
+    if (Completions_.Carry()) {
         ts = {0, 0}; // completions are ready already, do not block
     }
 
@@ -225,10 +206,8 @@ int TUring::Wait(timespec ts) {
     int completed = 0;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
-        void* data = reinterpret_cast<void*>(cqe->user_data);
-        if (data != nullptr) {
-            Results_.push_back(cqe->res);
-            ReadyEvents_.emplace_back(TEvent{-1, 0, std::coroutine_handle<>::from_address(data)});
+        if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
+            Completions_.Collect(op, cqe->res);
         }
     }
 
@@ -239,26 +218,13 @@ int TUring::Wait(timespec ts) {
     return completed;
 }
 
-int TUring::Result() {
-    // Delivered: the next Wait() does not keep it.
-    ReadyEvents_[NextResult_].Handle = {};
-    return Results_[NextResult_++];
-}
-
 void TUring::WakeupReadyHandles() {
-    for (size_t i = 0; i < ReadyEvents_.size(); i++) {
-        // Cleared before resuming, so that Cancel() finds only completions not delivered yet.
-        if (auto h = std::exchange(ReadyEvents_[i].Handle, {})) {
-            NextResult_ = i;
-            h.resume();
-        }
-    }
-    ReadyEvents_.clear();
+    Completions_.Wakeup();
 }
 
 void TUring::Submit() {
     int err;
-    if ((err = io_uring_submit(&Ring_) < 0)) {
+    if ((err = io_uring_submit(&Ring_)) < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_submit");
     }
 }
