@@ -37,12 +37,22 @@ void TKqueue::Poll()
     if (static_cast<int>(InEvents_.size()) <= MaxFd_) {
         InEvents_.resize(MaxFd_+1);
     }
-    for (const auto& pending : Changes_) {
+    for (auto& pending : Changes_) {
         int fd = pending.Fd;
         struct kevent kev = {};
         auto& ev = InEvents_[fd];
-        const auto ch = ResolveCancel(pending, ev);
+        const auto ch = Resolve(pending, ev);
+        if (!ch.Type) {
+            continue;
+        }
         const auto prev = ev;
+
+        if (ch.Type & TEvent::CLOSE) {
+            // close() drops the kevents; changes queued before it resolved to nothing.
+            ev.Reset();
+            CloseDescriptor(pending);
+            continue;
+        }
 
         if (ch.Handle) {
             if (ch.Type & TEvent::READ) {

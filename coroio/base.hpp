@@ -46,7 +46,12 @@ struct TEvent {
         CANCEL = 0, // queued by TPollerBase::RemoveEvent(int, THandle); matches no event
         READ = 1,
         WRITE = 2,
-        RHUP = 4
+        RHUP = 4,
+        // Queued by TPollerBase::Close() together with READ|WRITE|RHUP: the backend
+        // removes its registration of Fd, then closes Fd as a socket or as a file.
+        CLOSE_SOCKET = 8,
+        CLOSE_FILE = 16,
+        CLOSE = CLOSE_SOCKET | CLOSE_FILE
     };
     int Type;
     THandle Handle;

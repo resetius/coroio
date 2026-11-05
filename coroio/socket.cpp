@@ -153,4 +153,12 @@ TFileHandle& TFileHandle::operator=(TFileHandle&& other) {
     return *this;
 }
 
+void NDetail::CloseDescriptor(int fd, bool file) {
+    if (file) {
+        TFileOps::close(fd);
+    } else {
+        TSockOps::close(fd);
+    }
+}
+
 } // namespace NNet {

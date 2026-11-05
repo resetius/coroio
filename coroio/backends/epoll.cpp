@@ -58,10 +58,10 @@ void TEPoll::Poll() {
         Generations_.resize(MaxFd_+1);
     }
 
-    for (const auto& pending : Changes_) {
+    for (auto& pending : Changes_) {
         int fd = pending.Fd;
         auto& ev  = InEvents_[fd];
-        const auto ch = ResolveCancel(pending, ev);
+        const auto ch = Resolve(pending, ev);
         if (!ch.Type) {
             continue;
         }
@@ -112,10 +112,10 @@ void TEPoll::Poll() {
             if (epoll_ctl(Fd_, EPOLL_CTL_ADD, fd, &eev) < 0) {
                 throw std::system_error(errno, std::generic_category(), "epoll_ctl");
             }
-        } else if (!eev.events) {
+        } else if (!eev.events && change) {
             ev.Reset();
             if (epoll_ctl(Fd_, EPOLL_CTL_DEL, fd, nullptr) < 0) {
-                if (!(errno == EBADF || errno == ENOENT)) { // closed descriptor after TSocket -> close
+                if (!(errno == EBADF || errno == ENOENT)) { // descriptor closed without TPollerBase::Close()
                     throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             }
@@ -131,6 +131,10 @@ void TEPoll::Poll() {
                     throw std::system_error(errno, std::generic_category(), "epoll_ctl");
                 }
             }
+        }
+
+        if (ch.Type & TEvent::CLOSE) {
+            CloseDescriptor(pending); // after the DEL above
         }
     }
 

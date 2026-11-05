@@ -84,7 +84,7 @@ protected:
  * must implement the following static methods:
  *  - <tt>static int TSockOps::read(int fd, void* buf, size_t size)</tt>
  *  - <tt>static int TSockOps::write(int fd, const void* buf, size_t size)</tt>
- *  - <tt>static int TSockOps::close(int fd)</tt>
+ *  - <tt>static constexpr int TSockOps::CloseType</tt>, passed to TPollerBase::Close()
  *
  * It provides awaitable methods for reading and writing:
  *  - @ref ReadSome() and @ref ReadSomeYield() perform asynchronous reads.
@@ -271,14 +271,14 @@ public:
     /**
      * @brief Closes the socket.
      *
-     * Closes the socket using the low-level operation provided by TSockOps, removes
-     * it from the poller, and marks the descriptor as invalid.
+     * Hands the descriptor to TPollerBase::Close(), which closes it in the next
+     * poll iteration: `co_await poller.Yield()` before binding a closed listener's
+     * address again. Marks the descriptor as invalid.
      */
     void Close()
     {
         if (Fd_ >= 0) {
-            TSockOps::close(Fd_);
-            Poller_->RemoveEvent(Fd_);
+            Poller_->Close(Fd_, TSockOps::CloseType);
             Fd_ = -1;
         }
     }
@@ -330,6 +330,8 @@ protected:
 
 class TFileOps {
 public:
+    static constexpr int CloseType = TEvent::CLOSE_FILE; ///< Passed to TPollerBase::Close().
+
     static auto read(int fd, void* buf, size_t count) {
         return ::read(fd, buf, count);
     }
@@ -347,8 +349,8 @@ public:
  * @class TFileHandle
  * @brief Asynchronous file handle that owns its file descriptor.
  *
- * The passed file descriptor is owned by TFileHandle and will be closed
- * automatically when the object is destroyed.
+ * The passed file descriptor is owned by TFileHandle: the destructor hands it to
+ * the poller, which closes it in its next iteration.
  */
 class TFileHandle: public TSocketBase<TFileOps> {
 public:
@@ -370,6 +372,8 @@ public:
 
 class TSockOps {
 public:
+    static constexpr int CloseType = TEvent::CLOSE_SOCKET; ///< Passed to TPollerBase::Close().
+
     static auto read(int fd, void* buf, size_t count) {
         return ::recv(fd, static_cast<char*>(buf), count, 0);
     }
@@ -935,7 +939,8 @@ public:
     /**
      * @brief Constructs a TPollerDrivenFileHandle from an existing file descriptor.
      *
-     * The file descriptor is owned by the TPollerDrivenFileHandle and will be closed in the destructor.
+     * The file descriptor is owned by the TPollerDrivenFileHandle: the destructor hands it to the
+     * poller, which closes it in its next iteration.
      *
      * @param fd     The file descriptor to manage.
      * @param poller Reference to the poller for asynchronous I/O.

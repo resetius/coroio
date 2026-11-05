@@ -61,10 +61,13 @@ void TPoll::Poll()
         InEvents_.resize(MaxFd_+1, std::make_tuple(THandlePair{}, -1));
     }
 
-    for (const auto& pending : Changes_) {
+    for (auto& pending : Changes_) {
         int fd = pending.Fd;
         auto& [ev, idx] = InEvents_[fd];
-        const auto ch = ResolveCancel(pending, ev);
+        const auto ch = Resolve(pending, ev);
+        if (!ch.Type) {
+            continue;
+        }
         if (ch.Handle) {
             if (idx == -1) {
                 idx = Fds_.size();
@@ -107,6 +110,9 @@ void TPoll::Poll()
                 Fds_.pop_back();
                 idx = -1;
             }
+        }
+        if (ch.Type & TEvent::CLOSE) {
+            CloseDescriptor(pending);
         }
     }
 

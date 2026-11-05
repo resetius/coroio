@@ -33,10 +33,13 @@ void TSelect::Poll() {
     }
 #endif
 
-    for (const auto& pending : Changes_) {
+    for (auto& pending : Changes_) {
         int fd = pending.Fd;
         auto& ev = InEvents_[fd];
-        const auto ch = ResolveCancel(pending, ev);
+        const auto ch = Resolve(pending, ev);
+        if (!ch.Type) {
+            continue;
+        }
         if (ch.Handle) {
             if (ch.Type & TEvent::READ) {
                 FD_SET(fd, ReadFds()); ev.Read = ch.Handle;
@@ -51,6 +54,9 @@ void TSelect::Poll() {
             if (ch.Type & TEvent::WRITE) {
                 FD_CLR(fd, WriteFds()); ev.Write = {};
             }
+        }
+        if (ch.Type & TEvent::CLOSE) {
+            CloseDescriptor(pending);
         }
     }
 
