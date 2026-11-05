@@ -2346,7 +2346,10 @@ void Complete(TLoop<TPoller>& loop, TFuture<void>& wait) {
 }
 
 template<typename TPoller>
-void CheckWait() {
+constexpr bool kDriven = !std::is_same_v<typename TPoller::TFileHandle, TFileHandle>;
+
+template<typename TPoller>
+void test_notifier_wait_signal(void**) {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
@@ -2361,46 +2364,37 @@ void CheckWait() {
     Complete(loop, next);
 }
 
-void test_notifier_epoll(void**) {
-#ifdef __linux__
-    CheckWait<TEPoll>();
-#else
-    CheckWait<TDefaultPoller>();
-#endif
-}
-
-void test_notifier_poll(void**) {
-    CheckWait<TPoll>();
-}
-
-void test_notifier_select(void**) {
-    CheckWait<TSelect>();
-}
-
+template<typename TPoller>
 void test_notifier_notify_before_wait(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     TNotifier notifier(loop.Poller());
     notifier.Notify();
     auto wait = notifier.Wait();
-    assert_true(wait.done());
-    wait.await_resume();
+    if constexpr (!kDriven<TPoller>) {
+        assert_true(wait.done());
+    }
+    Complete(loop, wait);
 }
 
+template<typename TPoller>
 void test_notifier_coalesces(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     TNotifier notifier(loop.Poller());
     for (int i = 0; i < 10000; ++i) {
         notifier.Notify();
     }
     auto wait = notifier.Wait();
-    assert_true(wait.done());
-    wait.await_resume();
+    if constexpr (!kDriven<TPoller>) {
+        assert_true(wait.done());
+    }
+    Complete(loop, wait);
     auto next = notifier.Wait();
     assert_false(next.done());
 }
 
+template<typename TPoller>
 void test_notifier_concurrent_producers(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     TNotifier notifier(loop.Poller());
     constexpr size_t producerCount = 8;
     std::barrier start(producerCount);
@@ -2415,19 +2409,22 @@ void test_notifier_concurrent_producers(void**) {
     }
     producers.clear();
     auto wait = notifier.Wait();
-    assert_true(wait.done());
-    wait.await_resume();
+    if constexpr (!kDriven<TPoller>) {
+        assert_true(wait.done());
+    }
+    Complete(loop, wait);
     auto next = notifier.Wait();
     assert_false(next.done());
 }
 
-TFuture<void> Observe(TNotifier& notifier, const int& payload, int& observed) {
+TFuture<void> Observe(INotifier& notifier, const int& payload, int& observed) {
     co_await notifier.Wait();
     observed = payload;
 }
 
+template<typename TPoller>
 void test_notifier_cross_thread_wakeup(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
     TNotifier notifier(loop.Poller());
     int payload = 0;
@@ -2442,7 +2439,7 @@ void test_notifier_cross_thread_wakeup(void**) {
     assert_int_equal(observed, 42);
 }
 
-TFuture<void> Drain(TNotifier& notifier, const std::atomic<int>& published, int total) {
+TFuture<void> Drain(INotifier& notifier, const std::atomic<int>& published, int total) {
     int consumed = 0;
     while (consumed != total) {
         co_await notifier.Wait();
@@ -2450,8 +2447,9 @@ TFuture<void> Drain(TNotifier& notifier, const std::atomic<int>& published, int 
     }
 }
 
+template<typename TPoller>
 void test_notifier_notify_while_draining(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
     constexpr int producerCount = 4;
@@ -2475,8 +2473,9 @@ void test_notifier_notify_while_draining(void**) {
     assert_int_equal(published.load(), producerCount * perProducer);
 }
 
+template<typename TPoller>
 void test_notifier_rejects_second_listener(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
     auto first = notifier.Wait();
@@ -2493,8 +2492,22 @@ void test_notifier_rejects_second_listener(void**) {
     Complete(loop, first);
 }
 
+template<typename TPoller>
+void test_notifier_interface(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    std::unique_ptr<INotifier> notifier = std::make_unique<TNotifier<TPoller>>(loop.Poller());
+    auto wait = notifier->Wait();
+    assert_false(wait.done());
+    notifier->Notify();
+    Complete(loop, wait);
+    auto next = notifier->Wait();
+    assert_false(next.done());
+}
+
+template<typename TPoller>
 void test_notifier_cancel_wait(void**) {
-    TLoop<TDefaultPoller> loop;
+    TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     TNotifier notifier(loop.Poller());
     {
@@ -2530,8 +2543,10 @@ void test_notifier_cancel_ready_from_timer(void**) {
     assert_false(wait.has_value());
 
     auto next = notifier.Wait();
-    assert_true(next.done());
-    next.await_resume();
+    if constexpr (!kDriven<TPoller>) {
+        assert_true(next.done());
+    }
+    Complete(loop, next);
     loop.Step();
 }
 
@@ -2546,13 +2561,60 @@ void test_notifier_cancel_collected_event(void**) {
     wait.reset();
 
     auto next = notifier.Wait();
-    assert_true(next.done());
-    next.await_resume();
+    if constexpr (!kDriven<TPoller>) {
+        assert_true(next.done());
+    }
+    Complete(loop, next);
     auto pending = notifier.Wait();
     loop.Poller().WakeupReadyHandles();
     assert_false(pending.done());
     notifier.Notify();
     Complete(loop, pending);
+}
+
+template<typename TPoller>
+void test_notifier_cancel_retains_signal(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TNotifier notifier(loop.Poller());
+    std::optional<TFuture<void>> wait{notifier.Wait()};
+    notifier.Notify();
+    loop.Poller().Poll();
+    wait.reset();
+    // No new Notify(): the signal sent before the cancel must still be delivered.
+    auto next = notifier.Wait();
+    Complete(loop, next);
+}
+
+int CountOpenFds() {
+    int count = 0;
+    for (int fd = 0; fd < 1024; ++fd) {
+        if (fcntl(fd, F_GETFD) >= 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+template<typename TPoller>
+void test_notifier_closes_descriptors(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    const int before = CountOpenFds();
+    for (int mode = 0; mode < 3; ++mode) {
+        {
+            TNotifier notifier(loop.Poller());
+            if (mode > 0) {
+                auto wait = notifier.Wait();
+                if (mode == 2) {
+                    notifier.Notify();
+                    loop.Step();
+                }
+            }
+        }
+        loop.Step();
+        assert_int_equal(CountOpenFds(), before);
+    }
 }
 
 template<typename TPoller>
@@ -3268,19 +3330,20 @@ int main(int argc, char* argv[]) {
     parse_filters(argc, argv, filters);
 
 #ifndef _WIN32
-    ADD_TEST(cmocka_unit_test, test_notifier_epoll);
-    ADD_TEST(cmocka_unit_test, test_notifier_poll);
-    ADD_TEST(cmocka_unit_test, test_notifier_select);
-    ADD_TEST(cmocka_unit_test, test_notifier_notify_before_wait);
-    ADD_TEST(cmocka_unit_test, test_notifier_coalesces);
-    ADD_TEST(cmocka_unit_test, test_notifier_concurrent_producers);
-    ADD_TEST(cmocka_unit_test, test_notifier_cross_thread_wakeup);
-    ADD_TEST(cmocka_unit_test, test_notifier_notify_while_draining);
-    ADD_TEST(cmocka_unit_test, test_notifier_rejects_second_listener);
-    ADD_TEST(cmocka_unit_test, test_notifier_cancel_wait);
-    ADD_TEST(my_unit_test2, test_notifier_cancel_ready_from_timer, TSelect, TPoll);
-    ADD_TEST(my_unit_test2, test_notifier_cancel_collected_event, TSelect, TPoll);
-    ADD_TEST(my_unit_test2, test_notifier_destroy_before_poll, TSelect, TPoll);
+    ADD_TEST(my_unit_poller, test_notifier_wait_signal);
+    ADD_TEST(my_unit_poller, test_notifier_notify_before_wait);
+    ADD_TEST(my_unit_poller, test_notifier_coalesces);
+    ADD_TEST(my_unit_poller, test_notifier_concurrent_producers);
+    ADD_TEST(my_unit_poller, test_notifier_cross_thread_wakeup);
+    ADD_TEST(my_unit_poller, test_notifier_notify_while_draining);
+    ADD_TEST(my_unit_poller, test_notifier_interface);
+    ADD_TEST(my_unit_poller, test_notifier_rejects_second_listener);
+    ADD_TEST(my_unit_poller, test_notifier_cancel_wait);
+    ADD_TEST(my_unit_poller, test_notifier_cancel_ready_from_timer);
+    ADD_TEST(my_unit_poller, test_notifier_cancel_collected_event);
+    ADD_TEST(my_unit_poller, test_notifier_cancel_retains_signal);
+    ADD_TEST(my_unit_poller, test_notifier_closes_descriptors);
+    ADD_TEST(my_unit_poller, test_notifier_destroy_before_poll);
     ADD_TEST(my_unit_test2, test_destroyed_waiter_not_resumed, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_reused_descriptor_wakes_new_waiter, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_reuse_after_closing_several, TSelect, TPoll);
@@ -3289,9 +3352,6 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_reader_beside_blocked_writer, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_short_connections, TSelect, TPoll);
 #ifdef __linux__
-    ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TEPoll);
-    ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TEPoll);
-    ADD_TEST(my_unit_test, test_notifier_destroy_before_poll, TEPoll);
     ADD_TEST(my_unit_test, test_destroyed_waiter_not_resumed, TEPoll);
     ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TEPoll);
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TEPoll);
@@ -3306,9 +3366,6 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_monitor_pipe_write_end, TPoll, TEPoll);
     ADD_TEST(my_unit_test2, test_destroyed_monitor_not_resumed, TPoll, TEPoll);
 #elif defined(__APPLE__) || defined(__FreeBSD__)
-    ADD_TEST(my_unit_test, test_notifier_cancel_ready_from_timer, TKqueue);
-    ADD_TEST(my_unit_test, test_notifier_cancel_collected_event, TKqueue);
-    ADD_TEST(my_unit_test, test_notifier_destroy_before_poll, TKqueue);
     ADD_TEST(my_unit_test, test_destroyed_waiter_not_resumed, TKqueue);
     ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TKqueue);
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TKqueue);
