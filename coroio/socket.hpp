@@ -893,6 +893,13 @@ private:
  * @note The poller must outlive every coroutine suspended on an operation of this
  *       class: destroying such a coroutine cancels the operation in the poller.
  *
+ * @warning Unlike TPollerDrivenSocket, this class does not register its handle with the
+ *          poller. On TIOCp the handle is therefore not associated with the completion port,
+ *          so file handles are not supported there: their operations get no completion packet
+ *          and are never delivered, and TIOCp::Cancel() relies on there being no packet. The
+ *          handle must not be associated with the port: Cancel() would then return while a
+ *          packet still points to the operation. See GitHub issues #156 and #158.
+ *
  * @tparam T The poller type that defines the asynchronous file operations.
  */
 template<typename T>
