@@ -10,9 +10,9 @@
 
 namespace NNet::NDetail {
 
-std::array<int, 2> MakeNotifierFds(bool nonBlockingRead) {
+std::array<int, 2> MakeNotifierFds() {
 #ifdef __linux__
-    const int fd = eventfd(0, (nonBlockingRead ? EFD_NONBLOCK : 0) | EFD_CLOEXEC);
+    const int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd < 0) {
         throw std::system_error(errno, std::generic_category(), "eventfd");
     }
@@ -22,13 +22,11 @@ std::array<int, 2> MakeNotifierFds(bool nonBlockingRead) {
     if (pipe(fds) < 0) {
         throw std::system_error(errno, std::generic_category(), "pipe");
     }
-    for (int i = 0; i < 2; ++i) {
-        const int fd = fds[i];
+    for (int fd : fds) {
         const int status = fcntl(fd, F_GETFL);
         const int flags = fcntl(fd, F_GETFD);
-        const bool nonBlocking = i == 1 || nonBlockingRead;
         if (status < 0 || flags < 0 ||
-            (nonBlocking && fcntl(fd, F_SETFL, status | O_NONBLOCK) < 0) ||
+            fcntl(fd, F_SETFL, status | O_NONBLOCK) < 0 ||
             fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0)
         {
             const int error = errno;

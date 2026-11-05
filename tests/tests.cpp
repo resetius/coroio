@@ -2543,14 +2543,10 @@ void test_notifier_cancel_ready_from_timer(void**) {
     assert_false(wait.has_value());
 
     auto next = notifier.Wait();
-    if constexpr (kDriven<TPoller>) {
-        // The cancelled read may already have consumed the signal.
-        notifier.Notify();
-        Complete(loop, next);
-    } else {
+    if constexpr (!kDriven<TPoller>) {
         assert_true(next.done());
-        next.await_resume();
     }
+    Complete(loop, next);
     loop.Step();
 }
 
@@ -2564,21 +2560,61 @@ void test_notifier_cancel_collected_event(void**) {
     loop.Poller().Poll();
     wait.reset();
 
-    if constexpr (kDriven<TPoller>) {
-        // The cancelled read may already have consumed the signal.
-        auto next = notifier.Wait();
-        notifier.Notify();
-        Complete(loop, next);
-        return;
-    }
     auto next = notifier.Wait();
-    assert_true(next.done());
-    next.await_resume();
+    if constexpr (!kDriven<TPoller>) {
+        assert_true(next.done());
+    }
+    Complete(loop, next);
     auto pending = notifier.Wait();
     loop.Poller().WakeupReadyHandles();
     assert_false(pending.done());
     notifier.Notify();
     Complete(loop, pending);
+}
+
+template<typename TPoller>
+void test_notifier_cancel_retains_signal(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TNotifier notifier(loop.Poller());
+    std::optional<TFuture<void>> wait{notifier.Wait()};
+    notifier.Notify();
+    loop.Poller().Poll();
+    wait.reset();
+    // No new Notify(): the signal sent before the cancel must still be delivered.
+    auto next = notifier.Wait();
+    Complete(loop, next);
+}
+
+int CountOpenFds() {
+    int count = 0;
+    for (int fd = 0; fd < 1024; ++fd) {
+        if (fcntl(fd, F_GETFD) >= 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+template<typename TPoller>
+void test_notifier_closes_descriptors(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    const int before = CountOpenFds();
+    for (int mode = 0; mode < 3; ++mode) {
+        {
+            TNotifier notifier(loop.Poller());
+            if (mode > 0) {
+                auto wait = notifier.Wait();
+                if (mode == 2) {
+                    notifier.Notify();
+                    loop.Step();
+                }
+            }
+        }
+        loop.Step();
+        assert_int_equal(CountOpenFds(), before);
+    }
 }
 
 template<typename TPoller>
@@ -3305,6 +3341,8 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_notifier_cancel_wait);
     ADD_TEST(my_unit_poller, test_notifier_cancel_ready_from_timer);
     ADD_TEST(my_unit_poller, test_notifier_cancel_collected_event);
+    ADD_TEST(my_unit_poller, test_notifier_cancel_retains_signal);
+    ADD_TEST(my_unit_poller, test_notifier_closes_descriptors);
     ADD_TEST(my_unit_poller, test_notifier_destroy_before_poll);
     ADD_TEST(my_unit_test2, test_destroyed_waiter_not_resumed, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_reused_descriptor_wakes_new_waiter, TSelect, TPoll);

@@ -52,9 +52,8 @@ public:
 
 namespace NDetail {
 
-/// Creates the wakeup descriptors: {read, write}. Both are the same eventfd on Linux.
-/// The read end is non-blocking only for readiness pollers.
-std::array<int, 2> MakeNotifierFds(bool nonBlockingRead);
+/// Creates the non-blocking wakeup descriptors: {read, write}. Both are the same eventfd on Linux.
+std::array<int, 2> MakeNotifierFds();
 
 /// Writes one wakeup signal. Returns normally if a signal is already queued.
 void WriteNotifierSignal(int fd);
@@ -69,7 +68,7 @@ void WriteNotifierSignal(int fd);
  * one work item. Wait() re-arms the notifier before returning to the listener.
  *
  * @code
- * TNotifier notifier(poller);
+ * TNotifier notifier(loop.Poller());
  *
  * // Producer thread: publish work, then signal the listener.
  * notifier.Notify();
@@ -78,10 +77,12 @@ void WriteNotifierSignal(int fd);
  * co_await notifier.Wait();
  * @endcode
  *
+ * Code that must not depend on the poller type holds an INotifier&.
+ *
  * @tparam TPoller The poller type of the listener's event loop; deduced from the constructor argument.
  *
  * @note Linux uses eventfd; other POSIX platforms use a non-blocking pipe.
- *       Works with every poller that has a file handle: epoll, kqueue, poll, select, and uring.
+ *       Works with every POSIX poller: epoll, kqueue, poll, select, and uring.
  * @note The poller must outlive the notifier. Stop producers and destroy or
  *       complete all waits before destroying the notifier.
  */
@@ -92,8 +93,7 @@ class TNotifier final: public INotifier {
 public:
     /// Creates a notifier bound to the listener's event-loop poller.
     explicit TNotifier(TPoller& poller)
-        : TNotifier(poller, NDetail::MakeNotifierFds(
-            std::is_same_v<TFileHandle, NNet::TFileHandle>))
+        : TNotifier(poller, NDetail::MakeNotifierFds())
     { }
 
     ~TNotifier() override {
@@ -130,9 +130,12 @@ public:
                 Owner.Waiting_ = false;
                 if constexpr (!std::is_same_v<TFileHandle, NNet::TFileHandle>) {
                     // A cancelled driven read may have consumed the signal already;
-                    // allow the next Notify() to write again.
-                    if (!Completed) {
-                        Owner.Pending_.store(false, std::memory_order_release);
+                    // signal again so the notification is retained. Worst case is a spurious wakeup.
+                    if (!Completed && Owner.Pending_.load(std::memory_order_acquire)) {
+                        try {
+                            NDetail::WriteNotifierSignal(Owner.WriteFd_);
+                        } catch (...) {
+                        }
                     }
                 }
             }
