@@ -590,7 +590,7 @@ protected:
  * @brief Socket type driven by the poller's implementation.
  *
  * This class is used when socket operations (read, write, connect, etc.) are defined
- * by the poller—in other words, when these operations depend on the underlying poller
+ * by the poller, in other words, when these operations depend on the underlying poller
  * (e.g. for high-performance I/O using uring or IOCP).
  *
  * Ordinary users should not worry about selecting the appropriate socket type.
