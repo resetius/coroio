@@ -148,7 +148,7 @@ private:
     };
 
     template<typename TPoller>
-    struct TPipeFileHandle : public ITypelessFileHandle {
+    struct TPipeFileHandle final : public ITypelessFileHandle {
         TPipeFileHandle(int fd, TPoller& poller)
             : Handle(fd, poller)
         { }
