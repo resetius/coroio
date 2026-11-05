@@ -1,6 +1,8 @@
 #ifdef __linux__
 #include "uring.hpp"
 
+#include <algorithm>
+
 #ifdef HAVE_URING
 
 namespace NNet {
@@ -17,7 +19,7 @@ TUring::TUring(int queueSize)
     if (EpollFd_ < 0) {
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
-    if ((err = io_uring_queue_init(queueSize, &Ring_, 0)) < 0) {
+    if ((err = io_uring_queue_init(std::max(queueSize, 2), &Ring_, 0)) < 0) { // a close takes two SQEs
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
 
@@ -39,6 +41,7 @@ TUring::TUring(int queueSize)
 }
 
 TUring::~TUring() {
+    io_uring_submit(&Ring_); // best effort: closes prepared by a Wait() that threw
     io_uring_queue_exit(&Ring_);
     close(RingFd_);
     close(EpollFd_);
@@ -88,7 +91,25 @@ void TUring::Cancel(int fd) {
     // io_uring_prep_cancel_fd(sqe, fd, 0);
     io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, nullptr, 0, 0);
     io_uring_sqe_set_data(sqe, nullptr);
-    sqe->cancel_flags = (1U << 1);
+    sqe->cancel_flags = IORING_ASYNC_CANCEL_FD | IORING_ASYNC_CANCEL_ALL;
+}
+
+void TUring::PrepClose(TEvent& change) {
+    if (io_uring_sq_space_left(&Ring_) < 2) {
+        Submit(); // never split the linked pair
+    }
+    // Cancel by fd (ALL: a reader and a writer) before the close releases the number.
+    // HARDLINK: the close must run even if the cancel fails, e.g. -EINVAL before 5.19.
+    io_uring_sqe* sqe = io_uring_get_sqe(&Ring_);
+    io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, change.Fd, nullptr, 0, 0);
+    sqe->cancel_flags = IORING_ASYNC_CANCEL_FD | IORING_ASYNC_CANCEL_ALL;
+    sqe->flags |= IOSQE_IO_HARDLINK;
+    io_uring_sqe_set_data(sqe, nullptr);
+    sqe = io_uring_get_sqe(&Ring_);
+    io_uring_prep_close(sqe, change.Fd);
+    io_uring_sqe_set_data(sqe, nullptr);
+    // Consumed: a Wait() rerun after a failed Submit() must not cancel the number again.
+    change.Type = 0;
 }
 
 void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
@@ -171,9 +192,16 @@ int TUring::Wait(timespec ts) {
     int err;
 
     for (auto& ev : Changes_) {
-        assert(ev.Type == (TEvent::READ|TEvent::WRITE|TEvent::RHUP));
+        assert(!ev.Type || (ev.Type & ~TEvent::CLOSE) == (TEvent::READ|TEvent::WRITE|TEvent::RHUP));
         assert(!ev.Handle);
-        Cancel(ev.Fd);
+        if (!ev.Type) {
+            continue; // a close already in the ring
+        }
+        if (ev.Type & TEvent::CLOSE) {
+            PrepClose(ev);
+        } else {
+            Cancel(ev.Fd);
+        }
     }
 
     Reset();

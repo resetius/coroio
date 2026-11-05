@@ -24,6 +24,10 @@
 
 namespace NNet {
 
+namespace NDetail {
+void CloseDescriptor(int fd, bool file); ///< TFileOps::close or TSockOps::close.
+} // namespace NDetail
+
 /**
  * @brief Backend-independent base for I/O pollers.
  *
@@ -44,6 +48,15 @@ public:
     /// Copying is disabled.
     TPollerBase(const TPollerBase& ) = delete;
     TPollerBase& operator=(const TPollerBase& ) = delete;
+
+    /// Closes what Close() queued and no Poll() applied.
+    ~TPollerBase() {
+        for (auto& change : Changes_) {
+            if (change.Type & TEvent::CLOSE) {
+                CloseDescriptor(change);
+            }
+        }
+    }
 
     /**
      * @brief Schedules a timer.
@@ -146,19 +159,24 @@ public:
      * @param fd The file descriptor.
      */
     void RemoveEvent(int fd) {
-        // Keep entries in place: Wakeup may be iterating them during cancellation.
-        for (auto& change : Changes_) {
-            if (change.Fd == fd) {
-                change.Handle = {};
-            }
-        }
-        for (auto& event : ReadyEvents_) {
-            if (event.Fd == fd) {
-                event.Handle = {};
-            }
-        }
-        MaxFd_ = std::max(MaxFd_, fd);
-        Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP, {}});
+        QueueRemoval(fd, 0);
+    }
+    /**
+     * @brief Closes @p fd in the next poll iteration.
+     *
+     * Does what RemoveEvent(int) does, and the next Poll() closes @p fd right after
+     * removing its registration, before it waits: an epoll registration would
+     * outlive close() while a fork or dup() keeps the file open, and a uring cancel
+     * after close() could hit a reused number. ~TPollerBase closes what is still
+     * queued. Until then @p fd stays open with whatever it holds, e.g. a listener's
+     * address: `co_await Yield()` before binding it again. A loop that closes many
+     * descriptors per iteration needs RLIMIT_NOFILE headroom for them.
+     *
+     * @param type TSockOps::CloseType or TFileOps::CloseType.
+     */
+    void Close(int fd, int type) {
+        assert(type == TEvent::CLOSE_SOCKET || type == TEvent::CLOSE_FILE);
+        QueueRemoval(fd, type);
     }
     /**
      * @brief Cancels the wait of a coroutine destroyed while suspended on @p fd.
@@ -286,12 +304,14 @@ public:
         * In that chain of calls, multiple new waits can be added before returning here,
         * so `Changes_` can increase by 2 (or potentially more) in a single wake-up cycle.
         */
-        if (!change.Handle) {
+        // Removed or closed since the event was collected.
+        if (!change.Handle || Removing(change.Fd)) {
             return;
         }
         auto index = Changes_.size();
         change.Handle.resume();
-        if (change.Fd >= 0) {
+        // A removal queued during the resume already removes everything.
+        if (change.Fd >= 0 && !Removing(change.Fd)) {
             bool matched = false;
             for (; index < Changes_.size() && !matched; index++) {
                 matched = Changes_[index].Match(change);
@@ -354,16 +374,21 @@ protected:
         return ts;
     }
     /**
-     * @brief Turns a cancellation queued by RemoveEvent(int, THandle) into a removal.
+     * @brief Resolves an element of Changes_ before the backend applies it.
      *
-     * Backends call it on every pending change before applying it; other
-     * changes are returned as is.
+     * A change queued before the last removal of its descriptor becomes empty (no
+     * type bits), except a close. A cancellation by RemoveEvent(int, THandle)
+     * becomes a removal of the directions still registered to its handle.
      *
-     * @param change A pending change.
-     * @param ev     The backend's current registrations for `change.Fd`.
-     * @return A removal of the directions still registered to the cancelled handle.
+     * @param ev The backend's current registrations for `change.Fd`.
      */
-    static TEvent ResolveCancel(const TEvent& change, const THandlePair& ev) {
+    TEvent Resolve(const TEvent& change, const THandlePair& ev) const {
+        assert(&change >= Changes_.data() && &change < Changes_.data() + Changes_.size());
+        if (!(change.Type & TEvent::CLOSE) && Removing(change.Fd)
+            && &change - Changes_.data() < Removal_[change.Fd])
+        {
+            return TEvent{change.Fd, 0, {}};
+        }
         if (change.Type != TEvent::CANCEL || !change.Handle) {
             return change;
         }
@@ -379,8 +404,18 @@ protected:
         }
         return TEvent{change.Fd, type, {}};
     }
+    /// Closes the descriptor of a close change and clears the close, so a Poll() that throws and runs again closes it once.
+    static void CloseDescriptor(TEvent& change) {
+        NDetail::CloseDescriptor(change.Fd, change.Type & TEvent::CLOSE_FILE);
+        change.Type &= ~TEvent::CLOSE;
+    }
     /// Clears the lists of ready events and pending changes.
     void Reset() {
+        for (const auto& change : Changes_) {
+            if (change.Fd >= 0 && change.Fd < static_cast<int>(Removal_.size())) {
+                Removal_[change.Fd] = -1;
+            }
+        }
         ReadyEvents_.clear();
         Changes_.clear();
         MaxFd_ = 0;
@@ -421,6 +456,22 @@ protected:
     unsigned LastFiredTimer_ = (unsigned)(-1); ///< ID of the last fired timer.
     std::chrono::milliseconds MaxDuration_ = std::chrono::milliseconds(100); ///< Maximum poll duration.
     timespec MaxDurationTs_ = GetMaxDuration(MaxDuration_); ///< Max duration represented as timespec.
+
+private:
+    void QueueRemoval(int fd, int close) {
+        assert(fd >= 0);
+        MaxFd_ = std::max(MaxFd_, fd);
+        if (fd >= static_cast<int>(Removal_.size())) {
+            Removal_.resize(fd + 1, -1);
+        }
+        Removal_[fd] = static_cast<int>(Changes_.size());
+        Changes_.emplace_back(TEvent{fd, TEvent::READ|TEvent::WRITE|TEvent::RHUP|close, {}});
+    }
+    bool Removing(int fd) const {
+        return fd >= 0 && fd < static_cast<int>(Removal_.size()) && Removal_[fd] >= 0;
+    }
+
+    std::vector<int> Removal_; ///< Per descriptor: index in Changes_ of its last removal in this batch, or -1.
 };
 
 } // namespace NNet

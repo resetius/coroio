@@ -15,8 +15,9 @@ namespace NNet {
  * - `ReadSome`  → child's stdout
  * - `ReadSomeErr` → child's stderr (unless `stderrToStdout = true`)
  *
- * Call `CloseWrite()` to send EOF to the child, then `AsyncWait()` (or the
- * blocking `Wait()`) to reap it.
+ * Call `CloseWrite()` to send EOF to the child, then `AsyncWait()` to reap it.
+ * The Close*() calls take effect in the poller's next iteration, so call the
+ * blocking `Wait()` only once the child's output was read to EOF.
  *
  * @code
  * TPipe pipe(poller, "/bin/cat", {});
@@ -74,8 +75,8 @@ public:
     /**
      * @brief Waits for the child process to exit and returns its exit status.
      *
-     * Blocks the calling thread (via `waitpid`). Call after the child has finished
-     * or after sending it a signal.
+     * Blocks the calling thread (via `waitpid`) without running the loop. Call after
+     * the child has finished or after sending it a signal; see the class description.
      *
      * Once it returns the child is reaped and `Pid()` returns `-1`.
      *

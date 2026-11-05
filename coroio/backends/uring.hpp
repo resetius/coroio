@@ -80,6 +80,7 @@ public:
      * @brief Constructs a TUring instance.
      *
      * @param queueSize The desired size of the io_uring submission queue (default is 256).
+     *                  At least 2: a close takes two linked entries.
      */
     TUring(int queueSize = 256);
     /// Destructor cleans up the io_uring and related resources.
@@ -216,6 +217,8 @@ private:
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
+    /// Queues a cancel by fd hard-linked to the close of a close change. Not named Close: it would hide TPollerBase::Close.
+    void PrepClose(TEvent& change);
     /// Points the SQE just obtained to @p op and records its position in the SQ.
     void SetData(io_uring_sqe* sqe, TOperation& op);
     /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.

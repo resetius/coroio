@@ -1345,6 +1345,8 @@ void test_any_pending_loser(void**) {
     assert_true(task.done());
     assert_int_equal(result, 1);
     assert_int_equal(resumed, 1);
+    // The poller closes the loser's descriptor in its next iteration.
+    loop.Step();
     assert_true(IsClosed(fds2[0]));
 
     // The loser's frame is gone; data arriving for it must not resume anything.
@@ -2236,6 +2238,75 @@ void test_uring_destroyed_queued_and_submitted_readers(void**) {
         close(peers[i]);
     }
 }
+
+template<typename TFile>
+TFuture<void> IoResult(TFile& file, bool write, char* buf, size_t size, int* result) {
+    try {
+        *result = write ? co_await file.WriteSome(buf, size) : co_await file.ReadSome(buf, size);
+    } catch (const std::system_error& ex) {
+        *result = -ex.code().value();
+    }
+}
+
+// Closing a socket cancels its pending read and write (CANCEL_ALL) before the
+// number is released, so a descriptor opened meanwhile keeps its read (#180).
+void test_uring_close_cancels_only_its_operations(void**) {
+    TLoop<TUring> loop;
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    int size = 4096;
+    assert_int_equal(setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)), 0);
+    auto handle = std::make_unique<TUring::TSocket>(fds[0], loop.Poller());
+    static char data[65536];
+    while (write(fds[0], data, sizeof(data)) > 0) { }
+    char bufs[2] = {0, 0};
+    int results[3] = {0, 0, 0};
+    auto reader = IoResult(*handle, false, &bufs[0], 1, &results[0]);
+    auto writer = IoResult(*handle, true, data, sizeof(data), &results[1]);
+    loop.Step();
+    handle.reset();
+    int next[2];
+    assert_int_equal(pipe(next), 0);
+    TUring::TFileHandle nextHandle(next[0], loop.Poller());
+    auto nextRead = IoResult(nextHandle, false, &bufs[1], 1, &results[2]);
+    loop.Step();
+    assert_int_equal(write(next[1], "n", 1), 1);
+    StepUntilDone(loop, nextRead);
+    assert_int_equal(results[2], 1);
+    StepUntilDone(loop, reader);
+    StepUntilDone(loop, writer);
+    assert_int_equal(results[0], -ECANCELED);
+    assert_int_equal(results[1], -ECANCELED);
+    close(fds[1]);
+    close(next[1]);
+}
+
+// The two linked SQEs of a close are never split, even on the smallest queue.
+void test_uring_closes_on_small_queues(void**) {
+    for (int size : {1, 8}) {
+        TUring uring(size);
+        int fds[20][2];
+        std::vector<std::unique_ptr<TUring::TFileHandle>> handles;
+        for (auto& pair : fds) {
+            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+            handles.push_back(std::make_unique<TUring::TFileHandle>(pair[0], uring));
+        }
+        char buf[1] = {0};
+        int result = 0;
+        auto read = IoResult(*handles[0], false, buf, 1, &result);
+        uring.Wait({0, 0});
+        handles.clear();
+        for (int i = 0; i < 100 && !read.done(); i++) {
+            uring.Wait({0, 1000000});
+            uring.WakeupReadyHandles();
+        }
+        assert_int_equal(result, -ECANCELED);
+        for (auto& pair : fds) {
+            assert_true(IsClosed(pair[0]));
+            close(pair[1]);
+        }
+    }
+}
 #endif
 
 void test_base64(void**) {
@@ -2740,6 +2811,8 @@ void test_reused_descriptor_wakes_new_waiter(void**) {
     // shared: the old description stays open in another process, like a forked child
     for (bool shared : {false, true}) {
         for (bool registered : {false, true}) {
+            // Closes the descriptors of the previous round, so that the number below is reused.
+            loop.Step();
             int oldFds[2];
             assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds), 0);
             auto oldHandle = std::make_unique<TFileHandle>(oldFds[0], loop.Poller());
@@ -2751,6 +2824,8 @@ void test_reused_descriptor_wakes_new_waiter(void**) {
             }
             int kept = shared ? fcntl(oldFds[0], F_DUPFD, 64) : -1;
             oldHandle.reset();
+            // The poller closes the descriptor in its next iteration.
+            loop.Step();
 
             int newFds[2];
             assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
@@ -2779,6 +2854,132 @@ void test_reused_descriptor_wakes_new_waiter(void**) {
         }
     }
 }
+
+// The file stays open in a dup (as in a forked child) after the handle is
+// closed: its epoll registration must not keep firing (#150).
+template<typename TPoller>
+void test_close_unregisters_shared_file(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    auto handle = std::make_unique<TFileHandle>(fds[0], loop.Poller());
+    char byte = 0;
+    auto wait = ReadByte(*handle, &byte);
+    loop.Step();
+    int holder = dup(fds[0]);
+    assert_true(holder >= 0);
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    handle.reset();
+    loop.Step();
+    // With nothing registered, each step waits for the whole 10 ms timeout.
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
+    int steps = 0;
+    for (auto deadline = TClock::now() + std::chrono::milliseconds(100); TClock::now() < deadline; steps++) {
+        loop.Step();
+    }
+    close(holder);
+    close(fds[1]);
+    assert_false(wait.done());
+    assert_true(steps < 50);
+}
+
+template<typename TFileHandle>
+TFuture<void> WaitAndClose(std::unique_ptr<TFileHandle>& handle, bool write, int* resumed) {
+    char byte = 'w';
+    if (write) {
+        co_await handle->WriteSome(&byte, 1);
+    } else {
+        co_await handle->ReadSome(&byte, 1);
+    }
+    ++*resumed;
+    handle.reset();
+}
+
+// Events collected for a descriptor are dropped once it is closed: by the first
+// of two ready waiters to be woken, or by a timer, which fires in Poll() after
+// the events are collected.
+template<typename TPoller>
+void test_close_skips_collected_events(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    for (bool timer : {false, true}) {
+        TLoop<TPoller> loop;
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+        int fds[2];
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        SetNonBlocking(fds[1]);
+        auto handle = std::make_unique<TFileHandle>(fds[0], loop.Poller());
+        FillSendBuffer(fds[0]);
+        int resumed = 0;
+        auto reader = WaitAndClose(handle, false, &resumed);
+        auto writer = WaitAndClose(handle, true, &resumed);
+        loop.Step();
+        MakeReady(false, fds[1]);
+        MakeReady(true, fds[1]);
+        std::optional<TFuture<void>> closer;
+        if (timer) {
+            closer.emplace([](TPoller& poller, std::unique_ptr<TFileHandle>& handle) -> TFuture<void> {
+                co_await poller.Yield();
+                handle.reset();
+            }(loop.Poller(), handle));
+        }
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        assert_int_equal(resumed, timer ? 0 : 1);
+        assert_true(IsClosed(fds[0]));
+        close(fds[1]);
+    }
+}
+
+// A closed listener's address is released by the next iteration: rebinding
+// it before co_await Yield() fails with EADDRINUSE, after it works.
+template<typename TPoller>
+void test_rebind_after_close_and_yield(void**) {
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    auto task = [](TPoller& poller, TAddress address) -> TFuture<void> {
+        auto listener = std::make_unique<typename TPoller::TSocket>(poller, address.Domain());
+        listener->Bind(address);
+        listener->Listen();
+        listener.reset();
+        co_await poller.Yield();
+        typename TPoller::TSocket next(poller, address.Domain());
+        next.Bind(address);
+        next.Listen();
+    }(loop.Poller(), address);
+    StepUntilDone(loop, task);
+}
+
+#ifdef __linux__
+// A close applied before Poll() throws is not applied again once its number is reused.
+void test_epoll_close_applied_once_after_throw(void**) {
+    TLoop<TEPoll> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+    char path[] = "/tmp/coroio_close_XXXXXX";
+    int file = mkstemp(path);
+    unlink(path);
+    int fds[2], again[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    loop.Poller().Close(fds[0], TEvent::CLOSE_SOCKET);
+    loop.Poller().AddRead(file, std::noop_coroutine()); // EPOLL_CTL_ADD fails with EPERM, after the close
+    bool threw = false;
+    try {
+        loop.Step();
+    } catch (const std::system_error&) {
+        threw = true;
+    }
+    assert_true(threw);
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, again), 0);
+    assert_int_equal(again[0], fds[0]);
+    loop.Step();
+    assert_false(IsClosed(again[0]));
+    for (int fd : {again[0], again[1], fds[1], file}) {
+        close(fd);
+    }
+}
+#endif
 
 template<typename TSocket>
 TFuture<void> AcceptOne(TSocket& listener) {
@@ -3283,6 +3484,44 @@ void test_short_connections(void**) {
 } // namespace
 #endif // _WIN32
 
+namespace {
+
+bool IsSocketClosed(int fd) {
+#ifdef _WIN32
+    int type = 0;
+    int len = sizeof(type);
+    return getsockopt(static_cast<SOCKET>(fd), SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &len) != 0;
+#else
+    return fcntl(fd, F_GETFD) < 0;
+#endif
+}
+
+// The poller closes a closed socket in its next iteration, also with a removal
+// queued after the close, or else in its destructor.
+template<typename TPoller>
+void test_close_applied_by_poll_and_destructor(void**) {
+    for (bool step : {true, false}) {
+        int fd = -1;
+        {
+            TLoop<TPoller> loop;
+            loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+            typename TPoller::TSocket socket(loop.Poller(), AF_INET);
+            fd = socket.Fd();
+            socket.Close();
+            if (step) {
+                loop.Poller().RemoveEvent(fd);
+                loop.Step();
+                assert_true(IsSocketClosed(fd));
+            } else {
+                assert_false(IsSocketClosed(fd));
+            }
+        }
+        assert_true(IsSocketClosed(fd));
+    }
+}
+
+} // namespace
+
 int main(int argc, char* argv[]) {
     TInitializer init;
 
@@ -3307,8 +3546,11 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_notifier_cancel_retains_signal);
     ADD_TEST(my_unit_poller, test_notifier_closes_descriptors);
     ADD_TEST(my_unit_poller, test_notifier_destroy_before_poll);
+    ADD_TEST(my_unit_poller, test_rebind_after_close_and_yield);
     ADD_TEST(my_unit_test2, test_destroyed_waiter_not_resumed, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_reused_descriptor_wakes_new_waiter, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_close_unregisters_shared_file, TSelect, TPoll);
+    ADD_TEST(my_unit_test2, test_close_skips_collected_events, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_reuse_after_closing_several, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_destroyed_accept_and_connect_not_resumed, TSelect, TPoll);
     ADD_TEST(my_unit_test2, test_hangup_wakes_reader_and_writer_once, TSelect, TPoll);
@@ -3317,6 +3559,9 @@ int main(int argc, char* argv[]) {
 #ifdef __linux__
     ADD_TEST(my_unit_test, test_destroyed_waiter_not_resumed, TEPoll);
     ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TEPoll);
+    ADD_TEST(my_unit_test, test_close_unregisters_shared_file, TEPoll);
+    ADD_TEST(my_unit_test, test_close_skips_collected_events, TEPoll);
+    ADD_TEST(cmocka_unit_test, test_epoll_close_applied_once_after_throw);
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TEPoll);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TEPoll);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TEPoll);
@@ -3331,6 +3576,8 @@ int main(int argc, char* argv[]) {
 #elif defined(__APPLE__) || defined(__FreeBSD__)
     ADD_TEST(my_unit_test, test_destroyed_waiter_not_resumed, TKqueue);
     ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TKqueue);
+    ADD_TEST(my_unit_test, test_close_unregisters_shared_file, TKqueue);
+    ADD_TEST(my_unit_test, test_close_skips_collected_events, TKqueue);
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TKqueue);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TKqueue);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TKqueue);
@@ -3379,6 +3626,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_futures_any_result);
     ADD_TEST(my_unit_poller, test_futures_any_same_wakeup);
     ADD_TEST(my_unit_poller, test_futures_all);
+    ADD_TEST(my_unit_poller, test_close_applied_by_poll_and_destructor);
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_cloexec);
     ADD_TEST(my_unit_poller, test_any_simultaneous);
@@ -3421,6 +3669,8 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TUring);
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TUring);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_queued_and_submitted_readers);
+    ADD_TEST(cmocka_unit_test, test_uring_close_cancels_only_its_operations);
+    ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
 #endif
 #endif
 #ifdef _WIN32

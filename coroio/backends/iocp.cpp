@@ -228,6 +228,12 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
 
 void TIOCp::Poll()
 {
+    for (auto& change : Changes_) {
+        if (change.Type & TEvent::CLOSE) {
+            // closesocket() aborts the pending overlapped operations, whose packets still reach the port.
+            CloseDescriptor(change);
+        }
+    }
     Reset();
     // Completions reaped by Cancel() or not delivered yet are ready already: do not block.
     DWORD timeout = Completions_.Carry() ? 0 : GetTimeoutMs();
