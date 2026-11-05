@@ -1227,6 +1227,136 @@ void test_futures_all(void**) {
     assert_true(ok == 1);
 }
 
+#ifndef _WIN32
+namespace {
+
+template<typename TPoller>
+TFuture<int> ReadByteCount(TPoller& poller, int fd, int* resumed) {
+    typename TPoller::TFileHandle fh(fd, poller);
+    char buf[1];
+    int n = co_await fh.ReadSomeYield(buf, 1);
+    ++*resumed;
+    co_return n;
+}
+
+bool IsClosed(int fd) {
+    return fcntl(fd, F_GETFD) < 0 && errno == EBADF;
+}
+
+} // namespace
+
+template<typename TPoller>
+void test_any_simultaneous(void**) {
+    TLoop<TPoller> loop;
+
+    int fds1[2], fds2[2];
+    assert_int_equal(pipe(fds1), 0);
+    assert_int_equal(pipe(fds2), 0);
+    assert_int_equal(write(fds1[1], "x", 1), 1);
+    assert_int_equal(write(fds2[1], "x", 1), 1);
+
+    int resumed = 0;
+    int result = 0;
+    TFuture<void> task = [](TPoller& poller, int* fds1, int* fds2, int* resumed, int* result) -> TFuture<void> {
+        std::vector<TFuture<int>> futures;
+        futures.push_back(ReadByteCount(poller, fds1[0], resumed));
+        futures.push_back(ReadByteCount(poller, fds2[0], resumed));
+        *result = co_await Any(std::move(futures));
+    }(loop.Poller(), fds1, fds2, &resumed, &result);
+
+    while (!task.done()) {
+        loop.Step();
+    }
+    assert_int_equal(result, 1);
+
+    // The loser must not be resumed by events left over from the winning iteration.
+    loop.Step();
+
+    assert_true(IsClosed(fds1[0]));
+    assert_true(IsClosed(fds2[0]));
+    close(fds1[1]);
+    close(fds2[1]);
+}
+
+template<typename TPoller>
+void test_all_simultaneous(void**) {
+    TLoop<TPoller> loop;
+
+    int fds1[2], fds2[2];
+    assert_int_equal(pipe(fds1), 0);
+    assert_int_equal(pipe(fds2), 0);
+    assert_int_equal(write(fds1[1], "a", 1), 1);
+    assert_int_equal(write(fds2[1], "b", 1), 1);
+
+    std::vector<int> results;
+    TFuture<void> task = [](TPoller& poller, int* fds1, int* fds2, std::vector<int>* results) -> TFuture<void> {
+        auto read_char = [](TPoller& poller, int fd) -> TFuture<int> {
+            typename TPoller::TFileHandle fh(fd, poller);
+            char buf[1];
+            co_await fh.ReadSomeYield(buf, 1);
+            co_return buf[0];
+        };
+        std::vector<TFuture<int>> futures;
+        futures.push_back(read_char(poller, fds1[0]));
+        futures.push_back(read_char(poller, fds2[0]));
+        *results = co_await All(std::move(futures));
+    }(loop.Poller(), fds1, fds2, &results);
+
+    while (!task.done()) {
+        loop.Step();
+    }
+    assert_true(results == (std::vector<int>{'a', 'b'}));
+
+    loop.Step();
+
+    assert_true(IsClosed(fds1[0]));
+    assert_true(IsClosed(fds2[0]));
+    close(fds1[1]);
+    close(fds2[1]);
+}
+
+template<typename TPoller>
+void test_any_pending_loser(void**) {
+    TLoop<TPoller> loop;
+
+    int fds1[2], fds2[2];
+    assert_int_equal(pipe(fds1), 0);
+    assert_int_equal(pipe(fds2), 0);
+    assert_int_equal(write(fds1[1], "x", 1), 1);
+    // Keeps the pipe open after the loser closes its descriptor.
+    int keep = dup(fds2[0]);
+    assert_true(keep >= 0);
+
+    int resumed = 0;
+    int result = 0;
+    TFuture<void> task = [](TPoller& poller, int* fds1, int* fds2, int* resumed, int* result) -> TFuture<void> {
+        std::vector<TFuture<int>> futures;
+        futures.push_back(ReadByteCount(poller, fds1[0], resumed));
+        futures.push_back(ReadByteCount(poller, fds2[0], resumed));
+        *result = co_await Any(std::move(futures));
+    }(loop.Poller(), fds1, fds2, &resumed, &result);
+
+    while (!task.done()) {
+        loop.Step();
+    }
+    assert_int_equal(result, 1);
+    assert_int_equal(resumed, 1);
+    assert_true(IsClosed(fds2[0]));
+
+    // The loser's frame is gone; data arriving for it must not resume anything.
+    assert_int_equal(write(fds2[1], "y", 1), 1);
+    for (int i = 0; i < 3; ++i) {
+        loop.Step();
+    }
+    assert_int_equal(resumed, 1);
+
+    assert_true(IsClosed(fds1[0]));
+    close(keep);
+    close(fds1[1]);
+    close(fds2[1]);
+}
+#endif // _WIN32
+
 template<typename TPoller>
 void test_remote_disconnect(void**) {
     using TLoop = TLoop<TPoller>;
@@ -3095,6 +3225,9 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_futures_all);
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_cloexec);
+    ADD_TEST(my_unit_poller, test_any_simultaneous);
+    ADD_TEST(my_unit_poller, test_all_simultaneous);
+    ADD_TEST(my_unit_poller, test_any_pending_loser);
 #ifdef HAVE_OPENSSL
     ADD_TEST(my_unit_poller, test_read_write_full_ssl);
 #endif
