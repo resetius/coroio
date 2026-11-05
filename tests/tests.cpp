@@ -134,7 +134,7 @@ void test_accept(void**) {
     TFuture<void> h2 = [](TSocket* socket, TSocket* clientSocket) -> TFuture<void>
     {
         try {
-            *clientSocket = std::move(co_await socket->Accept());
+            *clientSocket = std::move((co_await socket->Accept()).value());
         } catch (const std::exception& ex) {
             std::cerr << "Error on accept: " << ex.what() << std::endl;
         }
@@ -177,7 +177,7 @@ void test_cloexec(void**) {
     TFuture<void> h2 = [](TSocket* socket, TSocket* accepted) -> TFuture<void>
     {
         try {
-            *accepted = std::move(co_await socket->Accept());
+            *accepted = std::move((co_await socket->Accept()).value());
         } catch (const std::exception& ex) {
             std::cerr << "Error on accept: " << ex.what() << std::endl;
         }
@@ -225,7 +225,7 @@ void test_write_after_connect(void**) {
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         try {
-            TSocket clientSocket = std::move(co_await socket->Accept());
+            TSocket clientSocket = std::move((co_await socket->Accept()).value());
             co_await clientSocket.ReadSome(buf, size);
         } catch (const std::exception& ex) {
             std::cerr << "Error2: " << ex.what() << "\n";
@@ -269,7 +269,7 @@ void test_write_after_accept(void**) {
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
         try {
-            TSocket clientSocket = std::move(co_await socket->Accept());
+            TSocket clientSocket = std::move((co_await socket->Accept()).value());
             auto s = co_await clientSocket.WriteSome(buf, size);
         } catch (const std::exception& ex) {
             std::cerr << "Error2: " << ex.what() << "\n";
@@ -308,7 +308,7 @@ void test_read_write_same_socket(void**) {
 
     TFuture<void> h2 = [](TSocket* socket, char* buf, int size) -> TFuture<void>
     {
-        TSocket clientSocket = std::move(co_await socket->Accept());
+        TSocket clientSocket = std::move((co_await socket->Accept()).value());
         char b[128] = "Hello from server";
         co_await clientSocket.WriteSomeYield(b, sizeof(b));
         co_await clientSocket.ReadSomeYield(buf, size);
@@ -641,7 +641,7 @@ void test_read_write_full(void**) {
     std::vector<char> received(1024*1024);
     TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         co_await TByteReader(client).Read(received.data(), received.size());
         co_return;
     }(socket, received);
@@ -685,7 +685,7 @@ line9
     std::vector<std::string> received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         auto reader = TByteReader(client);
         auto line1 = co_await reader.ReadUntil("\n");
         auto line2 = co_await reader.ReadUntil("\n");
@@ -744,7 +744,7 @@ void test_read_write_struct(void**) {
     Test received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         received = co_await TStructReader<Test, TSocket>(client).Read();
         co_return;
     }(socket, received);
@@ -791,7 +791,7 @@ void test_read_write_lines(void**) {
     std::vector<std::string> received;
     TFuture<void> h2 = [](TSocket& server, auto& received) -> TFuture<void>
     {
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         auto reader = TLineReader<TSocket>(client, 16);
         TLine line;
         do {
@@ -1035,7 +1035,7 @@ void test_read_write_full_ssl(void**) {
     TFuture<void> h2 = [](TSocket& server, std::vector<char>& received) -> TFuture<void>
     {
         TSslContext ctx = TSslContext::ServerFromMem(testMemCert, testMemKey);
-        auto client = std::move(co_await server.Accept());
+        auto client = std::move((co_await server.Accept()).value());
         auto sslClient = TSslSocket(std::move(client), ctx);
         co_await sslClient.AcceptHandshake();
         co_await TByteReader(sslClient).Read(received.data(), received.size());
@@ -1386,7 +1386,7 @@ void test_remote_disconnect(void**) {
 
     TFuture<void> h2 = [](TPoller& poller, TSocket* socket, bool* closed) -> TFuture<void>
     {
-        auto clientSocket = co_await socket->Accept();
+        auto clientSocket = (co_await socket->Accept()).value();
         // Monitor() must not complete while the connection is open.
         co_await poller.Sleep(std::chrono::milliseconds(100));
         *closed = true;
@@ -1619,7 +1619,7 @@ void StepUntilDone(TLoop<TPoller>& loop, TFuture<void>& future) {
 
 template<typename TSocket>
 TFuture<void> AcceptInto(TSocket& listener, std::optional<TSocket>* accepted) {
-    accepted->emplace(co_await listener.Accept());
+    accepted->emplace((co_await listener.Accept()).value());
 }
 
 template<typename TFile>
@@ -1906,8 +1906,8 @@ void test_driven_accept_not_listening(void**) {
     bool failed = false;
     auto accept = [](TSocket& socket, std::optional<TSocket>* accepted, bool* failed) -> TFuture<void> {
         try {
-            accepted->emplace(co_await socket.Accept());
-        } catch (const std::system_error&) {
+            accepted->emplace((co_await socket.Accept()).value());
+        } catch (const std::exception&) {
             *failed = true;
         }
     }(socket, &accepted, &failed);
@@ -3167,7 +3167,7 @@ void test_destroyed_monitor_not_resumed(void**) {
 
 template<typename TSocket>
 TFuture<void> AcceptAfterReset(TSocket& listener, int* resets, int* accepted) {
-    auto reset = co_await listener.Accept();
+    auto reset = (co_await listener.Accept()).value();
     char byte;
     try {
         co_await reset.ReadSome(&byte, 1);
@@ -3245,7 +3245,7 @@ TFuture<void> AcceptRequests(
     std::deque<int>& inherited)
 {
     while (true) {
-        auto client = co_await listener.Accept();
+        auto client = (co_await listener.Accept()).value();
         // A child forked meanwhile holds the descriptor until it exits.
         inherited.push_back(dup(client.Fd()));
         auto& handler = handlers.emplace_back();

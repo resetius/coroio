@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #endif
 
+#include <expected>
 #include <optional>
 #include <variant>
 
@@ -513,9 +514,14 @@ public:
      * This awaitable suspends until a new connection is ready on the socket and then returns
      * a new TSocket object representing the client connection.
      *
-     * @return An awaitable object that yields a TSocket for the new connection.
+     * Errors of accept() are returned, not thrown: a server must keep accepting after
+     * them. After a transient one, see IsTransientAcceptError(), accept again at once.
+     * After others, e.g. EMFILE, the socket may stay readable: pause first.
      *
-     * @throws std::system_error if accept() fails.
+     * @return An awaitable object that yields a TSocket for the new connection, or the
+     *         error code of accept() (errno; WSAGetLastError() on Windows).
+     *
+     * @throws std::system_error with EBADF at @c co_await if the socket is closed.
      */
     auto Accept() {
         struct TAwaitable {
@@ -524,12 +530,17 @@ public:
                     poller->RemoveEvent(fd, handle);
                 }
             }
-            bool await_ready() const { return false; }
+            bool await_ready() const {
+                if (fd < 0) {
+                    throw std::system_error(EBADF, std::generic_category(), "accept");
+                }
+                return false;
+            }
             void await_suspend(std::coroutine_handle<> h) {
                 handle = h;
                 poller->AddRead(fd, h);
             }
-            TSocket await_resume() {
+            std::expected<TSocket, int> await_resume() {
                 handle = {};
                 char clientaddr[sizeof(sockaddr_in6)];
                 socklen_t len = static_cast<socklen_t>(sizeof(sockaddr_in6));
@@ -540,7 +551,16 @@ public:
                 int clientfd = accept(fd, reinterpret_cast<sockaddr*>(&clientaddr[0]), &len);
 #endif
                 if (clientfd < 0) {
-                    throw std::system_error(errno, std::generic_category(), "accept");
+#ifdef _WIN32
+                    // A closed socket is caught in await_ready.
+                    int err = WSAGetLastError();
+#else
+                    int err = errno;
+                    if (err == EBADF) {
+                        throw std::system_error(err, std::generic_category(), "accept");
+                    }
+#endif
+                    return std::unexpected(err);
                 }
 #if !defined(SOCK_CLOEXEC) && !defined(_WIN32)
                 if (fcntl(clientfd, F_SETFD, FD_CLOEXEC) < 0) {
@@ -656,9 +676,10 @@ public:
      * @brief Asynchronously accepts an incoming connection.
      *
      * Returns an awaitable object that, upon completion, yields a new TPollerDrivenSocket
-     * for the accepted connection.
+     * for the accepted connection. Errors are handled as in TSocket::Accept().
      *
-     * @return An awaitable yielding the accepted TPollerDrivenSocket.
+     * @return An awaitable yielding the accepted TPollerDrivenSocket, or the error code.
+     * @throws std::system_error with EBADF at @c co_await if the socket is closed.
      */
     auto Accept() {
         struct TAwaitable {
@@ -675,10 +696,13 @@ public:
                 poller->Accept(fd, reinterpret_cast<sockaddr*>(&addr[0]), &len, op);
             }
 
-            TPollerDrivenSocket<T> await_resume() {
+            std::expected<TPollerDrivenSocket<T>, int> await_resume() {
                 int clientfd = op.Result;
+                if (clientfd == -EBADF) {
+                    throw std::system_error(EBADF, std::generic_category(), "accept");
+                }
                 if (clientfd < 0) {
-                    throw std::system_error(-clientfd, std::generic_category(), "accept");
+                    return std::unexpected(-clientfd);
                 }
 
                 return TPollerDrivenSocket<T>{TAddress{reinterpret_cast<sockaddr*>(&addr[0]), len}, clientfd, *poller};

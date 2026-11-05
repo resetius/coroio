@@ -971,7 +971,7 @@ void test_node_reconnects_to_dead_peer(void**) {
         TPoller::TSocket listener(poller, addr.Domain());
         listener.Bind(addr);
         listener.Listen();
-        auto client = co_await listener.Accept();
+        auto client = (co_await listener.Accept()).value();
         TByteReader reader(client);
         co_await reader.Read(&received, sizeof(received));
         done = true;

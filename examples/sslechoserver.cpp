@@ -60,7 +60,7 @@ TVoidTask server(TPoller& poller, TAddress address, int buffer_size)
     socket.Listen();
 
     while (true) {
-        auto client = std::move(co_await socket.Accept());
+        auto client = std::move((co_await socket.Accept()).value());
         if constexpr (debug) {
             std::cerr << "Accepted\n";
         }
