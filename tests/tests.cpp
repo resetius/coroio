@@ -3175,14 +3175,18 @@ void test_accept_reset_connection(void**) {
     int resets = 0;
     int accepted = 0;
     auto accept = AcceptAfterReset(listener, &resets, &accepted);
+    for (int i = 0; i < 10 && !accept.done(); i++) {
+        loop.Step();
+    }
+    close(next);
+    assert_true(accept.done());
     try {
-        Complete(loop, accept);
+        accept.await_resume();
     } catch (const std::exception& ex) {
         fail_msg("%s", ex.what());
     }
     assert_int_equal(resets, 1);
     assert_int_equal(accepted, 1);
-    close(next);
 }
 
 struct TShortRequest {
