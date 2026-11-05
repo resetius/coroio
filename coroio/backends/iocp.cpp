@@ -23,10 +23,15 @@ TIOCp::~TIOCp()
 }
 
 void TIOCp::Prepare(TOperation& op, int fd) {
-    THandle handle = op.Handle;
-    op = TOperation();
-    op.Handle = handle;
+    static_cast<OVERLAPPED&>(op) = OVERLAPPED();
+    op.Result = 0;
+    op.Index = 0;
+    op.Addr = nullptr;
+    op.Len = nullptr;
+    op.Sock = -1;
     op.Fd = fd;
+    op.Connect = false;
+    op.File = false;
 }
 
 void TIOCp::Throw(TOperation& op, int err, const std::error_category& category, const char* what) {
