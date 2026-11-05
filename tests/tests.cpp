@@ -2151,6 +2151,8 @@ void test_monitor_after_hangup(void**) {
     // The second wait starts when the first one is resumed.
     auto twice = CountHangups(handle, 2, &hangups);
     loop.Step();
+    loop.Step();
+    assert_int_equal(hangups, 0);
     assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
     Complete(loop, twice);
     assert_int_equal(hangups, 2);
