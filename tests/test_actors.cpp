@@ -794,6 +794,42 @@ void test_envelope_reader_microbenchmark(void** arg) {
     std::cerr << "V2 Push: " << elapsedV2 << " ms, Pop: " << elapsedV2Pop << " ms\n";
 }
 
+void test_envelope_reader_v2_recycled_chunk(void**) {
+    constexpr size_t payloadSize = 32;
+    // A chunk holds exactly one header and one payload
+    TZeroCopyEnvelopeReaderV2 reader(sizeof(THeader) + payloadSize, 16);
+
+    auto feed = [&](int id) {
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(id),
+            .Size = payloadSize,
+        };
+        char buf[sizeof(THeader) + payloadSize];
+        std::memset(buf, 'x', sizeof(buf));
+        std::memcpy(buf, &header, sizeof(THeader));
+        reader.Push(buf, sizeof(buf));
+    };
+
+    feed(1);
+    auto e1 = reader.Pop();
+    assert_true(e1.has_value());
+    feed(2);
+    assert_true(reader.UsedChunksCount() == 1);
+    e1.reset();
+    assert_true(reader.UsedChunksCount() == 0);
+    feed(3);
+    auto e2 = reader.Pop();
+    assert_true(e2.has_value());
+    auto e3 = reader.Pop();
+    assert_true(e3.has_value());
+    assert_true(e3->MessageId == 3);
+    e3.reset();
+    e2.reset();
+    assert_true(reader.UsedChunksCount() == 0);
+}
+
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
     int Value;
 
@@ -864,6 +900,29 @@ void test_node_reconnects_to_dead_peer(void**) {
     assert_int_equal(received.Size, 0);
 }
 
+void test_intrusive_list_stale_tag(void**) {
+    using TList = TIntrusiveList<TMyNode>;
+    TList first(1);
+    TList second(2);
+
+    first.PushBack(std::make_unique<TMyNode>(0));
+    first.PushBack(std::make_unique<TMyNode>(1));
+
+    auto erased = first.Erase(first.Front());
+    assert_true(erased->Tag == 0);
+    auto popped = first.PopFront();
+    assert_true(popped->Tag == 0);
+
+    TMyNode* erasedPtr = erased.get();
+    TMyNode* poppedPtr = popped.get();
+    second.PushBack(std::move(erased));
+    second.PushBack(std::move(popped));
+
+    assert_true(first.Erase(erasedPtr) == nullptr);
+    assert_true(first.Erase(poppedPtr) == nullptr);
+    assert_true(second.Size() == 2);
+}
+
 int main(int argc, char** argv) {
     TInitializer init;
 
@@ -906,6 +965,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory);
     ADD_TEST(cmocka_unit_test, test_envelope_reader);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
     ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
     ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
@@ -914,6 +974,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_behavior_actor);
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
+    ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }
