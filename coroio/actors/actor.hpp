@@ -446,7 +446,7 @@ public:
      * Called by the actor system. Not meant to be overridden; override
      * `CoReceive` instead.
      */
-    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override;
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) final;
 
     /**
      * @brief Asynchronous message handler (override in subclass)
@@ -528,7 +528,7 @@ public:
      * This method automatically deserializes the message and calls the
      * appropriate typed Receive method on the derived class.
      */
-    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) final {
         bool handled = (TryHandleMessage<TMessages>(
             messageId,
             blob,
@@ -654,7 +654,7 @@ public:
      * @param blob Serialized message data
      * @param ctx Actor context for communication
      */
-    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) final {
         assert(CurrentBehavior_);
         CurrentBehavior_->Receive(messageId, std::move(blob), std::move(ctx));
     }

@@ -58,7 +58,7 @@ public:
  * @tparam TPoller Poller type (e.g. `TDefaultPoller`); determines the socket type.
  */
 template<typename TPoller>
-class TNode : public INode {
+class TNode final : public INode {
 public:
     using TSocket = typename TPoller::TSocket;
     /**

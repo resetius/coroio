@@ -141,14 +141,14 @@ private:
         bool StderrToStdout = false;
     };
 
-    struct TTypelessFileHandle {
-        virtual ~TTypelessFileHandle() = default;
+    struct ITypelessFileHandle {
+        virtual ~ITypelessFileHandle() = default;
         virtual TFuture<ssize_t> ReadSome(void* buffer, size_t size) = 0;
         virtual TFuture<ssize_t> WriteSome(const void* buffer, size_t size) = 0;
     };
 
     template<typename TPoller>
-    struct TPipeFileHandle : public TTypelessFileHandle {
+    struct TPipeFileHandle final : public ITypelessFileHandle {
         TPipeFileHandle(int fd, TPoller& poller)
             : Handle(fd, poller)
         { }
@@ -165,9 +165,9 @@ private:
 
     TPipeLow PipeLow;
     TPollerBase* Poller;
-    std::unique_ptr<TTypelessFileHandle> ReadHandle;
-    std::unique_ptr<TTypelessFileHandle> WriteHandle;
-    std::unique_ptr<TTypelessFileHandle> ErrHandle;
+    std::unique_ptr<ITypelessFileHandle> ReadHandle;
+    std::unique_ptr<ITypelessFileHandle> WriteHandle;
+    std::unique_ptr<ITypelessFileHandle> ErrHandle;
 };
 
 #endif  // _WIN32

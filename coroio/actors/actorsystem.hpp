@@ -59,7 +59,7 @@ struct TActorInternalState
 };
 
 template<typename T>
-class TAsk : public IActor {
+class TAsk final : public IActor {
 public:
     TAsk(const std::shared_ptr<TAskState<T>>& state)
         : State(state)
