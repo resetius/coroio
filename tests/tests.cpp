@@ -3140,6 +3140,51 @@ void test_destroyed_monitor_not_resumed(void**) {
     }
 }
 
+template<typename TSocket>
+TFuture<void> AcceptAfterReset(TSocket& listener, int* resets, int* accepted) {
+    auto reset = co_await listener.Accept();
+    char byte;
+    try {
+        co_await reset.ReadSome(&byte, 1);
+    } catch (const std::system_error& ex) {
+        *resets += ex.code().value() == ECONNRESET;
+    }
+    co_await listener.Accept();
+    ++*accepted;
+}
+
+template<typename TPoller>
+void test_accept_reset_connection(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    auto [addr, len] = address.RawAddr();
+    // The peer resets the first connection before the server accepts it.
+    int aborted = socket(address.Domain(), SOCK_STREAM, 0);
+    assert_int_equal(connect(aborted, addr, len), 0);
+    linger reset{1, 0};
+    assert_int_equal(setsockopt(aborted, SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)), 0);
+    close(aborted);
+    // Loopback keeps the order, so the reset arrives before this handshake.
+    int next = socket(address.Domain(), SOCK_STREAM, 0);
+    assert_int_equal(connect(next, addr, len), 0);
+
+    int resets = 0;
+    int accepted = 0;
+    auto accept = AcceptAfterReset(listener, &resets, &accepted);
+    try {
+        Complete(loop, accept);
+    } catch (const std::exception& ex) {
+        fail_msg("%s", ex.what());
+    }
+    assert_int_equal(resets, 1);
+    assert_int_equal(accepted, 1);
+    close(next);
+}
+
 struct TShortRequest {
     const char* Kind = "";
     const char* Stage = "";
@@ -3410,6 +3455,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_any_simultaneous);
     ADD_TEST(my_unit_poller, test_all_simultaneous);
     ADD_TEST(my_unit_poller, test_any_pending_loser);
+    ADD_TEST(my_unit_poller, test_accept_reset_connection);
 #ifdef HAVE_OPENSSL
     ADD_TEST(my_unit_poller, test_read_write_full_ssl);
 #endif
