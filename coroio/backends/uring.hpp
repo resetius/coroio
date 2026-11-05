@@ -4,6 +4,7 @@
 #define HAVE_URING
 
 #include <coroio/base.hpp>
+#include <coroio/completions.hpp>
 #include <coroio/socket.hpp>
 #include <coroio/poller.hpp>
 
@@ -46,14 +47,15 @@ namespace NNet {
  * // Register a socket or file descriptor.
  * uringPoller.Register(socketFd);
  *
- * // Post an asynchronous read.
- * uringPoller.Read(socketFd, buffer, bufferSize, coroutineHandle);
+ * // Post an asynchronous read. op must stay in place until it is delivered or cancelled.
+ * TUring::TOperation op;
+ * uringPoller.Read(socketFd, buffer, bufferSize, coroutineHandle, op);
  *
  * // Poll for I/O completions.
  * int ret = uringPoller.Wait();
  *
- * // Process the result of the completed operations.
- * int result = uringPoller.Result();
+ * // Resume the coroutines of the completed operations. The read's result is in op.Result.
+ * uringPoller.WakeupReadyHandles();
  * @endcode
  *
  */
@@ -63,6 +65,14 @@ public:
     using TSocket = NNet::TPollerDrivenSocket<TUring>;
     /// Alias for the poller-driven file handle type.
     using TFileHandle = NNet::TPollerDrivenFileHandle<TUring>;
+    /**
+     * @brief State of one operation, kept by the caller.
+     *
+     * Its address is the operation's user_data, so it must stay in place until
+     * WakeupReadyHandles() delivers the completion or Cancel() returns.
+     * The result of the completion is in TOperation::Result.
+     */
+    using TOperation = NDetail::TOperationState;
     /**
      * @brief Constructs a TUring instance.
      *
@@ -78,8 +88,9 @@ public:
      * @param buf Buffer where data is to be stored.
      * @param size Number of bytes to read.
      * @param handle Coroutine handle to resume upon completion.
+     * @param op State of the operation.
      */
-    void Read(int fd, void* buf, int size, std::coroutine_handle<> handle);
+    void Read(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous write operation.
      *
@@ -87,8 +98,9 @@ public:
      * @param buf Buffer with data to write.
      * @param size Number of bytes to write.
      * @param handle Coroutine handle to resume upon completion.
+     * @param op State of the operation.
      */
-    void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle);
+    void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous receive operation.
      *
@@ -96,8 +108,9 @@ public:
      * @param buf Buffer where received data will be stored.
      * @param size Maximum number of bytes to receive.
      * @param handle Coroutine handle to resume upon completion.
+     * @param op State of the operation.
      */
-    void Recv(int fd, void* buf, int size, std::coroutine_handle<> handle);
+    void Recv(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous send operation.
      *
@@ -105,8 +118,9 @@ public:
      * @param buf Buffer containing data to send.
      * @param size Number of bytes to send.
      * @param handle Coroutine handle to resume upon completion.
+     * @param op State of the operation.
      */
-    void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle);
+    void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous accept operation.
      *
@@ -114,8 +128,9 @@ public:
      * @param addr Pointer to a sockaddr structure where the client address is stored.
      * @param len Pointer to the length of the address structure.
      * @param handle Coroutine handle to resume upon acceptance.
+     * @param op State of the operation.
      */
-    void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle);
+    void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous connect operation.
      *
@@ -123,8 +138,9 @@ public:
      * @param addr Pointer to the destination address.
      * @param len Size of the destination address structure.
      * @param handle Coroutine handle to resume upon connection.
+     * @param op State of the operation.
      */
-    void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
+    void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Cancels pending operations on the specified file descriptor.
      *
@@ -132,20 +148,20 @@ public:
      */
     void Cancel(int fd);
     /**
-     * @brief Cancels the pending operation posted with a coroutine handle.
+     * @brief Cancels a pending operation.
      *
      * Called when the coroutine is destroyed while waiting for the operation.
      * An operation not submitted yet is dropped. Otherwise it is cancelled, and
      * the call returns only after the kernel has finished with it, so its
-     * buffers may be freed. Either way its completion is dropped, so @p h is
-     * not resumed. An operation that completed before the cancellation loses
-     * its result, e.g. the data it read.
+     * buffers and @p op may be freed. Either way its completion is dropped, so
+     * its coroutine is not resumed. An operation that completed before the
+     * cancellation loses its result, e.g. the data it read.
      *
-     * @param h The coroutine handle the operation was posted with.
+     * @param op State of the operation, not delivered yet.
      * @return The result of the dropped completion, e.g. a descriptor accepted meanwhile,
      *         or a negative value.
      */
-    int Cancel(std::coroutine_handle<> h);
+    int Cancel(TOperation& op);
     /**
      * @brief Registers a file descriptor with the IO_uring poller.
      *
@@ -168,15 +184,10 @@ public:
         Wait(GetTimeout());
     }
     /**
-     * @brief Retrieves the result of the last completed I/O completion.
-     *
-     * @return An integer result, such as the number of bytes transferred.
-     */
-    int Result();
-    /**
      * @brief Resumes the coroutines whose operations completed.
      *
-     * Skips completions dropped by Cancel(std::coroutine_handle<>).
+     * Skips completions dropped by Cancel(TOperation&). A completion collected
+     * by Wait() and not delivered here is kept by the next Wait().
      */
     void WakeupReadyHandles();
 
@@ -199,15 +210,15 @@ private:
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
-    /// Moves the posted completions to Reaped_, except the one of @p h, whose result goes to @p result.
-    bool Reap(std::coroutine_handle<> h, int* result);
+    /// Points the SQE just obtained to @p op and records its position in the SQ.
+    void SetData(io_uring_sqe* sqe, std::coroutine_handle<> handle, TOperation& op);
+    /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.
+    bool Reap(TOperation& op, int* result);
 
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
-    std::vector<int> Results_; ///< Results of the completions in ReadyEvents_, by index.
-    size_t NextResult_ = 0; ///< Index of the result returned by the next Result() call.
-    std::vector<std::pair<THandle, int>> Reaped_; ///< Completions reaped by Cancel(), delivered by the next Wait().
+    NDetail::TCompletions Completions_; ///< Completions not delivered yet.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
 };
 

@@ -1,10 +1,9 @@
 #pragma once
 
 #include <coroio/base.hpp>
+#include <coroio/completions.hpp>
 #include <coroio/socket.hpp>
 #include <coroio/poller.hpp>
-#include <coroio/arena.hpp>
-#include <coroio/intrusive_list.hpp>
 
 namespace NNet {
 
@@ -14,9 +13,9 @@ namespace NNet {
  *
  * TIOCp inherits from TPollerBase and implements an asynchronous poller using the Windows
  * I/O Completion Ports (IOCP) API. It provides methods for posting asynchronous read, write,
- * accept, connect, and cancellation operations. To optimize performance, TIOCp uses a custom
- * arena allocator (@ref TArenaAllocator) to preallocate IOCP event structures, avoiding per-operation
- * dynamic memory allocations required by the API.
+ * accept, connect, and cancellation operations. The OVERLAPPED structure the API requires for
+ * each operation is the operation's state (@ref TOperation), kept by the caller, so posting an
+ * operation allocates no memory.
  *
  * Type aliases provided:
  * - @c TSocket is defined as NNet::TPollerDrivenSocket<TIOCp>.
@@ -40,6 +39,29 @@ public:
     /// Alias for the poller-driven file handle type.
     using TFileHandle = NNet::TPollerDrivenFileHandle<TIOCp>;
 
+    /**
+     * @brief State of one operation, kept by the caller.
+     *
+     * It is the operation's OVERLAPPED, so it must stay in place until
+     * WakeupReadyHandles() delivers the completion or Cancel() returns.
+     * The result of the completion is in TOperation::Result.
+     */
+    struct TOperation: OVERLAPPED, NDetail::TOperationState {
+        TOperation()
+            : OVERLAPPED()
+        { }
+
+    private:
+        friend class TIOCp;
+
+        struct sockaddr* Addr = nullptr; // for accept
+        socklen_t* Len = nullptr; // for accept
+        int Sock = -1; // for accept
+        int Fd = -1;
+        bool Connect = false;
+        bool File = false;
+    };
+
     TIOCp();
     ~TIOCp();
     /**
@@ -49,8 +71,9 @@ public:
      * @param buf  Buffer to store read data.
      * @param size Number of bytes to read.
      * @param handle The coroutine handle to resume when the operation completes.
+     * @param op   State of the operation.
      */
-    void Read(int fd, void* buf, int size, std::coroutine_handle<> handle);
+    void Read(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous write operation.
      *
@@ -58,8 +81,9 @@ public:
      * @param buf  Buffer containing data to write.
      * @param size Number of bytes to write.
      * @param handle The coroutine handle to resume when the operation completes.
+     * @param op   State of the operation.
      */
-    void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle);
+    void Write(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous receive operation.
      *
@@ -67,8 +91,9 @@ public:
      * @param buf  Buffer to store received data.
      * @param size Maximum number of bytes to receive.
      * @param handle The coroutine handle to resume when the operation completes.
+     * @param op   State of the operation.
      */
-    void Recv(int fd, void* buf, int size, std::coroutine_handle<> handle);
+    void Recv(int fd, void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous send operation.
      *
@@ -76,8 +101,9 @@ public:
      * @param buf  Buffer containing data to send.
      * @param size Number of bytes to send.
      * @param handle The coroutine handle to resume when the operation completes.
+     * @param op   State of the operation.
      */
-    void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle);
+    void Send(int fd, const void* buf, int size, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous accept operation.
      *
@@ -85,8 +111,9 @@ public:
      * @param addr Pointer to a sockaddr structure to receive the client address.
      * @param len  Pointer to a variable specifying the size of the address structure.
      * @param handle The coroutine handle to resume when an incoming connection is accepted.
+     * @param op   State of the operation.
      */
-    void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle);
+    void Accept(int fd, struct sockaddr* addr, socklen_t* len, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Posts an asynchronous connect operation.
      *
@@ -94,8 +121,9 @@ public:
      * @param addr Pointer to the destination address.
      * @param len  Size of the destination address structure.
      * @param handle The coroutine handle to resume when the connection is established.
+     * @param op   State of the operation.
      */
-    void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle);
+    void Connect(int fd, const sockaddr* addr, socklen_t len, std::coroutine_handle<> handle, TOperation& op);
     /**
      * @brief Cancels all pending operations on the specified file descriptor.
      *
@@ -103,19 +131,21 @@ public:
      */
     void Cancel(int fd);
     /**
-     * @brief Cancels the pending operation posted with a coroutine handle.
+     * @brief Cancels a pending operation.
      *
      * Called when the coroutine is destroyed while waiting for the operation.
-     * Cancels it with CancelIoEx and returns only after it is complete (its
-     * completion dequeued or its OVERLAPPED no longer pending), so its buffers
-     * may be freed. The completion is dropped, so @p h is not resumed. Other
+     * Cancels it with CancelIoEx and returns only after its completion is
+     * dequeued, so its buffers and @p op may be freed. A file operation gets
+     * no completion, since TPollerDrivenFileHandle does not register its
+     * handle: for it the call returns once its OVERLAPPED is no longer pending.
+     * The completion is dropped, so its coroutine is not resumed. Other
      * completions dequeued meanwhile are delivered by the next Poll().
      *
-     * @param h The coroutine handle the operation was posted with.
+     * @param op State of the operation, not delivered yet.
      * @return The result of the dropped completion if it was collected already
      *         (e.g. an accepted socket), otherwise -1.
      */
-    int Cancel(THandle h);
+    int Cancel(TOperation& op);
     /**
      * @brief Registers a file descriptor with the IOCP.
      *
@@ -123,15 +153,10 @@ public:
      */
     void Register(int fd);
     /**
-     * @brief Retrieves the result of the last completed IOCP operation.
-     *
-     * @return An integer representing the result of the operation.
-     */
-    int Result();
-    /**
      * @brief Resumes the coroutines whose operations completed.
      *
-     * Skips completions dropped by Cancel(THandle).
+     * Skips completions dropped by Cancel(TOperation&). A completion collected
+     * by Poll() and not delivered here is kept by the next Poll().
      */
     void WakeupReadyHandles();
     /**
@@ -142,35 +167,19 @@ public:
     void Poll();
 
 private:
-    // OVERLAPPED is the first base: the system gets the operation as an OVERLAPPED*.
-    struct TIO: OVERLAPPED, NDetail::TIntrusiveNode<TIO> {
-        THandle handle;
-        struct sockaddr* addr = nullptr; // for accept
-        socklen_t* len = nullptr; // for accept
-        int sock = -1; // for accept
-        int fd = -1;
-        bool connect = false;
-
-        TIO()
-            : OVERLAPPED()
-        { }
-    };
-
     long GetTimeoutMs();
-    TIO* NewTIO(int fd, THandle handle);
-    void FreeTIO(TIO*);
-    // Frees the operation of a dequeued completion, returns its handle and result.
-    std::pair<THandle, int> Complete(const OVERLAPPED_ENTRY& entry);
+    // Resets op for a new operation on fd.
+    void Prepare(TOperation& op, int fd);
+    // Marks op posted.
+    void Posted(TOperation& op, THandle handle);
+    // Returns the result of the operation of a dequeued completion.
+    int Complete(const OVERLAPPED_ENTRY& entry);
 
     HANDLE Port_;
 
-    // Allocator to avoid dynamic memory allocation for each IOCP event structure.
-    TArenaAllocator<TIO> Allocator_;
-    NDetail::TIntrusiveList<TIO> Pending_; // operations whose completions are not dequeued yet
+    int InFlight_ = 0; // operations whose completions are not dequeued yet
     std::vector<OVERLAPPED_ENTRY> Entries_;
-    std::vector<int> Results_; // results of the completions in ReadyEvents_, by index
-    size_t NextResult_ = 0;
-    std::vector<std::pair<THandle, int>> Reaped_; // dequeued by Cancel(), delivered by the next Poll()
+    NDetail::TCompletions Completions_;
 };
 
 }

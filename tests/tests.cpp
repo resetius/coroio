@@ -15,6 +15,7 @@
 #include <coroio/all.hpp>
 #include <coroio/ws/utils.hpp>
 #include <coroio/dns/resolver.hpp>
+#include <coroio/completions.hpp>
 #include <coroio/intrusive_list.hpp>
 
 #include <unordered_set>
@@ -1324,7 +1325,8 @@ void test_uring_write(void**) {
     char rbuf[1] = {'k'};
     int p[2];
     assert_int_equal(0, pipe(p));
-    uring.Write(p[1], buf, 1, nullptr);
+    TUring::TOperation op;
+    uring.Write(p[1], buf, 1, std::noop_coroutine(), op);
     assert_int_equal(uring.Wait(), 1);
     int err = read(p[0], rbuf, 1);
     assert_true(rbuf[0] == 'e');
@@ -1337,7 +1339,8 @@ void test_uring_read(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     assert_int_equal(1, write(p[1], buf, 1));
-    uring.Read(p[0], rbuf, 1, nullptr);
+    TUring::TOperation op;
+    uring.Read(p[0], rbuf, 1, std::noop_coroutine(), op);
     assert_int_equal(uring.Wait(), 1);
     assert_true(rbuf[0] == 'e');
 }
@@ -1350,9 +1353,10 @@ void test_uring_read_more_than_write(void**) {
     assert_int_equal(0, pipe(p));
     assert_int_equal(1, write(p[1], buf, 1));
     TFuture<void> h = []() -> TFuture<void> { co_return; }();
-    uring.Read(p[0], rbuf, sizeof(rbuf), h.raw());
+    TUring::TOperation op;
+    uring.Read(p[0], rbuf, sizeof(rbuf), h.raw(), op);
     assert_int_equal(uring.Wait(), 1);
-    assert_int_equal(uring.Result(), 1);
+    assert_int_equal(op.Result, 1);
     assert_true(rbuf[0] == 'e');
 }
 
@@ -1363,12 +1367,13 @@ void test_uring_write_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
+    TUring::TOperation op;
+    TFuture<void> h = [](TUring::TOperation* op, int* r) -> TFuture<void> {
         co_await std::suspend_always();
-        *r = uring->Result();
+        *r = op->Result;
         co_return;
-    }(&uring, &r);
-    uring.Write(p[1], buf, 1, h.raw());
+    }(&op, &r);
+    uring.Write(p[1], buf, 1, h.raw(), op);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -1385,13 +1390,14 @@ void test_uring_read_resume(void**) {
     int p[2];
     assert_int_equal(0, pipe(p));
     int r = 31337;
-    TFuture<void> h = [](TUring* uring, int* r) -> TFuture<void> {
+    TUring::TOperation op;
+    TFuture<void> h = [](TUring::TOperation* op, int* r) -> TFuture<void> {
         co_await std::suspend_always();
-        *r = uring->Result();
+        *r = op->Result;
         co_return;
-    }(&uring, &r);
+    }(&op, &r);
     assert_int_equal(1, write(p[1], buf, 1));
-    uring.Read(p[0], rbuf, 1, h.raw());
+    uring.Read(p[0], rbuf, 1, h.raw(), op);
     assert_true(!h.done());
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
@@ -1407,12 +1413,13 @@ void test_uring_file_offset(void**) {
     assert_true(fd >= 0);
     unlink(path);
 
-    TFuture<void> h = []() -> TFuture<void> { co_return; }();
     const char data[] = "0123456789abcdefghij";
     for (int i = 0; i < 20; i += 5) {
-        uring.Write(fd, data + i, 5, h.raw());
+        TUring::TOperation op;
+        uring.Write(fd, data + i, 5, std::noop_coroutine(), op);
         assert_int_equal(uring.Wait(), 1);
-        assert_int_equal(uring.Result(), 5);
+        uring.WakeupReadyHandles();
+        assert_int_equal(op.Result, 5);
     }
 
     char check[sizeof(data)] = {};
@@ -1422,15 +1429,17 @@ void test_uring_file_offset(void**) {
     assert_int_equal(0, lseek(fd, 0, SEEK_SET));
     char rbuf[20] = {};
     for (int i = 0; i < 20; i += 5) {
-        uring.Read(fd, rbuf + i, 5, h.raw());
+        TUring::TOperation op;
+        uring.Read(fd, rbuf + i, 5, std::noop_coroutine(), op);
         assert_int_equal(uring.Wait(), 1);
-        assert_int_equal(uring.Result(), 5);
+        uring.WakeupReadyHandles();
+        assert_int_equal(op.Result, 5);
     }
     assert_memory_equal(rbuf, data, 20);
     close(fd);
 }
 
-// Wait() and Result() without WakeupReadyHandles(), as in the TUring example.
+// Wait() without WakeupReadyHandles(): each operation still gets its own result.
 void test_uring_wait_result_without_wakeup(void**) {
     TUring uring(256);
     char rbuf[10];
@@ -1438,14 +1447,16 @@ void test_uring_wait_result_without_wakeup(void**) {
     assert_int_equal(0, pipe(p));
     TFuture<void> h1 = []() -> TFuture<void> { co_return; }();
     TFuture<void> h2 = []() -> TFuture<void> { co_return; }();
+    TUring::TOperation op1, op2;
     assert_int_equal(1, write(p[1], "a", 1));
-    uring.Read(p[0], rbuf, sizeof(rbuf), h1.raw());
+    uring.Read(p[0], rbuf, sizeof(rbuf), h1.raw(), op1);
     assert_int_equal(uring.Wait(), 1);
-    assert_int_equal(uring.Result(), 1);
+    assert_int_equal(op1.Result, 1);
     assert_int_equal(3, write(p[1], "bcd", 3));
-    uring.Read(p[0], rbuf, sizeof(rbuf), h2.raw());
+    uring.Read(p[0], rbuf, sizeof(rbuf), h2.raw(), op2);
     assert_int_equal(uring.Wait(), 1);
-    assert_int_equal(uring.Result(), 3);
+    assert_int_equal(op2.Result, 3);
+    assert_int_equal(op1.Result, 1);
     close(p[0]);
     close(p[1]);
 }
@@ -1456,11 +1467,13 @@ void test_uring_no_sqe(void** ) {
     int p[2]; assert_int_equal(0, pipe(p));
     assert_int_equal(1, write(p[1], rbuf, 1));
     assert_int_equal(1, write(p[1], rbuf, 1));
-    uring.Read(p[0], rbuf, 1, nullptr);
-    uring.Read(p[0], rbuf, 1, nullptr);
+    TUring::TOperation op1, op2;
+    uring.Read(p[0], rbuf, 1, std::noop_coroutine(), op1);
+    uring.Read(p[0], rbuf, 1, std::noop_coroutine(), op2);
     int k = uring.Wait();
     assert_true(k == 1 || k == 2);
     if (k == 1) {
+        uring.WakeupReadyHandles();
         assert_int_equal(1, uring.Wait());
     }
 }
@@ -1719,6 +1732,60 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
     }
 }
 
+// Many reads wait at once. The destroyed ones are found among them, and the
+// others still get their own results.
+template<typename TPoller>
+void test_destroyed_driven_reader_among_many(void**) {
+    using TSocket = typename TPoller::TSocket;
+    constexpr int count = 64;
+    TLoop<TPoller> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    std::vector<std::pair<TSocket, TSocket>> pairs; // client, server
+    pairs.reserve(count);
+    for (int i = 0; i < count; i++) {
+        pairs.emplace_back(ConnectedPair(loop, listener, address));
+    }
+
+    char bufs[count][4] = {};
+    int got[count];
+    std::optional<TFuture<void>> readers[count];
+    for (int i = 0; i < count; i++) {
+        got[i] = -1;
+        readers[i].emplace(ReadInto(pairs[i].second, bufs[i], sizeof(bufs[i]), &got[i]));
+    }
+    readers[count / 2].reset(); // not submitted yet on uring
+    loop.Step();
+    for (int i = 1; i < count; i++) {
+        char c = 'a' + i % 26;
+        assert_int_equal(send(pairs[i].first.Fd(), &c, 1, 0), 1);
+    }
+    // Waits for its own completion, taking the others meanwhile,
+    readers[0].reset();
+    // so this one is likely dropped from those kept for the next poll.
+    readers[count - 1].reset();
+    for (int i = 0; i < count; i++) {
+        if (readers[i]) {
+            StepUntilDone(loop, *readers[i]);
+        }
+    }
+    for (int i = 0; i < count; i++) {
+        if (i == 0 || i == count / 2 || i == count - 1) {
+            assert_int_equal(got[i], -1);
+        } else {
+            assert_int_equal(got[i], 1);
+            assert_int_equal(bufs[i][0], 'a' + i % 26);
+        }
+    }
+    // Destroyed before its byte came: the byte is left for the next reader.
+    auto next = ReadInto(pairs[count / 2].second, bufs[0], sizeof(bufs[0]), &got[0]);
+    StepUntilDone(loop, next);
+    assert_int_equal(got[0], 1);
+    assert_int_equal(bufs[0][0], 'a' + (count / 2) % 26);
+}
+
 namespace {
 
 struct TListItem: NDetail::TIntrusiveNode<TListItem> {
@@ -1810,6 +1877,71 @@ void test_intrusive_list_reinsert(void**) {
     assert_true(ListValues(list) == std::vector<int>({1, 2}));
     list.Erase(a);
     list.Erase(b);
+}
+
+namespace {
+
+TFuture<void> CountResumes(int* count) {
+    while (true) {
+        co_await std::suspend_always();
+        ++*count;
+    }
+}
+
+// Resumed by Wakeup(), posts its next operation at the same address and cancels it.
+TFuture<void> RepostAndDrop(NDetail::TCompletions* completions, NDetail::TOperationState* op, bool* dropped) {
+    co_await std::suspend_always();
+    op->Index = 0;
+    *dropped = completions->Drop(*op);
+}
+
+} // namespace
+
+// Completions moved between the lists are still found by their positions.
+void test_completions(void**) {
+    constexpr int count = 6;
+    int resumed[count] = {};
+    std::vector<TFuture<void>> coroutines;
+    coroutines.reserve(count);
+    NDetail::TOperationState ops[count];
+    for (int i = 0; i < count; i++) {
+        coroutines.emplace_back(CountResumes(&resumed[i]));
+        ops[i].Handle = coroutines.back().raw();
+    }
+    NDetail::TCompletions completions;
+    assert_false(completions.Drop(ops[0])); // pending
+    for (int i = 0; i < 3; i++) {
+        completions.Collect(&ops[i], 10 + i);
+    }
+    for (int i = 3; i < count; i++) {
+        completions.Reap(&ops[i], 10 + i);
+    }
+    assert_true(completions.Drop(ops[0]));
+    assert_true(completions.Drop(ops[4]));
+    // Not delivered: the collected completions are kept, and the reaped ones join them.
+    assert_true(completions.Carry());
+    assert_true(completions.Drop(ops[2]));
+    assert_true(completions.Drop(ops[5]));
+    assert_true(completions.Carry());
+    completions.Wakeup();
+    int expected[count] = {0, 1, 0, 1, 0, 0};
+    for (int i = 0; i < count; i++) {
+        assert_int_equal(resumed[i], expected[i]);
+    }
+    assert_true(!ops[1].Handle);
+    assert_int_equal(ops[1].Result, 11);
+    assert_int_equal(ops[3].Result, 13);
+    assert_false(completions.Carry());
+
+    // The delivered completion is not taken for the next operation's.
+    NDetail::TOperationState op;
+    bool dropped = true;
+    auto repost = RepostAndDrop(&completions, &op, &dropped);
+    op.Handle = repost.raw();
+    completions.Collect(&op, 1);
+    completions.Wakeup();
+    assert_true(repost.done());
+    assert_false(dropped);
 }
 
 #ifdef HAVE_URING
@@ -2003,6 +2135,66 @@ void test_uring_destroyed_reader_with_full_cq(void**) {
         } else {
             assert_int_equal(got[i], 1);
             assert_int_equal(bufs[i][0], 'a' + i);
+        }
+        close(peers[i]);
+    }
+}
+
+// The SQ wraps around while the reads wait: a destroyed reader is found by
+// its SQ position whether its SQE is still queued or submitted already.
+void test_uring_destroyed_queued_and_submitted_readers(void**) {
+    TUring uring(16); // a full SQ is submitted
+    constexpr int count = 64;
+    std::vector<TUring::TSocket> sockets;
+    sockets.reserve(count);
+    int peers[count];
+    for (int i = 0; i < count; i++) {
+        int sp[2];
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+        sockets.emplace_back(sp[0], uring);
+        peers[i] = sp[1];
+    }
+    char bufs[count][1] = {};
+    int got[count];
+    std::optional<TFuture<void>> readers[count];
+    for (int i = 0; i < count; i++) {
+        got[i] = -1;
+        readers[i].emplace(ReadInto(sockets[i], bufs[i], 1, &got[i]));
+    }
+    // The last 16 SQEs are queued, the others are submitted.
+    const int queued = count - 5;
+    const int submitted = 5;
+    readers[queued].reset();
+    readers[submitted].reset();
+    for (int i = 0; i < count; i++) {
+        char c = 'a' + i % 26;
+        assert_int_equal(write(peers[i], &c, 1), 1);
+    }
+    auto waiting = [&]() {
+        for (auto& reader : readers) {
+            if (reader && !reader->done()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (waiting() && TClock::now() < deadline) {
+        uring.Wait({0, 1000000});
+        uring.WakeupReadyHandles();
+    }
+    for (int i = 0; i < count; i++) {
+        char c = 'a' + i % 26;
+        if (i == queued || i == submitted) {
+            // Cancelled before the byte came: it is left in the socket.
+            assert_int_equal(got[i], -1);
+            char left = 0;
+            assert_int_equal(recv(sockets[i].Fd(), &left, 1, MSG_DONTWAIT), 1);
+            assert_int_equal(left, c);
+        } else {
+            assert_true(readers[i]->done());
+            assert_int_equal(got[i], 1);
+            assert_int_equal(bufs[i][0], c);
         }
         close(peers[i]);
     }
@@ -3130,15 +3322,19 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_socket_writer);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_repeated_wait);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_reader_with_full_cq);
+    ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TUring);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_queued_and_submitted_readers);
 #endif
 #endif
 #ifdef _WIN32
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TIOCp);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TIOCp);
+    ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TIOCp);
 #endif
     ADD_TEST(cmocka_unit_test, test_intrusive_list_push);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_erase);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_reinsert);
+    ADD_TEST(cmocka_unit_test, test_completions);
 
     return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);
 }
