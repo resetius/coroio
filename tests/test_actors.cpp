@@ -830,6 +830,75 @@ void test_envelope_reader_v2_recycled_chunk(void**) {
     assert_true(reader.UsedChunksCount() == 0);
 }
 
+void test_envelope_reader_v2_copyout_live_blob(void**) {
+    constexpr size_t H = sizeof(THeader);
+    constexpr size_t P = 32;
+
+    auto makeMessage = [](int id, char fill) {
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(id),
+            .Size = P,
+        };
+        std::string msg(H + P, fill);
+        std::memcpy(msg.data(), &header, H);
+        return msg;
+    };
+
+    auto check = [](const TEnvelope& e, char expected) {
+        const char* data = static_cast<const char*>(e.Blob.Data.get());
+        for (size_t i = 0; i < P; ++i) {
+            assert_true(data[i] == expected);
+        }
+    };
+
+    // The header is split across chunks, CopyOut drains a chunk with a live blob
+    {
+        TZeroCopyEnvelopeReaderV2 r(H + P + 8, 4);
+        auto m1 = makeMessage(1, 'A');
+        auto m2 = makeMessage(2, 'B');
+        auto m3 = makeMessage(3, 'C');
+        r.Push(m1.data(), m1.size());
+        r.Push(m2.data(), 8);
+        auto e1 = r.Pop();
+        assert_true(e1.has_value());
+        r.Push(m2.data() + 8, m2.size() - 8);
+        auto e2 = r.Pop();
+        assert_true(e2.has_value());
+        r.Push(m3.data(), m3.size());
+        r.Push(m3.data(), m3.size());
+        check(*e1, 'A');
+        assert_true(r.UsedChunksCount() == 1);
+        e1.reset();
+        assert_true(r.UsedChunksCount() == 0);
+    }
+
+    // The payload is split across chunks, the copying CopyOut drains a chunk with a live blob
+    {
+        TZeroCopyEnvelopeReaderV2 r(H + P + H + 8, 4);
+        auto m1 = makeMessage(1, 'A');
+        auto m2 = makeMessage(2, 'B');
+        auto m3 = makeMessage(3, 'C');
+        r.Push(m1.data(), m1.size());
+        r.Push(m2.data(), H + 8);
+        auto e1 = r.Pop();
+        assert_true(e1.has_value());
+        assert_true(!r.Pop().has_value());
+        r.Push(m2.data() + H + 8, P - 8);
+        auto e2 = r.Pop();
+        assert_true(e2.has_value());
+        check(*e2, 'B');
+        for (int i = 0; i < 3; ++i) {
+            r.Push(m3.data(), m3.size());
+        }
+        check(*e1, 'A');
+        assert_true(r.UsedChunksCount() == 1);
+        e1.reset();
+        assert_true(r.UsedChunksCount() == 0);
+    }
+}
+
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
     int Value;
 
@@ -966,6 +1035,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_envelope_reader);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_copyout_live_blob);
     ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
     ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);

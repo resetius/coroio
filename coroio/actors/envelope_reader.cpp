@@ -272,7 +272,12 @@ bool TZeroCopyEnvelopeReaderV2::CopyOut(char* buf) {
             return false;
         }
         if (chunk->CopyOut<size>(buf)) {
-            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
+            auto ref = SealedChunks.PopFront();
+            if (ref->UseCount == 0) {
+                FreeChunks.emplace_back(std::move(ref));
+            } else {
+                UsedChunks.PushBack(std::move(ref));
+            }
         }
     } else {
         if (CurrentChunk->Size() < size) [[unlikely]] {
@@ -292,7 +297,12 @@ void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
         auto sizeToCopy = std::min(size, chunk->Size());
         assert(sizeToCopy > 0);
         if (chunk->CopyOut(buf, sizeToCopy)) {
-            FreeChunks.emplace_back(std::move(SealedChunks.PopFront()));
+            auto ref = SealedChunks.PopFront();
+            if (ref->UseCount == 0) {
+                FreeChunks.emplace_back(std::move(ref));
+            } else {
+                UsedChunks.PushBack(std::move(ref));
+            }
         }
         buf += sizeToCopy;
         size -= sizeToCopy;
