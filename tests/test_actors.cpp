@@ -897,6 +897,28 @@ void test_envelope_reader_v2_copyout_live_blob(void**) {
         e1.reset();
         assert_true(r.UsedChunksCount() == 0);
     }
+
+    // The header ends exactly at the chunk end, the template CopyOut drains a chunk with a live blob
+    {
+        TZeroCopyEnvelopeReaderV2 r(H + P + H, 4);
+        auto m1 = makeMessage(1, 'A');
+        auto m2 = makeMessage(2, 'B');
+        auto m3 = makeMessage(3, 'C');
+        r.Push(m1.data(), m1.size());
+        r.Push(m2.data(), H);
+        auto e1 = r.Pop();
+        assert_true(e1.has_value());
+        r.Push(m2.data() + H, P);
+        auto e2 = r.Pop();
+        assert_true(e2.has_value());
+        check(*e2, 'B');
+        r.Push(m3.data(), m3.size());
+        r.Push(m3.data(), m3.size());
+        check(*e1, 'A');
+        assert_true(r.UsedChunksCount() == 1);
+        e1.reset();
+        assert_true(r.UsedChunksCount() == 0);
+    }
 }
 
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
