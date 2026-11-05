@@ -50,7 +50,7 @@ int TSocketBase<void>::Setup(int s) {
         if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*) &value, len) < 0) {
 #ifdef _WIN32
             if (WSAGetLastError() != WSAENOPROTOOPT)
-#else
+#elif defined(__APPLE__)
             // macOS refuses options on a connection that the peer has already
             // reset, e.g. before it was accepted. The descriptor is still
             // valid, and reading from it reports the reset.
