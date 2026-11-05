@@ -225,7 +225,7 @@ void TUring::WakeupReadyHandles() {
 
 void TUring::Submit() {
     int err;
-    if ((err = io_uring_submit(&Ring_) < 0)) {
+    if ((err = io_uring_submit(&Ring_)) < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_submit");
     }
 }
