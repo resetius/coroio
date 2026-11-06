@@ -2062,6 +2062,22 @@ void test_iocp_accepted_socket(void**) {
 }
 #endif
 
+template<typename TPoller>
+void test_accept_closed_listener(void**) {
+    using TSocket = typename TPoller::TSocket;
+    TLoop<TPoller> loop;
+    TSocket listener(loop.Poller(), AF_INET);
+    listener.Close();
+    std::optional<std::expected<TSocket, int>> result;
+    auto accept = AcceptResult(listener, &result);
+    try {
+        StepUntilDone(loop, accept);
+        fail_msg("no exception");
+    } catch (const std::system_error& ex) {
+        assert_int_equal(ex.code().value(), EBADF);
+    }
+}
+
 #ifndef _WIN32
 int ConnectTo(const TAddress& address) {
     int fd = socket(address.Domain(), SOCK_STREAM, 0);
@@ -2096,22 +2112,6 @@ void test_accept_after_spurious_readiness(void**) {
     }
     assert_true(result->has_value());
     close(first);
-}
-
-template<typename TPoller>
-void test_accept_closed_listener(void**) {
-    using TSocket = typename TPoller::TSocket;
-    TLoop<TPoller> loop;
-    TSocket listener(loop.Poller(), AF_INET);
-    listener.Close();
-    std::optional<std::expected<TSocket, int>> result;
-    auto accept = AcceptResult(listener, &result);
-    try {
-        StepUntilDone(loop, accept);
-        fail_msg("no exception");
-    } catch (const std::system_error& ex) {
-        assert_int_equal(ex.code().value(), EBADF);
-    }
 }
 
 struct TOkRouter: IRouter {
@@ -3990,9 +3990,9 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_accept);
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_accept_after_spurious_readiness);
-    ADD_TEST(my_unit_poller, test_accept_closed_listener);
     ADD_TEST(my_unit_poller, test_accept_after_descriptor_shortage);
 #endif
+    ADD_TEST(my_unit_poller, test_accept_closed_listener);
     ADD_TEST(my_unit_poller, test_write_after_connect);
     ADD_TEST(my_unit_poller, test_write_after_accept);
     ADD_TEST(my_unit_poller, test_connection_timeout);
