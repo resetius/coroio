@@ -682,8 +682,11 @@ public:
      * Returns an awaitable object that, upon completion, yields a new TPollerDrivenSocket
      * for the accepted connection. Errors are handled as in TSocket::Accept().
      *
+     * An accept that is pending when the socket is closed returns the cancel error as a value
+     * (995 on IOCP, ECANCELED on io_uring).
+     *
      * @return An awaitable yielding the accepted TPollerDrivenSocket, or the error code.
-     * @throws std::system_error with EBADF at @c co_await if the socket is closed.
+     * @throws std::system_error with EBADF at @c co_await if the socket was already closed.
      */
     auto Accept() {
         struct TAwaitable {

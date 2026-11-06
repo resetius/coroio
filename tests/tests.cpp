@@ -1633,6 +1633,11 @@ TFuture<void> AcceptInto(TSocket& listener, std::optional<TSocket>* accepted) {
     accepted->emplace((co_await listener.Accept()).value());
 }
 
+template<typename TSocket>
+TFuture<void> AcceptResult(TSocket& listener, std::optional<std::expected<TSocket, int>>* result) {
+    result->emplace(co_await listener.Accept());
+}
+
 template<typename TFile>
 TFuture<void> ReadInto(TFile& file, char* buf, size_t size, int* got) {
     *got = co_await file.ReadSome(buf, size);
@@ -1986,14 +1991,45 @@ void test_iocp_failed_read_write(void**) {
     StepUntilDone(loop, *write);
     assert_int_equal(result, -WSAECONNRESET);
 }
+
+// An accept aborted by closing the listener or by Cancel(fd) returns the error
+// and closes the socket it prepared, instead of throwing on its empty address.
+void test_iocp_aborted_accept(void**) {
+    using TSocket = TIOCp::TSocket;
+    constexpr int count = 100;
+    DWORD before = 0;
+    for (int i = 0; i <= count; i++) {
+        if (i == 1) { // after the first one, which may set up Winsock state
+            assert_true(GetProcessHandleCount(GetCurrentProcess(), &before));
+        }
+        TLoop<TIOCp> loop;
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
+        TAddress address{"127.0.0.1", GetFreePort()};
+        TSocket listener(loop.Poller(), address.Domain());
+        listener.Bind(address);
+        listener.Listen();
+        std::optional<std::expected<TSocket, int>> result;
+        auto accept = AcceptResult(listener, &result);
+        loop.Step();
+        if (i % 2) {
+            listener.Close();
+        } else {
+            loop.Poller().Cancel(listener.Fd());
+        }
+        try {
+            StepUntilDone(loop, accept);
+        } catch (const std::exception& ex) {
+            fail_msg("%s", ex.what());
+        }
+        assert_int_equal(result->error_or(0), WSA_OPERATION_ABORTED);
+    }
+    DWORD after = 0;
+    assert_true(GetProcessHandleCount(GetCurrentProcess(), &after));
+    assert_in_range(after, 0, before + count / 10);
+}
 #endif
 
 #ifndef _WIN32
-template<typename TSocket>
-TFuture<void> AcceptResult(TSocket& listener, std::optional<std::expected<TSocket, int>>* result) {
-    result->emplace(co_await listener.Accept());
-}
-
 int ConnectTo(const TAddress& address) {
     int fd = socket(address.Domain(), SOCK_STREAM, 0);
     auto [addr, len] = address.RawAddr();
@@ -3997,6 +4033,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TIOCp);
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
     ADD_TEST(cmocka_unit_test, test_iocp_failed_read_write);
+    ADD_TEST(cmocka_unit_test, test_iocp_aborted_accept);
 #endif
     ADD_TEST(cmocka_unit_test, test_completions);
 
