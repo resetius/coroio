@@ -21,8 +21,10 @@ TUring::TUring(int queueSize)
     }
     io_uring_params params = {};
     // Completions of operations that waited are posted in our next io_uring_enter, in a batch,
-    // instead of by task work signalled to the thread.
-    params.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
+    // instead of by task work signalled to the thread. Disabled until Enable(), so that the
+    // ring is bound to the thread that runs it, not to the one that constructs it.
+    params.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_TASKRUN_FLAG
+        | IORING_SETUP_R_DISABLED;
     if ((err = io_uring_queue_init_params(std::max(queueSize, 2), &Ring_, &params)) < 0) { // a close takes two SQEs
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
@@ -46,9 +48,11 @@ TUring::TUring(int queueSize)
 
 TUring::~TUring() {
     // Best effort: closes prepared by a Wait() that threw. They run as deferred task work,
-    // which the ring's exit would cancel instead.
-    io_uring_submit_and_get_events(&Ring_);
-    while (RunTaskWork()) { }
+    // which the ring's exit would cancel instead. A ring never enabled has nothing in the kernel.
+    if (Enabled_) {
+        io_uring_submit_and_get_events(&Ring_);
+        while (RunTaskWork()) { }
+    }
     io_uring_queue_exit(&Ring_);
     close(RingFd_);
     close(EpollFd_);
@@ -227,6 +231,7 @@ int TUring::Wait(timespec ts) {
     unsigned head;
     int err;
 
+    Enable();
     for (auto& ev : Changes_) {
         assert(!ev.Type || (ev.Type & ~TEvent::CLOSE) == (TEvent::READ|TEvent::WRITE|TEvent::RHUP));
         assert(!ev.Handle);
@@ -296,7 +301,19 @@ bool TUring::RunTaskWork() {
     return (IO_URING_READ_ONCE(*Ring_.sq.kflags) & IORING_SQ_TASKRUN) && io_uring_get_events(&Ring_) >= 0;
 }
 
+void TUring::Enable() {
+    if (Enabled_) {
+        return;
+    }
+    int err;
+    if ((err = io_uring_enable_rings(&Ring_)) < 0) {
+        throw std::system_error(-err, std::generic_category(), "io_uring_enable_rings");
+    }
+    Enabled_ = true;
+}
+
 void TUring::Submit() {
+    Enable();
     int err;
     if ((err = io_uring_submit(&Ring_)) < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_submit");

@@ -2513,6 +2513,52 @@ void test_uring_destroyed_after_failed_wait(void**) {
         close(pair[1]);
     }
 }
+
+// A poller constructed in one thread runs in another: the ring is bound to the
+// thread of its first kernel entry. A ring never entered is destroyed as is.
+void test_uring_runs_in_another_thread(void**) {
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    {
+        TUring uring(256);
+        TUring::TFileHandle in(p[0], uring);
+        char buf[1] = {0};
+        int got = 0;
+        auto reader = IoResult(in, false, buf, 1, &got); // dropped before it is submitted
+    }
+    assert_true(IsClosed(p[0]));
+    close(p[1]);
+
+    TLoop<TUring> loop;
+    assert_int_equal(pipe(p), 0);
+    char buf[1] = {0};
+    char data[1] = {'x'};
+    int got = 0;
+    int put = 0;
+    int error = 0;
+    std::thread([&]() {
+        try {
+            {
+                TUring::TFileHandle in(p[0], loop.Poller());
+                TUring::TFileHandle out(p[1], loop.Poller());
+                auto reader = IoResult(in, false, buf, 1, &got);
+                auto writer = IoResult(out, true, data, 1, &put);
+                for (int i = 0; i < 100 && !(reader.done() && writer.done()); i++) {
+                    loop.Step();
+                }
+            }
+            loop.Step(); // the closes
+        } catch (const std::system_error& ex) {
+            error = ex.code().value();
+        }
+    }).join();
+    assert_int_equal(error, 0);
+    assert_int_equal(put, 1);
+    assert_int_equal(got, 1);
+    assert_int_equal(buf[0], 'x');
+    assert_true(IsClosed(p[0]));
+    assert_true(IsClosed(p[1]));
+}
 #endif
 
 void test_base64(void**) {
@@ -3980,6 +4026,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_after_finished_operations);
     ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_failed_wait);
+    ADD_TEST(cmocka_unit_test, test_uring_runs_in_another_thread);
 #endif
 #endif
 #ifdef _WIN32
