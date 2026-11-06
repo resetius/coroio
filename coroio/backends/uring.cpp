@@ -45,7 +45,10 @@ TUring::TUring(int queueSize)
 }
 
 TUring::~TUring() {
-    io_uring_submit(&Ring_); // best effort: closes prepared by a Wait() that threw
+    // Best effort: closes prepared by a Wait() that threw. They run as deferred task work,
+    // which the ring's exit would cancel instead.
+    io_uring_submit_and_get_events(&Ring_);
+    while (RunTaskWork()) { }
     io_uring_queue_exit(&Ring_);
     close(RingFd_);
     close(EpollFd_);
@@ -278,7 +281,7 @@ int TUring::Wait(timespec ts) {
         io_uring_cq_advance(&Ring_, reaped);
         completed += reaped;
         // A wait runs a bounded batch of the deferred work: run the rest, e.g. linked closes.
-    } while ((IO_URING_READ_ONCE(*Ring_.sq.kflags) & IORING_SQ_TASKRUN) && io_uring_get_events(&Ring_) >= 0);
+    } while (RunTaskWork());
 
     ProcessTimers();
 
@@ -287,6 +290,10 @@ int TUring::Wait(timespec ts) {
 
 void TUring::WakeupReadyHandles() {
     Completions_.Wakeup();
+}
+
+bool TUring::RunTaskWork() {
+    return (IO_URING_READ_ONCE(*Ring_.sq.kflags) & IORING_SQ_TASKRUN) && io_uring_get_events(&Ring_) >= 0;
 }
 
 void TUring::Submit() {

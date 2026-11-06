@@ -2465,6 +2465,40 @@ void test_uring_closes_on_small_queues(void**) {
         }
     }
 }
+
+// The destructor runs the closes prepared by a Wait() that threw, here in
+// another thread (SINGLE_ISSUER), before the ring's exit would cancel them.
+void test_uring_destroyed_after_failed_wait(void**) {
+    constexpr int count = 30;
+    int fds[count][2];
+    char bufs[count] = {};
+    TUring::TOperation ops[count];
+    {
+        TUring uring(256);
+        for (int i = 0; i < count; i++) {
+            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds[i]), 0);
+            ops[i].Handle = std::noop_coroutine();
+            uring.Read(fds[i][0], &bufs[i], 1, ops[i]);
+        }
+        uring.Wait({0, 0});
+        for (auto& pair : fds) {
+            uring.Close(pair[0], TEvent::CLOSE_SOCKET);
+        }
+        int error = 0;
+        std::thread([&]() {
+            try {
+                uring.Wait({0, 0});
+            } catch (const std::system_error& ex) {
+                error = ex.code().value();
+            }
+        }).join();
+        assert_int_equal(error, EEXIST);
+    }
+    for (auto& pair : fds) {
+        assert_true(IsClosed(pair[0]));
+        close(pair[1]);
+    }
+}
 #endif
 
 void test_base64(void**) {
@@ -3931,6 +3965,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_only_its_operations);
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_after_finished_operations);
     ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_failed_wait);
 #endif
 #endif
 #ifdef _WIN32
