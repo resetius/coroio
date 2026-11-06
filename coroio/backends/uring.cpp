@@ -87,6 +87,9 @@ void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op
 }
 
 void TUring::Cancel(int fd) {
+    if (!HasOperations(fd)) {
+        return;
+    }
     struct io_uring_sqe *sqe = GetSqe();
     // io_uring_prep_cancel_fd(sqe, fd, 0);
     io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, nullptr, 0, 0);
@@ -95,6 +98,14 @@ void TUring::Cancel(int fd) {
 }
 
 void TUring::PrepClose(TEvent& change) {
+    if (!HasOperations(change.Fd)) {
+        // Nothing to cancel: the kernel looks up a cancel by fd among all pending operations.
+        io_uring_sqe* sqe = GetSqe();
+        io_uring_prep_close(sqe, change.Fd);
+        io_uring_sqe_set_data(sqe, nullptr);
+        change.Type = 0;
+        return;
+    }
     if (io_uring_sq_space_left(&Ring_) < 2) {
         Submit(); // never split the linked pair
     }
@@ -115,6 +126,24 @@ void TUring::PrepClose(TEvent& change) {
 void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
     op.Index = Ring_.sq.sqe_tail - 1;
     io_uring_sqe_set_data(sqe, &op);
+    op.Fd = sqe->fd;
+    if (op.Fd < 0) {
+        return; // e.g. an accept on a closed socket, which fails with -EBADF
+    }
+    if (op.Fd >= static_cast<int>(Operations_.size())) {
+        Operations_.resize(op.Fd + 1);
+    }
+    Operations_[op.Fd]++;
+}
+
+void TUring::Done(TOperation& op) {
+    if (op.Fd >= 0) {
+        Operations_[op.Fd]--;
+    }
+}
+
+bool TUring::HasOperations(int fd) const {
+    return fd >= 0 && fd < static_cast<int>(Operations_.size()) && Operations_[fd] > 0;
 }
 
 int TUring::Cancel(TOperation& op) {
@@ -131,6 +160,7 @@ int TUring::Cancel(TOperation& op) {
     if (op.Index - head < Ring_.sq.sqe_tail - head) {
         struct io_uring_sqe *sqe = &Ring_.sq.sqes[op.Index & *Ring_.sq.kring_mask];
         if (sqe->user_data == reinterpret_cast<__u64>(&op)) {
+            Done(op);
             io_uring_prep_nop(sqe);
             io_uring_sqe_set_data(sqe, nullptr);
             return -ECANCELED;
@@ -172,9 +202,11 @@ bool TUring::Reap(TOperation& op, int* result) {
         completed ++;
         auto* other = static_cast<TOperation*>(io_uring_cqe_get_data(cqe));
         if (other == &op) {
+            Done(op);
             found = true;
             *result = cqe->res;
         } else if (other != nullptr) {
+            Done(*other);
             Completions_.Reap(other, cqe->res);
         }
     }
@@ -235,6 +267,7 @@ int TUring::Wait(timespec ts) {
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
         if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
+            Done(*op);
             Completions_.Collect(op, cqe->res);
         }
     }

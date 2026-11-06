@@ -2410,6 +2410,31 @@ void test_uring_close_cancels_only_its_operations(void**) {
     close(next[1]);
 }
 
+// A close cancels the pending read of its descriptor after earlier operations
+// on it completed or were cancelled, so their count goes back down.
+void test_uring_close_cancels_after_finished_operations(void**) {
+    TLoop<TUring> loop;
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    auto handle = std::make_unique<TUring::TFileHandle>(p[0], loop.Poller());
+    char buf[1] = {0};
+    int results[3] = {0, 0, 0};
+    assert_int_equal(write(p[1], "x", 1), 1);
+    auto completed = IoResult(*handle, false, buf, 1, &results[0]);
+    StepUntilDone(loop, completed);
+    assert_int_equal(results[0], 1);
+    {
+        auto cancelled = IoResult(*handle, false, buf, 1, &results[1]);
+        loop.Step();
+    }
+    auto pending = IoResult(*handle, false, buf, 1, &results[2]);
+    loop.Step();
+    handle.reset();
+    StepUntilDone(loop, pending);
+    assert_int_equal(results[2], -ECANCELED);
+    close(p[1]);
+}
+
 // The two linked SQEs of a close are never split, even on the smallest queue.
 void test_uring_closes_on_small_queues(void**) {
     for (int size : {1, 8}) {
@@ -3900,6 +3925,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TUring);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_queued_and_submitted_readers);
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_only_its_operations);
+    ADD_TEST(cmocka_unit_test, test_uring_close_cancels_after_finished_operations);
     ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
 #endif
 #endif
