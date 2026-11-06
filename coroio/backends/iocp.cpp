@@ -96,6 +96,9 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, TOperation& op
     Prepare(op, fd);
     op.Addr = addr;
     op.Len = len;
+    if (fd < 0) {
+        Throw(op, EBADF, std::generic_category(), "accept");
+    }
     sockaddr_storage local = {};
     int localLen = sizeof(local);
     if (getsockname((SOCKET)fd, reinterpret_cast<sockaddr*>(&local), &localLen) != 0) {
@@ -109,15 +112,17 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, TOperation& op
     }
     u_long mode = 1;
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
+        int err = WSAGetLastError(); // closesocket() resets it
         closesocket(sock);
-        Throw(op, WSAGetLastError(), std::system_category(), "ioctlsocket");
+        Throw(op, err, std::generic_category(), "ioctlsocket");
     }
 
     DWORD dwBytesReceived = 0;
     auto ret = AcceptEx((SOCKET)fd, sock, addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, &dwBytesReceived, static_cast<OVERLAPPED*>(&op));
-    if (ret == FALSE && WSAGetLastError() != WSA_IO_PENDING) {
+    int err = ret == FALSE ? WSAGetLastError() : 0; // closesocket() resets it
+    if (ret == FALSE && err != WSA_IO_PENDING) {
         closesocket(sock);
-        Throw(op, WSAGetLastError(), std::generic_category(), "AcceptEx");
+        Throw(op, err, std::generic_category(), "AcceptEx");
     }
     InFlight_++;
 }
