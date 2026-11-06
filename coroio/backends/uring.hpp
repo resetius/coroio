@@ -35,8 +35,9 @@ namespace NNet {
  * - Offers additional methods for cancelling pending operations, registering file descriptors, waiting for completions,
  *   and submitting queued requests.
  * - Requires Linux 6.1 or later. The ring is set up with IORING_SETUP_SINGLE_ISSUER: the first thread
- *   that submits to it or waits on it owns it, and must post, wait for and cancel all of its operations.
- *   The poller may be constructed in another thread.
+ *   that waits on it (or posts an operation into a full submission queue, which submits) owns it, and must
+ *   post, wait for and cancel all of its operations. The poller may be constructed in another thread, and
+ *   destroyed in another thread only when no operations are pending.
  *
  * Type aliases:
  *  - @c TSocket is defined as NNet::TPollerDrivenSocket<TUring>.
