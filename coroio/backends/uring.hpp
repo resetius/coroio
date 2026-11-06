@@ -205,9 +205,12 @@ private:
         }
         return r;
     }
-    /// Obtains an SQE for @p op. If that throws, op.Handle is reset: the operation is not posted.
-    io_uring_sqe* GetSqe(TOperation& op) {
+    /// Obtains an SQE for @p op on @p fd. If that throws, op.Handle is reset: the operation is not posted.
+    io_uring_sqe* GetSqe(TOperation& op, int fd) {
         try {
+            if (fd >= static_cast<int>(Operations_.size())) {
+                Operations_.resize(fd + 1); // here, so that SetData() cannot throw
+            }
             return GetSqe();
         } catch (...) {
             op.Handle = {};
@@ -217,10 +220,14 @@ private:
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
-    /// Queues a cancel by fd hard-linked to the close of a close change. Not named Close: it would hide TPollerBase::Close.
+    /// Queues the close of a close change, hard-linked after a cancel by fd if the descriptor has operations. Not named Close: it would hide TPollerBase::Close.
     void PrepClose(TEvent& change);
-    /// Points the SQE just obtained to @p op and records its position in the SQ.
+    /// Points the SQE just obtained to @p op, records its position in the SQ and counts it for its descriptor.
     void SetData(io_uring_sqe* sqe, TOperation& op);
+    /// Uncounts @p op, whose completion is taken or whose SQE is dropped.
+    void Done(TOperation& op);
+    /// Whether operations posted on @p fd may still be in the kernel.
+    bool HasOperations(int fd) const;
     /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.
     bool Reap(TOperation& op, int* result);
 
@@ -228,6 +235,7 @@ private:
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
     NDetail::TCompletions Completions_; ///< Completions not delivered yet.
+    std::vector<unsigned> Operations_; ///< Per descriptor: operations posted whose completion is not taken yet.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
 };
 
