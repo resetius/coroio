@@ -7,7 +7,13 @@
 
 namespace NNet {
 
+// The kernel sizes the hash that cancels by user_data search from the CQ: 16 buckets for the
+// default 512 entries, so such a cancel walked ~1/32 of the pending operations; 8192 gives 256, the most.
 TUring::TUring(int queueSize)
+    : TUring(queueSize, 8192)
+{ }
+
+TUring::TUring(int queueSize, int completionQueueSize)
     : RingFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK))
     , EpollFd_(epoll_create1(EPOLL_CLOEXEC))
     , Buffer_(32768)
@@ -19,7 +25,11 @@ TUring::TUring(int queueSize)
     if (EpollFd_ < 0) {
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
-    if ((err = io_uring_queue_init(std::max(queueSize, 2), &Ring_, 0)) < 0) { // a close takes two SQEs
+    int entries = std::max(queueSize, 2); // a close takes two SQEs
+    io_uring_params params = {};
+    params.flags = IORING_SETUP_CQSIZE;
+    params.cq_entries = std::max(2 * entries, completionQueueSize);
+    if ((err = io_uring_queue_init_params(entries, &Ring_, &params)) < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
 

@@ -2265,10 +2265,16 @@ void test_uring_destroyed_after_repeated_wait(void**) {
     assert_memory_equal(otherBuf, "yy", 2);
 }
 
+struct TSmallCqUring: public TUring {
+    TSmallCqUring()
+        : TUring(4, 8)
+    { }
+};
+
 // Cancel() reaps more completions than the CQ holds; the ones of live
 // coroutines are delivered by the next Wait(), each with its own result.
 void test_uring_destroyed_reader_with_full_cq(void**) {
-    TUring uring(4); // room for 8 completions
+    TSmallCqUring uring; // room for 8 completions
     constexpr int count = 16;
     std::vector<TUring::TSocket> sockets;
     sockets.reserve(count);

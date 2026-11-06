@@ -81,6 +81,7 @@ public:
      *
      * @param queueSize The desired size of the io_uring submission queue (default is 256).
      *                  At least 2: a close takes two linked entries.
+     *                  The completion queue has at least 8192 entries.
      */
     TUring(int queueSize = 256);
     /// Destructor cleans up the io_uring and related resources.
@@ -188,6 +189,10 @@ public:
      * by Wait() and not delivered here is kept by the next Wait().
      */
     void WakeupReadyHandles();
+
+protected:
+    /// Like TUring(int), with a completion queue of at least @p completionQueueSize entries.
+    TUring(int queueSize, int completionQueueSize);
 
 private:
     /**
