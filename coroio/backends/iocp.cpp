@@ -114,7 +114,7 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, TOperation& op
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
         int err = WSAGetLastError(); // closesocket() resets it
         closesocket(sock);
-        Throw(op, err, std::system_category(), "ioctlsocket");
+        Throw(op, err, std::generic_category(), "ioctlsocket");
     }
 
     DWORD dwBytesReceived = 0;
