@@ -35,11 +35,11 @@ bool Failed(const OVERLAPPED& op) {
 
 int SocketError(const OVERLAPPED& op) {
     for (auto [status, error] : SocketErrors) {
-        if (op.Internal == status) {
+        if (static_cast<ULONG>(op.Internal) == status) {
             return error;
         }
     }
-    return WSAEINVAL; // as Winsock does for the others
+    return WSAEINVAL; // statuses not in the table; Winsock maps many more
 }
 
 } // namespace
