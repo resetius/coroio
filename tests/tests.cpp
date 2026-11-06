@@ -1643,6 +1643,15 @@ TFuture<void> WriteFrom(TFile& file, const char* buf, size_t size, int* put) {
     *put = co_await file.WriteSome(buf, size);
 }
 
+template<typename TFile>
+TFuture<void> IoResult(TFile& file, bool write, char* buf, size_t size, int* result) {
+    try {
+        *result = write ? co_await file.WriteSome(buf, size) : co_await file.ReadSome(buf, size);
+    } catch (const std::system_error& ex) {
+        *result = -ex.code().value();
+    }
+}
+
 // Stops after the first read, waiting in the second.
 template<typename TSocket>
 TFuture<void> ReadTwice(TSocket& socket, char* buf, size_t size, int* got) {
@@ -1926,6 +1935,58 @@ void test_driven_accept_not_listening(void**) {
     assert_true(failed);
     assert_false(accepted.has_value());
 }
+
+#ifdef _WIN32
+// A failed or aborted read or write gets the error in its packet, not 0 bytes
+// that look like the end of the stream (#183).
+void test_iocp_failed_read_write(void**) {
+    using TSocket = TIOCp::TSocket;
+    TLoop<TIOCp> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    const linger reset{1, 0};
+
+    // The peer resets the connection, the socket is closed, its operations are cancelled.
+    const int errors[] = {WSAECONNRESET, WSAECONNABORTED, WSA_OPERATION_ABORTED};
+    for (int i = 0; i < 3; i++) {
+        auto [client, server] = ConnectedPair(loop, listener, address);
+        char buf[1];
+        int result = 0;
+        auto read = IoResult(server, false, buf, sizeof(buf), &result);
+        loop.Step();
+        if (i == 0) {
+            assert_int_equal(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
+            client.Close();
+        } else if (i == 1) {
+            server.Close();
+        } else {
+            loop.Poller().Cancel(server.Fd());
+        }
+        StepUntilDone(loop, read);
+        assert_int_equal(result, -errors[i]);
+    }
+
+    // A write waits for the peer, which does not read, and the peer resets.
+    auto [client, server] = ConnectedPair(loop, listener, address);
+    std::vector<char> data(1 << 20);
+    int result = 0;
+    std::optional<TFuture<void>> write;
+    for (int i = 0; i < 1024 && (!write || write->done()); i++) {
+        write.emplace(IoResult(server, true, data.data(), data.size(), &result));
+        for (int j = 0; j < 3 && !write->done(); j++) {
+            loop.Step();
+        }
+    }
+    assert_false(write->done());
+    assert_int_equal(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
+    client.Close();
+    StepUntilDone(loop, *write);
+    assert_int_equal(result, -WSAECONNRESET);
+}
+#endif
 
 #ifndef _WIN32
 template<typename TSocket>
@@ -2371,15 +2432,6 @@ void test_uring_destroyed_queued_and_submitted_readers(void**) {
             assert_int_equal(bufs[i][0], c);
         }
         close(peers[i]);
-    }
-}
-
-template<typename TFile>
-TFuture<void> IoResult(TFile& file, bool write, char* buf, size_t size, int* result) {
-    try {
-        *result = write ? co_await file.WriteSome(buf, size) : co_await file.ReadSome(buf, size);
-    } catch (const std::system_error& ex) {
-        *result = -ex.code().value();
     }
 }
 
@@ -3944,6 +3996,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TIOCp);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TIOCp);
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
+    ADD_TEST(cmocka_unit_test, test_iocp_failed_read_write);
 #endif
     ADD_TEST(cmocka_unit_test, test_completions);
 

@@ -9,6 +9,41 @@ extern LPFN_CONNECTEX ConnectEx;
 extern LPFN_ACCEPTEX AcceptEx;
 extern LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs;
 
+namespace {
+
+// Winsock errors of the NTSTATUS codes a failed socket operation completes with, the same
+// as WSAGetOverlappedResult() gives. It cannot be used: it fails once the socket is closed.
+constexpr std::pair<ULONG_PTR, int> SocketErrors[] = {
+    {0xC0000120, WSA_OPERATION_ABORTED}, // STATUS_CANCELLED
+    {0xC000020D, WSAECONNRESET},         // STATUS_CONNECTION_RESET
+    {0xC000013C, WSAECONNRESET},         // STATUS_REMOTE_DISCONNECT
+    {0xC000020C, WSAECONNRESET},         // STATUS_CONNECTION_DISCONNECTED
+    {0xC000023F, WSAECONNRESET},         // STATUS_PORT_UNREACHABLE
+    {0xC0000241, WSAECONNABORTED},       // STATUS_CONNECTION_ABORTED
+    {0xC000013B, WSAECONNABORTED},       // STATUS_LOCAL_DISCONNECT
+    {0xC0000236, WSAECONNREFUSED},       // STATUS_CONNECTION_REFUSED
+    {0xC00000B5, WSAETIMEDOUT},          // STATUS_IO_TIMEOUT
+    {0xC000023C, WSAENETUNREACH},        // STATUS_NETWORK_UNREACHABLE
+    {0xC000023D, WSAEHOSTUNREACH},       // STATUS_HOST_UNREACHABLE
+    {0xC000009A, WSAENOBUFS},            // STATUS_INSUFFICIENT_RESOURCES
+    {0x80000005, WSAEMSGSIZE},           // STATUS_BUFFER_OVERFLOW
+};
+
+bool Failed(const OVERLAPPED& op) {
+    return static_cast<LONG>(op.Internal) < 0; // !NT_SUCCESS
+}
+
+int SocketError(const OVERLAPPED& op) {
+    for (auto [status, error] : SocketErrors) {
+        if (static_cast<ULONG>(op.Internal) == status) {
+            return error;
+        }
+    }
+    return WSAEINVAL; // statuses not in the table; Winsock maps many more
+}
+
+} // namespace
+
 TIOCp::TIOCp()
     : Port_(CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0))
 {
@@ -220,6 +255,8 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
         {
             result = -WSAGetLastError();
         }
+    } else if (!op->File && Failed(*op)) { // file statuses, e.g. end of file, are not socket errors
+        result = -SocketError(*op);
     } else {
         result = entry.dwNumberOfBytesTransferred;
     }
