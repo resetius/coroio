@@ -7,8 +7,8 @@
 
 namespace NNet {
 
-// The kernel sizes the hash that cancels search from the CQ size: 16 buckets for the default
-// 512 entries, 256 (its maximum) from 8192. With 16, each cancel walked 1/16 of the pending operations.
+// The kernel sizes the hash that cancels by user_data search from the CQ: 16 buckets for the
+// default 512 entries, so such a cancel walked ~1/32 of the pending operations; 8192 gives 256, the most.
 TUring::TUring(int queueSize)
     : TUring(queueSize, 8192)
 { }
