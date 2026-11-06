@@ -2411,7 +2411,8 @@ void test_uring_close_cancels_only_its_operations(void**) {
 }
 
 // A close cancels the pending read of its descriptor after earlier operations
-// on it completed or were cancelled, so their count goes back down.
+// on it completed, were cancelled or were dropped before they were submitted,
+// so their count goes back down.
 void test_uring_close_cancels_after_finished_operations(void**) {
     TLoop<TUring> loop;
     int p[2];
@@ -2426,6 +2427,9 @@ void test_uring_close_cancels_after_finished_operations(void**) {
     {
         auto cancelled = IoResult(*handle, false, buf, 1, &results[1]);
         loop.Step();
+    }
+    {
+        auto dropped = IoResult(*handle, false, buf, 1, &results[1]);
     }
     auto pending = IoResult(*handle, false, buf, 1, &results[2]);
     loop.Step();

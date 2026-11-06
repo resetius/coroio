@@ -48,14 +48,14 @@ TUring::~TUring() {
 }
 
 void TUring::Read(int fd, void* buf, int size, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe(op);
+    struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_read(sqe, fd, buf, size, -1);
     //io_uring_prep_read_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
     SetData(sqe, op);
 }
 
 void TUring::Write(int fd, const void* buf, int size, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe(op);
+    struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_write(sqe, fd, buf, size, -1);
     //memcpy(Buffer_.data(), buf, size);
     //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
@@ -63,25 +63,25 @@ void TUring::Write(int fd, const void* buf, int size, TOperation& op) {
 }
 
 void TUring::Recv(int fd, void* buf, int size, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe(op);
+    struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_recv(sqe, fd, buf, size, 0);
     SetData(sqe, op);
 }
 
 void TUring::Send(int fd, const void* buf, int size, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe(op);
+    struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_send(sqe, fd, buf, size, 0);
     SetData(sqe, op);
 }
 
 void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe(op);
+    struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_accept(sqe, fd, addr, len, SOCK_CLOEXEC);
     SetData(sqe, op);
 }
 
 void TUring::Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op) {
-    struct io_uring_sqe *sqe = GetSqe(op);
+    struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_connect(sqe, fd, addr, len);
     SetData(sqe, op);
 }
@@ -127,17 +127,14 @@ void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
     op.Index = Ring_.sq.sqe_tail - 1;
     io_uring_sqe_set_data(sqe, &op);
     op.Fd = sqe->fd;
-    if (op.Fd < 0) {
-        return; // e.g. an accept on a closed socket, which fails with -EBADF
+    if (op.Fd >= 0) { // not e.g. an accept on a closed socket, which fails with -EBADF
+        Operations_[op.Fd]++;
     }
-    if (op.Fd >= static_cast<int>(Operations_.size())) {
-        Operations_.resize(op.Fd + 1);
-    }
-    Operations_[op.Fd]++;
 }
 
 void TUring::Done(TOperation& op) {
     if (op.Fd >= 0) {
+        assert(Operations_[op.Fd] > 0);
         Operations_[op.Fd]--;
     }
 }

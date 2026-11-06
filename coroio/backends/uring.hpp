@@ -205,9 +205,12 @@ private:
         }
         return r;
     }
-    /// Obtains an SQE for @p op. If that throws, op.Handle is reset: the operation is not posted.
-    io_uring_sqe* GetSqe(TOperation& op) {
+    /// Obtains an SQE for @p op on @p fd. If that throws, op.Handle is reset: the operation is not posted.
+    io_uring_sqe* GetSqe(TOperation& op, int fd) {
         try {
+            if (fd >= static_cast<int>(Operations_.size())) {
+                Operations_.resize(fd + 1); // here, so that SetData() cannot throw
+            }
             return GetSqe();
         } catch (...) {
             op.Handle = {};
