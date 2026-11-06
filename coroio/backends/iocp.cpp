@@ -255,7 +255,9 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
         // Without the listener's context getpeername(), getsockname() and shutdown() fail on the socket.
         SOCKET listener = (SOCKET)op->Fd;
         if (setsockopt((SOCKET)op->Sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, reinterpret_cast<char*>(&listener), sizeof(listener)) != 0) {
-            result = -WSAGetLastError();
+            // The listener was closed after AcceptEx completed: report it as the abort, like a pending accept.
+            int error = WSAGetLastError();
+            result = -(error == WSAENOTSOCK ? WSA_OPERATION_ABORTED : error);
             closesocket((SOCKET)op->Sock);
         } else {
             result = op->Sock;
