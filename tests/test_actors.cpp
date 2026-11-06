@@ -7,6 +7,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <iostream>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <coroio/all.hpp>
@@ -56,6 +57,36 @@ void test_actor_id_equality(void**) {
     assert_int_equal(values.at(otherCookie), 4);
     assert_int_equal(values.erase(same), 1);
     assert_int_equal(values.size(), 3);
+}
+
+void test_actor_id_hash(void**) {
+    static_assert(noexcept(std::hash<TActorId>{}(TActorId{})));
+    const TActorId actor(1, 64, 2);
+    const TActorId same(1, 64, 2);
+    assert_true(std::hash<TActorId>{}(actor) == std::hash<TActorId>{}(same));
+
+    std::unordered_map<TActorId, int> values;
+    std::unordered_set<TActorId> actors;
+    const std::array ids{
+        TActorId{}, actor, TActorId(2, 64, 2), TActorId(1, 65, 2), TActorId(1, 64, 3),
+        TActorId(0xffff, 0xffffffff, 0xffff),
+    };
+    for (size_t i = 0; i < ids.size(); ++i) {
+        assert_true(values.emplace(ids[i], i).second);
+        assert_true(actors.insert(ids[i]).second);
+    }
+    assert_false(values.emplace(same, -1).second);
+    assert_false(actors.insert(same).second);
+    assert_int_equal(values.size(), ids.size());
+    assert_int_equal(actors.size(), ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        assert_int_equal(values.at(ids[i]), i);
+        assert_int_equal(actors.count(ids[i]), 1);
+    }
+    assert_int_equal(values.erase(same), 1);
+    assert_int_equal(actors.erase(same), 1);
+    assert_int_equal(values.count(actor), 0);
+    assert_int_equal(actors.count(actor), 0);
 }
 
 struct TState {
@@ -1046,6 +1077,7 @@ int main(int argc, char** argv) {
     }
 
     ADD_TEST(cmocka_unit_test, test_actor_id_equality);
+    ADD_TEST(cmocka_unit_test, test_actor_id_hash);
     ADD_TEST(cmocka_unit_test, test_ping_pong);
     ADD_TEST(cmocka_unit_test, test_ask_respond);
     ADD_TEST(cmocka_unit_test, test_schedule);
