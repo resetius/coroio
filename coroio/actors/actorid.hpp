@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace NNet {
@@ -104,3 +106,17 @@ struct THeader {
 
 } // namespace NActors
 } // namespace NNet
+
+namespace std {
+
+template<>
+struct hash<NNet::NActors::TActorId> {
+    size_t operator()(const NNet::NActors::TActorId& actorId) const noexcept {
+        const uint64_t value = uint64_t(actorId.ActorId())
+            | (uint64_t(actorId.NodeId()) << 32)
+            | (uint64_t(actorId.Cookie()) << 48);
+        return hash<uint64_t>{}(value);
+    }
+};
+
+} // namespace std
