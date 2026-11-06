@@ -2,6 +2,7 @@
 #include "iocp.hpp"
 
 #include <Mswsock.h> // for ConnectEx, AcceptEx
+#include <io.h> // for _get_osfhandle
 
 namespace NNet {
 
@@ -160,28 +161,105 @@ void TIOCp::Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op)
     InFlight_++;
 }
 
+HANDLE TIOCp::StartFile(int fd, int size, TOperation& op)
+{
+    // Not for -1: the UCRT ends the process on an invalid descriptor.
+    HANDLE h = fd >= 0 ? reinterpret_cast<HANDLE>(_get_osfhandle(fd)) : INVALID_HANDLE_VALUE;
+    if (h == INVALID_HANDLE_VALUE) {
+        Throw(op, EBADF, std::generic_category(), "_get_osfhandle");
+    }
+    if (fd >= static_cast<int>(Files_.size())) {
+        Files_.resize(fd + 1, EFile::Unknown);
+    }
+    auto& file = Files_[fd];
+    if (file == EFile::Unknown) {
+        // Fails for a handle opened without FILE_FLAG_OVERLAPPED.
+        if (!CreateIoCompletionPort(h, Port_, 0, 0)) {
+            file = EFile::Sync;
+        } else {
+            file = GetFileType(h) == FILE_TYPE_DISK ? EFile::Disk : EFile::Port;
+        }
+    }
+    if (file == EFile::Sync) {
+        return nullptr;
+    }
+    op.File = h;
+    if (file == EFile::Disk) {
+        // Overlapped I/O does not move the file pointer: take the range when posting, so
+        // operations posted together get consecutive ranges, as with read() and write().
+        LARGE_INTEGER dist, end;
+        dist.QuadPart = size;
+        if (!SetFilePointerEx(h, dist, &end, FILE_CURRENT)) {
+            Throw(op, GetLastError(), std::generic_category(), "SetFilePointerEx");
+        }
+        ULONGLONG start = end.QuadPart - size;
+        op.Offset = static_cast<DWORD>(start);
+        op.OffsetHigh = static_cast<DWORD>(start >> 32);
+        op.Size = size;
+    }
+    return h;
+}
+
+void TIOCp::PostedFile(TOperation& op, BOOL ok, const char* what)
+{
+    DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+    // A packet comes unless the call failed: a part of a pipe message is not a failure.
+    if (ok || err == ERROR_IO_PENDING || err == ERROR_MORE_DATA) {
+        InFlight_++;
+        return;
+    }
+    Rewind(op, 0);
+    if (!op.Read || (err != ERROR_HANDLE_EOF && err != ERROR_BROKEN_PIPE)) {
+        Throw(op, err, std::generic_category(), what);
+    }
+    Completions_.Reap(&op, 0);
+}
+
+void TIOCp::Rewind(TOperation& op, DWORD transferred)
+{
+    // Not after the poller closed the descriptor: the handle may be reused.
+    if (transferred >= op.Size || Files_[op.Fd] != EFile::Disk) {
+        return;
+    }
+    ULONGLONG start = op.Offset | (static_cast<ULONGLONG>(op.OffsetHigh) << 32);
+    LARGE_INTEGER pointer, size;
+    LARGE_INTEGER zero = {};
+    // Not if a later operation took the pointer or it was moved.
+    if (!SetFilePointerEx(op.File, zero, &pointer, FILE_CURRENT) || static_cast<ULONGLONG>(pointer.QuadPart) != start + op.Size) {
+        return;
+    }
+    pointer.QuadPart = start + transferred;
+    // Concurrent reads past the end leave no hole for the next write.
+    if (op.Read && GetFileSizeEx(op.File, &size) && size.QuadPart < pointer.QuadPart) {
+        pointer = size;
+    }
+    SetFilePointerEx(op.File, pointer, nullptr, FILE_BEGIN);
+}
+
 void TIOCp::Read(int fd, void* buf, int size, TOperation& op)
 {
     Prepare(op, fd);
-    op.File = true;
-
-    auto ret = ReadFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(&op));
-    if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
-        Throw(op, WSAGetLastError(), std::generic_category(), "ReadFile");
+    op.Read = true;
+    HANDLE h = StartFile(fd, size, op);
+    if (!h) {
+        // Blocks, as a regular file on the readiness pollers.
+        auto ret = TFileOps::read(fd, buf, size);
+        Completions_.Reap(&op, ret >= 0 ? ret : -errno);
+        return;
     }
-    InFlight_++;
+    PostedFile(op, ReadFile(h, buf, size, nullptr, static_cast<OVERLAPPED*>(&op)), "ReadFile");
 }
 
 void TIOCp::Write(int fd, const void* buf, int size, TOperation& op)
 {
     Prepare(op, fd);
-    op.File = true;
-
-    auto ret = WriteFile(reinterpret_cast<HANDLE>(fd), buf, size, nullptr, static_cast<OVERLAPPED*>(&op));
-    if (!ret && WSAGetLastError() != WSA_IO_PENDING) {
-        Throw(op, WSAGetLastError(), std::generic_category(), "WriteFile");
+    HANDLE h = StartFile(fd, size, op);
+    if (!h) {
+        auto ret = TFileOps::write(fd, buf, size);
+        Completions_.Reap(&op, ret >= 0 ? ret : -errno);
+        return;
     }
-    InFlight_++;
+    PostedFile(op, WriteFile(h, buf, size, nullptr, static_cast<OVERLAPPED*>(&op)), "WriteFile");
 }
 
 void TIOCp::Register(int fd) {
@@ -200,13 +278,11 @@ int TIOCp::Cancel(TOperation& op)
         return op.Result;
     }
 
-    CancelIoEx((HANDLE)(SOCKET)op.Fd, &op);
+    CancelIoEx(op.File ? op.File : (HANDLE)(SOCKET)op.Fd, &op);
     // The system may use the operation's buffers until it completes, and its packet points
-    // to op, so wait until the packet is dequeued. A file handle is not associated with the
-    // port and gets no packet: wait until its OVERLAPPED is no longer pending.
-    // Other completions are kept for the next Poll().
+    // to op, so wait until the packet is dequeued. Other completions are kept for the next Poll().
     bool done = false;
-    while (!done && !(op.File && HasOverlappedIoCompleted(&op))) {
+    while (!done) {
         Entries_.resize(std::max(InFlight_, 1));
         DWORD fired = 0;
         if (!GetQueuedCompletionStatusEx(Port_, &Entries_[0], Entries_.size(), &fired, 10, FALSE)) {
@@ -241,6 +317,9 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
 {
     TOperation* op = static_cast<TOperation*>(entry.lpOverlapped);
     InFlight_--;
+    if (op->Size) {
+        Rewind(*op, entry.dwNumberOfBytesTransferred);
+    }
     int result = -1;
     if (!op->Handle) {
         // Cancelled: nobody takes the socket, accepted or not.
@@ -278,7 +357,19 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
         {
             result = -WSAGetLastError();
         }
-    } else if (!op->File && Failed(*op)) { // file statuses, e.g. end of file, are not socket errors
+    } else if (op->File) {
+        // Maps the status to a Win32 error. The operation is complete, so the handle, which
+        // may be closed already, is not used.
+        DWORD transferred = 0;
+        DWORD err = GetOverlappedResult(op->File, op, &transferred, FALSE) ? ERROR_SUCCESS : GetLastError();
+        if (err == ERROR_SUCCESS || err == ERROR_MORE_DATA) { // the next read gets the rest of the message
+            result = transferred;
+        } else if (op->Read && (err == ERROR_HANDLE_EOF || err == ERROR_BROKEN_PIPE)) {
+            result = 0;
+        } else {
+            result = -static_cast<int>(err);
+        }
+    } else if (Failed(*op)) {
         result = -SocketError(*op);
     } else {
         result = entry.dwNumberOfBytesTransferred;
@@ -290,7 +381,10 @@ void TIOCp::Poll()
 {
     for (auto& change : Changes_) {
         if (change.Type & TEvent::CLOSE) {
-            // closesocket() aborts the pending overlapped operations, whose packets still reach the port.
+            if ((change.Type & TEvent::CLOSE_FILE) && change.Fd < static_cast<int>(Files_.size())) {
+                Files_[change.Fd] = EFile::Unknown; // a new file may get the number
+            }
+            // Closing ends the pending overlapped operations, whose packets still reach the port.
             CloseDescriptor(change);
         }
     }

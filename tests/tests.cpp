@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <barrier>
 #include <thread>
@@ -20,6 +21,8 @@
 
 #ifndef _WIN32
 #include <sys/resource.h>
+#else
+#include <fcntl.h> // for _O_BINARY
 #endif
 
 #if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
@@ -2026,6 +2029,243 @@ void test_iocp_aborted_accept(void**) {
     DWORD after = 0;
     assert_true(GetProcessHandleCount(GetCurrentProcess(), &after));
     assert_in_range(after, 0, before + count / 10);
+}
+
+namespace {
+
+std::string TempFile(const std::string& content) {
+    char dir[MAX_PATH];
+    char path[MAX_PATH];
+    assert_true(GetTempPathA(sizeof(dir), dir) > 0);
+    assert_true(GetTempFileNameA(dir, "cio", 0, path) != 0);
+    FILE* f = fopen(path, "wb");
+    assert_non_null(f);
+    assert_int_equal(fwrite(content.data(), 1, content.size(), f), content.size());
+    fclose(f);
+    return path;
+}
+
+std::string FileContent(const std::string& path) {
+    std::string content;
+    FILE* f = fopen(path.c_str(), "rb");
+    assert_non_null(f);
+    char buf[256];
+    while (size_t n = fread(buf, 1, sizeof(buf), f)) {
+        content.append(buf, n);
+    }
+    fclose(f);
+    return content;
+}
+
+// A CRT descriptor of path, as TIOCp::TFileHandle takes: of an overlapped handle, which the
+// poller associates with its port, or from _open(), which it reads and writes synchronously.
+int OpenFile(const std::string& path, bool overlapped, bool append = false) {
+    int fd = -1;
+    if (overlapped) {
+        // GENERIC_WRITE has FILE_WRITE_DATA, with which overlapped writes do not append.
+        DWORD access = append ? FILE_APPEND_DATA : GENERIC_READ | GENERIC_WRITE;
+        HANDLE h = CreateFileA(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        assert_true(h != INVALID_HANDLE_VALUE);
+        fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), 0);
+    } else {
+        fd = _open(path.c_str(), (append ? _O_WRONLY | _O_APPEND : _O_RDWR) | _O_BINARY);
+    }
+    assert_true(fd >= 0);
+    return fd;
+}
+
+template<typename TFile>
+TFuture<void> WriteChunks(TFile& file, std::vector<std::string> chunks, std::vector<int>* results) {
+    for (const auto& chunk : chunks) {
+        results->push_back(co_await file.WriteSome(chunk.data(), chunk.size()));
+    }
+}
+
+// Reads chunks of up to size bytes until the end.
+template<typename TFile>
+TFuture<void> ReadChunks(TFile& file, size_t size, std::vector<std::string>* chunks) {
+    char buf[16];
+    while (int n = co_await file.ReadSome(buf, size)) {
+        chunks->emplace_back(buf, n);
+    }
+}
+
+} // namespace
+
+// Reads and writes of a regular file use and advance the file pointer, as read() and write()
+// do (#156), with an overlapped handle and with a synchronous one.
+void test_iocp_file_read_write(void**) {
+    for (bool overlapped : {true, false}) {
+        auto path = TempFile("");
+        {
+            TLoop<TIOCp> loop;
+            int fd = OpenFile(path, overlapped);
+            TIOCp::TFileHandle file(fd, loop.Poller());
+            std::vector<int> written;
+            auto write = WriteChunks(file, {"AAAA", "BBBB", "CCCC", "DDDD"}, &written);
+            StepUntilDone(loop, write);
+            assert_true(written == std::vector<int>({4, 4, 4, 4}));
+            assert_string_equal(FileContent(path).c_str(), "AAAABBBBCCCCDDDD");
+
+            assert_int_equal(_lseeki64(fd, 0, SEEK_SET), 0);
+            std::vector<std::string> chunks;
+            auto read = ReadChunks(file, 4, &chunks);
+            StepUntilDone(loop, read);
+            assert_true(chunks == std::vector<std::string>({"AAAA", "BBBB", "CCCC", "DDDD"}));
+
+            // Reads at and across the end of the file leave the pointer at the end, so the
+            // next write leaves no hole.
+            auto atEnd = ReadChunks(file, 4, &chunks);
+            StepUntilDone(loop, atEnd);
+            auto next = WriteChunks(file, {"EE"}, &written);
+            StepUntilDone(loop, next);
+            assert_int_equal(_lseeki64(fd, -2, SEEK_CUR), 16);
+            auto across = ReadChunks(file, 4, &chunks);
+            StepUntilDone(loop, across);
+            assert_true(chunks.back() == "EE");
+            auto last = WriteChunks(file, {"FF"}, &written);
+            StepUntilDone(loop, last);
+            assert_string_equal(FileContent(path).c_str(), "AAAABBBBCCCCDDDDEEFF");
+        }
+        assert_true(DeleteFileA(path.c_str())); // fails while a handle is open
+    }
+}
+
+// Writes go to the end of a file opened for appending.
+void test_iocp_file_append(void**) {
+    for (bool overlapped : {true, false}) {
+        auto path = TempFile("XXXX");
+        {
+            TLoop<TIOCp> loop;
+            TIOCp::TFileHandle file(OpenFile(path, overlapped, true), loop.Poller());
+            std::vector<int> written;
+            auto write = WriteChunks(file, {"AAAA", "BBBB"}, &written);
+            StepUntilDone(loop, write);
+            assert_true(written == std::vector<int>({4, 4}));
+        }
+        assert_string_equal(FileContent(path).c_str(), "XXXXAAAABBBB");
+        assert_true(DeleteFileA(path.c_str()));
+    }
+}
+
+// Close() closes the file's handle in the next iteration, and the closed TFileHandle gives EBADF.
+void test_iocp_file_close(void**) {
+    for (bool overlapped : {true, false}) {
+        auto path = TempFile("");
+        TLoop<TIOCp> loop;
+        TIOCp::TFileHandle file(OpenFile(path, overlapped), loop.Poller());
+        std::vector<int> written;
+        auto write = WriteChunks(file, {"AAAA"}, &written);
+        StepUntilDone(loop, write);
+        assert_true(written == std::vector<int>({4}));
+        file.Close();
+        loop.Step();
+        // Opening without sharing fails while another handle is open.
+        HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        assert_true(h != INVALID_HANDLE_VALUE);
+        CloseHandle(h);
+        char buf[4];
+        int result = 0;
+        auto read = IoResult(file, false, buf, sizeof(buf), &result);
+        StepUntilDone(loop, read);
+        assert_int_equal(result, -EBADF);
+        assert_true(DeleteFileA(path.c_str()));
+    }
+}
+
+// Operations posted together take consecutive ranges of the file: two writers and two readers
+// lose and repeat nothing, and the readers that stop at the end leave the pointer there.
+void test_iocp_file_concurrent(void**) {
+    const std::vector<std::string> expected = {"AAAA", "BBBB", "CCCC", "DDDD"};
+    for (bool overlapped : {true, false}) {
+        auto path = TempFile("");
+        {
+            TLoop<TIOCp> loop;
+            int fd = OpenFile(path, overlapped);
+            TIOCp::TFileHandle file(fd, loop.Poller());
+            std::vector<int> written;
+            auto first = WriteChunks(file, {"AAAA", "CCCC"}, &written);
+            auto second = WriteChunks(file, {"BBBB", "DDDD"}, &written);
+            StepUntilDone(loop, first);
+            StepUntilDone(loop, second);
+            assert_true(written == std::vector<int>({4, 4, 4, 4}));
+            std::string content = FileContent(path);
+            assert_int_equal(content.size(), 16);
+            std::vector<std::string> chunks;
+            for (size_t i = 0; i < content.size(); i += 4) {
+                chunks.push_back(content.substr(i, 4));
+            }
+            std::sort(chunks.begin(), chunks.end());
+            assert_true(chunks == expected);
+
+            assert_int_equal(_lseeki64(fd, 0, SEEK_SET), 0);
+            std::vector<std::string> read[2];
+            auto reader1 = ReadChunks(file, 4, &read[0]);
+            auto reader2 = ReadChunks(file, 4, &read[1]);
+            StepUntilDone(loop, reader1);
+            StepUntilDone(loop, reader2);
+            chunks = read[0];
+            chunks.insert(chunks.end(), read[1].begin(), read[1].end());
+            std::sort(chunks.begin(), chunks.end());
+            assert_true(chunks == expected);
+            assert_int_equal(_lseeki64(fd, 0, SEEK_CUR), 16);
+        }
+        assert_true(DeleteFileA(path.c_str()));
+    }
+}
+
+// Pipes have no file pointer. A destroyed pending read is cancelled and leaves the data for
+// the next read, a message longer than the buffer is read in parts, and a closed writer gives
+// the end. A pipe without FILE_FLAG_OVERLAPPED, e.g. an inherited stdin, is read synchronously.
+void test_iocp_pipe(void**) {
+    const std::string name = "\\\\.\\pipe\\coroio-test-" + std::to_string(GetCurrentProcessId());
+    for (DWORD mode : {PIPE_TYPE_BYTE | PIPE_READMODE_BYTE, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE}) {
+        HANDLE server = CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, mode, 1, 4096, 4096, 0, nullptr);
+        assert_true(server != INVALID_HANDLE_VALUE);
+        HANDLE client = CreateFileA(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        assert_true(client != INVALID_HANDLE_VALUE);
+        TLoop<TIOCp> loop;
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
+        TIOCp::TFileHandle reading(_open_osfhandle(reinterpret_cast<intptr_t>(server), 0), loop.Poller());
+        TIOCp::TFileHandle writing(_open_osfhandle(reinterpret_cast<intptr_t>(client), 0), loop.Poller());
+
+        char buf[4] = {};
+        int got = -1;
+        std::optional<TFuture<void>> cancelled{ReadInto(reading, buf, sizeof(buf), &got)};
+        loop.Step();
+        assert_false(cancelled->done());
+        cancelled.reset();
+
+        std::vector<int> written;
+        auto write = WriteChunks(writing, {"pingpong"}, &written);
+        StepUntilDone(loop, write);
+        assert_true(written == std::vector<int>({8}));
+        std::vector<std::string> chunks;
+        auto read = ReadChunks(reading, 4, &chunks);
+        for (int i = 0; i < 100 && chunks.size() < 2; i++) {
+            loop.Step();
+        }
+        writing.Close();
+        StepUntilDone(loop, read);
+        assert_int_equal(got, -1);
+        assert_int_equal(buf[0], 0);
+        assert_true(chunks == std::vector<std::string>({"ping", "pong"}));
+    }
+
+    int p[2];
+    assert_int_equal(_pipe(p, 4096, _O_BINARY), 0);
+    TLoop<TIOCp> loop;
+    TIOCp::TFileHandle reading(p[0], loop.Poller());
+    TIOCp::TFileHandle writing(p[1], loop.Poller());
+    std::vector<int> written;
+    auto write = WriteChunks(writing, {"ping"}, &written);
+    StepUntilDone(loop, write);
+    writing.Close();
+    loop.Step();
+    std::vector<std::string> chunks;
+    auto read = ReadChunks(reading, 4, &chunks);
+    StepUntilDone(loop, read);
+    assert_true(chunks == std::vector<std::string>({"ping"}));
 }
 
 std::string SocketName(int fd, bool peer) {
@@ -4067,6 +4307,11 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
     ADD_TEST(cmocka_unit_test, test_iocp_failed_read_write);
     ADD_TEST(cmocka_unit_test, test_iocp_aborted_accept);
+    ADD_TEST(cmocka_unit_test, test_iocp_file_read_write);
+    ADD_TEST(cmocka_unit_test, test_iocp_file_append);
+    ADD_TEST(cmocka_unit_test, test_iocp_file_close);
+    ADD_TEST(cmocka_unit_test, test_iocp_file_concurrent);
+    ADD_TEST(cmocka_unit_test, test_iocp_pipe);
     ADD_TEST(cmocka_unit_test, test_iocp_accepted_socket);
 #endif
     ADD_TEST(cmocka_unit_test, test_completions);
