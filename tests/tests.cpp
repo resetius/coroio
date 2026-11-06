@@ -2446,28 +2446,42 @@ void test_uring_close_cancels_after_finished_operations(void**) {
 }
 
 // The two linked SQEs of a close are never split, even on the smallest queue.
+// With 256 entries the cancelled reads and the closes are more deferred task
+// work than one wait runs: the Wait() that cancels the reads runs the closes too.
 void test_uring_closes_on_small_queues(void**) {
-    for (int size : {1, 8}) {
+    for (int size : {1, 8, 256}) {
         TUring uring(size);
-        int fds[20][2];
+        constexpr int count = 40;
+        int fds[count][2];
         std::vector<std::unique_ptr<TUring::TFileHandle>> handles;
         for (auto& pair : fds) {
             assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
             handles.push_back(std::make_unique<TUring::TFileHandle>(pair[0], uring));
         }
-        char buf[1] = {0};
-        int result = 0;
-        auto read = IoResult(*handles[0], false, buf, 1, &result);
+        char bufs[count] = {};
+        int results[count] = {};
+        std::vector<TFuture<void>> reads;
+        for (int i = 0; i < count; i++) {
+            reads.push_back(IoResult(*handles[i], false, &bufs[i], 1, &results[i]));
+        }
         uring.Wait({0, 0});
         handles.clear();
-        for (int i = 0; i < 100 && !read.done(); i++) {
+        auto waiting = [&]() {
+            for (auto& read : reads) {
+                if (!read.done()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (int i = 0; i < 100 && waiting(); i++) {
             uring.Wait({0, 1000000});
             uring.WakeupReadyHandles();
         }
-        assert_int_equal(result, -ECANCELED);
-        for (auto& pair : fds) {
-            assert_true(IsClosed(pair[0]));
-            close(pair[1]);
+        for (int i = 0; i < count; i++) {
+            assert_int_equal(results[i], -ECANCELED);
+            assert_true(IsClosed(fds[i][0]));
+            close(fds[i][1]);
         }
     }
 }
