@@ -236,6 +236,9 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
         if (op->Addr) {
             closesocket((SOCKET)op->Sock);
         }
+    } else if (op->Addr && Failed(*op)) {
+        closesocket((SOCKET)op->Sock); // nothing was accepted into it
+        result = -SocketError(*op);
     } else if (op->Addr) {
         sockaddr_in* remoteAddr = nullptr;
         sockaddr_in* localAddr = nullptr;
