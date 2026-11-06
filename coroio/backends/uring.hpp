@@ -227,6 +227,8 @@ private:
 
     /// Submits queued I/O requests to the kernel.
     void Submit();
+    /// Runs the next batch of the deferred task work, e.g. linked closes; false when none is pending or the call fails.
+    bool RunTaskWork();
     /// Queues the close of a close change, hard-linked after a cancel by fd if the descriptor has operations. Not named Close: it would hide TPollerBase::Close.
     void PrepClose(TEvent& change);
     /// Points the SQE just obtained to @p op, records its position in the SQ and counts it for its descriptor.
