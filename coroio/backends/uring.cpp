@@ -19,7 +19,11 @@ TUring::TUring(int queueSize)
     if (EpollFd_ < 0) {
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
-    if ((err = io_uring_queue_init(std::max(queueSize, 2), &Ring_, 0)) < 0) { // a close takes two SQEs
+    io_uring_params params = {};
+    // Completions of operations that waited are posted in our next io_uring_enter, in a batch,
+    // instead of by task work signalled to the thread.
+    params.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
+    if ((err = io_uring_queue_init_params(std::max(queueSize, 2), &Ring_, &params)) < 0) { // a close takes two SQEs
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
 
@@ -261,15 +265,20 @@ int TUring::Wait(timespec ts) {
     }
 
     int completed = 0;
-    io_uring_for_each_cqe(&Ring_, head, cqe) {
-        completed ++;
-        if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
-            Done(*op);
-            Completions_.Collect(op, cqe->res);
+    int reaped;
+    do {
+        reaped = 0;
+        io_uring_for_each_cqe(&Ring_, head, cqe) {
+            reaped ++;
+            if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
+                Done(*op);
+                Completions_.Collect(op, cqe->res);
+            }
         }
-    }
-
-    io_uring_cq_advance(&Ring_, completed);
+        io_uring_cq_advance(&Ring_, reaped);
+        completed += reaped;
+        // A wait runs a bounded batch of the deferred work: run the rest, e.g. linked closes.
+    } while ((IO_URING_READ_ONCE(*Ring_.sq.kflags) & IORING_SQ_TASKRUN) && io_uring_get_events(&Ring_) >= 0);
 
     ProcessTimers();
 

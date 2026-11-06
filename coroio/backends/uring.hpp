@@ -34,6 +34,8 @@ namespace NNet {
  * - Provides operations such as @ref Read(), @ref Write(), @ref Recv(), @ref Send(), @ref Accept() and @ref Connect().
  * - Offers additional methods for cancelling pending operations, registering file descriptors, waiting for completions,
  *   and submitting queued requests.
+ * - Requires Linux 6.1 or later. The ring is set up with IORING_SETUP_SINGLE_ISSUER, so it must be
+ *   used from the thread that constructs it.
  *
  * Type aliases:
  *  - @c TSocket is defined as NNet::TPollerDrivenSocket<TUring>.
