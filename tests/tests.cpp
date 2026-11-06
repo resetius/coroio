@@ -2027,6 +2027,39 @@ void test_iocp_aborted_accept(void**) {
     assert_true(GetProcessHandleCount(GetCurrentProcess(), &after));
     assert_in_range(after, 0, before + count / 10);
 }
+
+std::string SocketName(int fd, bool peer) {
+    sockaddr_storage addr = {};
+    int len = sizeof(addr);
+    auto* raw = reinterpret_cast<sockaddr*>(&addr);
+    if ((peer ? getpeername(fd, raw, &len) : getsockname(fd, raw, &len)) != 0) {
+        return "error " + std::to_string(WSAGetLastError());
+    }
+    return TAddress{raw, len}.ToString();
+}
+
+// An accepted socket has the listener's family and accept context, so its
+// addresses and shutdown() work, on IPv4 and IPv6 (#158).
+void test_iocp_accepted_socket(void**) {
+    using TSocket = TIOCp::TSocket;
+    for (const char* host : {"127.0.0.1", "::1"}) {
+        TLoop<TIOCp> loop;
+        TAddress address{host, GetFreePort()};
+        TSocket listener(loop.Poller(), address.Domain());
+        listener.Bind(address);
+        listener.Listen();
+        auto [client, server] = ConnectedPair(loop, listener, address);
+        assert_string_equal(SocketName(server.Fd(), true).c_str(), SocketName(client.Fd(), false).c_str());
+        assert_string_equal(SocketName(server.Fd(), true).c_str(), server.RemoteAddr()->ToString().c_str());
+        assert_string_equal(SocketName(server.Fd(), false).c_str(), address.ToString().c_str());
+        assert_int_equal(shutdown(server.Fd(), SD_SEND), 0);
+        char buf[1];
+        int got = -1;
+        auto eof = ReadInto(client, buf, sizeof(buf), &got);
+        StepUntilDone(loop, eof);
+        assert_int_equal(got, 0);
+    }
+}
 #endif
 
 #ifndef _WIN32
@@ -4034,6 +4067,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
     ADD_TEST(cmocka_unit_test, test_iocp_failed_read_write);
     ADD_TEST(cmocka_unit_test, test_iocp_aborted_accept);
+    ADD_TEST(cmocka_unit_test, test_iocp_accepted_socket);
 #endif
     ADD_TEST(cmocka_unit_test, test_completions);
 
