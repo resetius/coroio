@@ -96,7 +96,13 @@ void TIOCp::Accept(int fd, struct sockaddr* addr, socklen_t* len, TOperation& op
     Prepare(op, fd);
     op.Addr = addr;
     op.Len = len;
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_storage local = {};
+    int localLen = sizeof(local);
+    if (getsockname((SOCKET)fd, reinterpret_cast<sockaddr*>(&local), &localLen) != 0) {
+        Throw(op, WSAGetLastError(), std::generic_category(), "getsockname");
+    }
+    // AcceptEx needs a socket of the listener's family, e.g. AF_INET6 for an IPv6 connection.
+    SOCKET sock = socket(local.ss_family, SOCK_STREAM, IPPROTO_TCP);
     op.Sock = (int)sock;
     if (sock == INVALID_SOCKET) {
         Throw(op, WSAGetLastError(), std::generic_category(), "socket");
@@ -246,7 +252,14 @@ int TIOCp::Complete(const OVERLAPPED_ENTRY& entry)
         *op->Len = 0;
         GetAcceptExSockaddrs(op->Addr, 0, sizeof(sockaddr_in6) + 16, sizeof(sockaddr_in6) + 16, (sockaddr**)&localAddr, &localAddrLen, (sockaddr**)&remoteAddr, op->Len);
         memmove(op->Addr, remoteAddr, *op->Len);
-        result = op->Sock;
+        // Without the listener's context getpeername(), getsockname() and shutdown() fail on the socket.
+        SOCKET listener = (SOCKET)op->Fd;
+        if (setsockopt((SOCKET)op->Sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, reinterpret_cast<char*>(&listener), sizeof(listener)) != 0) {
+            result = -WSAGetLastError();
+            closesocket((SOCKET)op->Sock);
+        } else {
+            result = op->Sock;
+        }
     } else if (op->Connect) {
         // ConnectEx transfers no bytes, its outcome is the operation status.
         SOCKET sock = (SOCKET)op->Fd;
