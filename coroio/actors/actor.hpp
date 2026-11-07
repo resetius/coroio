@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <memory>
 #include <coroio/corochain.hpp>
+#include <coroio/notifier.hpp>
 #include "messages.hpp"
 #include "actorid.hpp"
 
@@ -157,6 +158,11 @@ public:
     TActorId Self() const {
         return Self_;
     }
+
+#ifndef _WIN32
+    /// Creates a notifier bound to the actor system's poller, on the poller thread.
+    std::unique_ptr<INotifier> CreateNotifier();
+#endif
 
     /**
      * @brief Send a message to another actor

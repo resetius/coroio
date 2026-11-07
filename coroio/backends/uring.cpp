@@ -1,11 +1,16 @@
 #ifdef __linux__
 #include "uring.hpp"
+#include <coroio/notifier.hpp>
 
 #include <algorithm>
 
 #ifdef HAVE_URING
 
 namespace NNet {
+
+std::unique_ptr<INotifier> TUring::CreateNotifier() {
+    return std::make_unique<TNotifier<TUring>>(*this);
+}
 
 // The kernel sizes the hash that cancels by user_data search from the CQ: 16 buckets for the
 // default 512 entries, so such a cancel walked ~1/32 of the pending operations; 8192 gives 256, the most.

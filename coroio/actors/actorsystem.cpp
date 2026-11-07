@@ -1,5 +1,7 @@
 #include <coroio/actors/actorsystem.hpp>
 
+#include <stdexcept>
+
 #ifdef Yield
 #undef Yield
 #endif
@@ -12,6 +14,19 @@ TActorSystem::~TActorSystem() {
         handle.destroy();
     }
 }
+
+#ifndef _WIN32
+std::unique_ptr<INotifier> TActorSystem::CreateNotifier() {
+    if (!Poller) {
+        throw std::logic_error("creating a notifier requires a poller");
+    }
+    return Poller->CreateNotifier();
+}
+
+std::unique_ptr<INotifier> TActorContext::CreateNotifier() {
+    return ActorSystem->CreateNotifier();
+}
+#endif
 
 void TActorContext::Send(TActorId to, TMessageId messageId, TBlob blob)
 {

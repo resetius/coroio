@@ -8,6 +8,14 @@
 #include <sys/eventfd.h>
 #endif
 
+namespace NNet {
+
+std::unique_ptr<INotifier> TPollerBase::CreateNotifier() {
+    return std::make_unique<TNotifier<TPollerBase>>(*this);
+}
+
+} // namespace NNet
+
 namespace NNet::NDetail {
 
 std::array<int, 2> MakeNotifierFds() {
