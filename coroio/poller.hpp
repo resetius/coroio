@@ -58,7 +58,7 @@ public:
     TPollerBase& operator=(const TPollerBase& ) = delete;
 
     /// Closes what Close() queued and no Poll() applied.
-    virtual ~TPollerBase() {
+    ~TPollerBase() {
         for (auto& change : Changes_) {
             if (change.Type & TEvent::CLOSE) {
                 CloseDescriptor(change);
