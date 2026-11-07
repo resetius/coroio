@@ -115,6 +115,11 @@ public:
 
     ~TActorSystem();
 
+#ifndef _WIN32
+    /// Creates a notifier on the poller thread. The poller must outlive it.
+    std::unique_ptr<INotifier> CreateNotifier();
+#endif
+
     /**
      * @brief Registers an actor and returns its system-wide ID.
      *

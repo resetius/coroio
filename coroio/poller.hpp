@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <map>
+#include <memory>
 #include <queue>
 #include <system_error>
 #include <assert.h>
@@ -24,6 +25,11 @@
 
 namespace NNet {
 
+class TFileHandle;
+#ifndef _WIN32
+class INotifier;
+#endif
+
 namespace NDetail {
 void CloseDescriptor(int fd, bool file); ///< TFileOps::close or TSockOps::close.
 } // namespace NDetail
@@ -42,6 +48,8 @@ void CloseDescriptor(int fd, bool file); ///< TFileOps::close or TSockOps::close
  */
 class TPollerBase {
 public:
+    using TFileHandle = NNet::TFileHandle;
+
     /// Default constructor.
     TPollerBase() = default;
 
@@ -50,13 +58,18 @@ public:
     TPollerBase& operator=(const TPollerBase& ) = delete;
 
     /// Closes what Close() queued and no Poll() applied.
-    ~TPollerBase() {
+    virtual ~TPollerBase() {
         for (auto& change : Changes_) {
             if (change.Type & TEvent::CLOSE) {
                 CloseDescriptor(change);
             }
         }
     }
+
+#ifndef _WIN32
+    /// Creates a notifier on the poller thread. The poller must outlive it.
+    virtual std::unique_ptr<INotifier> CreateNotifier();
+#endif
 
     /**
      * @brief Schedules a timer.

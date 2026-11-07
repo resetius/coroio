@@ -2908,6 +2908,34 @@ template<typename TPoller>
 constexpr bool kDriven = !std::is_same_v<typename TPoller::TFileHandle, TFileHandle>;
 
 template<typename TPoller>
+void test_notifier_factory(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TPollerBase& poller = loop.Poller();
+    auto notifier = poller.CreateNotifier();
+    for (int i = 0; i < 1000; ++i) {
+        notifier->Notify();
+    }
+    auto first = notifier->Wait();
+    Complete(loop, first);
+
+    auto next = notifier->Wait();
+    assert_false(next.done());
+    std::thread producer([&] { notifier->Notify(); });
+    Complete(loop, next);
+    producer.join();
+
+    {
+        auto cancelled = notifier->Wait();
+        assert_false(cancelled.done());
+        loop.Step();
+    }
+    notifier->Notify();
+    auto last = notifier->Wait();
+    Complete(loop, last);
+}
+
+template<typename TPoller>
 void test_notifier_wait_signal(void**) {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
@@ -4152,6 +4180,7 @@ int main(int argc, char* argv[]) {
     parse_filters(argc, argv, filters);
 
 #ifndef _WIN32
+    ADD_TEST(my_unit_poller, test_notifier_factory);
     ADD_TEST(my_unit_poller, test_notifier_wait_signal);
     ADD_TEST(my_unit_poller, test_notifier_notify_before_wait);
     ADD_TEST(my_unit_poller, test_notifier_coalesces);

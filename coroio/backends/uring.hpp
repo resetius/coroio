@@ -66,6 +66,10 @@ public:
     using TSocket = NNet::TPollerDrivenSocket<TUring>;
     /// Alias for the poller-driven file handle type.
     using TFileHandle = NNet::TPollerDrivenFileHandle<TUring>;
+
+    /// Creates a notifier using the io_uring-driven file handle.
+    std::unique_ptr<INotifier> CreateNotifier() override;
+
     /**
      * @brief State of one operation, kept by the caller.
      *

@@ -7,6 +7,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <iostream>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -88,6 +89,101 @@ void test_actor_id_hash(void**) {
     assert_int_equal(values.count(actor), 0);
     assert_int_equal(actors.count(actor), 0);
 }
+
+#ifndef _WIN32
+void test_actor_system_notifier_factory(void**) {
+    TLoop<TDefaultPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TActorSystem system(&loop.Poller());
+    auto first = system.CreateNotifier();
+    auto second = system.CreateNotifier();
+    auto firstWait = first->Wait();
+    auto secondWait = second->Wait();
+    for (int i = 0; i < 1000; ++i) {
+        first->Notify();
+    }
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (!firstWait.done() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(firstWait.done());
+    firstWait.await_resume();
+    assert_false(secondWait.done());
+    auto next = first->Wait();
+    assert_false(next.done());
+    second->Notify();
+    while (!secondWait.done() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(secondWait.done());
+    secondWait.await_resume();
+    assert_false(next.done());
+}
+
+struct TNotifierActorState {
+    std::unique_ptr<INotifier> Notifier;
+    bool Waiting = false;
+    int Payload = 0;
+    int Observed = 0;
+};
+
+class TNotifierActor : public ICoroActor {
+public:
+    explicit TNotifierActor(TNotifierActorState& state)
+        : State_(state)
+    {}
+
+    void AfterRegister(TActorContext::TPtr ctx) override {
+        State_.Notifier = ctx->CreateNotifier();
+    }
+
+    TFuture<void> CoReceive(TMessageId, TBlob, TActorContext::TPtr ctx) override {
+        State_.Waiting = true;
+        co_await State_.Notifier->Wait();
+        State_.Observed = State_.Payload;
+        ctx->Send<TPoison>(ctx->Self());
+    }
+
+private:
+    TNotifierActorState& State_;
+};
+
+void test_actor_context_notifier_factory(void**) {
+    TLoop<TDefaultPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TNotifierActorState first;
+    TNotifierActorState second;
+    TActorSystem system(&loop.Poller());
+    const auto firstId = system.Register(std::make_unique<TNotifierActor>(first));
+    const auto secondId = system.Register(std::make_unique<TNotifierActor>(second));
+    system.Send(firstId, firstId, 100, TBlob{});
+    system.Send(secondId, secondId, 100, TBlob{});
+    system.Serve();
+    auto stepUntil = [&](auto ready) {
+        const auto deadline = TClock::now() + std::chrono::seconds(5);
+        while (!ready() && TClock::now() < deadline) {
+            loop.Step();
+        }
+        assert_true(ready());
+    };
+    stepUntil([&] { return first.Waiting && second.Waiting; });
+    std::thread firstProducer([&] {
+        first.Payload = 42;
+        for (int i = 0; i < 1000; ++i) {
+            first.Notifier->Notify();
+        }
+    });
+    firstProducer.join();
+    stepUntil([&] { return first.Observed == 42 && system.ActorsSize() == 1; });
+    assert_int_equal(second.Observed, 0);
+    std::thread secondProducer([&] {
+        second.Payload = 17;
+        second.Notifier->Notify();
+    });
+    secondProducer.join();
+    stepUntil([&] { return second.Observed == 17 && system.ActorsSize() == 0; });
+}
+#endif
 
 struct TState {
     bool usePerf = false;
@@ -1078,6 +1174,10 @@ int main(int argc, char** argv) {
 
     ADD_TEST(cmocka_unit_test, test_actor_id_equality);
     ADD_TEST(cmocka_unit_test, test_actor_id_hash);
+#ifndef _WIN32
+    ADD_TEST(cmocka_unit_test, test_actor_system_notifier_factory);
+    ADD_TEST(cmocka_unit_test, test_actor_context_notifier_factory);
+#endif
     ADD_TEST(cmocka_unit_test, test_ping_pong);
     ADD_TEST(cmocka_unit_test, test_ask_respond);
     ADD_TEST(cmocka_unit_test, test_schedule);
