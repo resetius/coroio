@@ -37,19 +37,30 @@ namespace NNet {
  *
  * @note This class is specific to Windows and uses IOCP for high-performance I/O.
  *
- * @warning File handles are not supported. TPollerDrivenFileHandle does not register its
- * handle, so the handle is not associated with the port: its reads and writes get no
- * completion packet and their coroutines are never resumed. Cancel(TOperation&) relies on
- * that: for a file operation it returns once the OVERLAPPED is no longer pending, without
- * waiting for a packet. A file handle must not be associated with the port, e.g. by
- * Register(): Cancel() would then return while a packet still points to the operation.
- * Support for file I/O belongs to GitHub issues #156 and #158.
+ * File handles (TFileHandle, Read(), Write()) take a CRT descriptor, as on the other
+ * backends, e.g. from _open() or _open_osfhandle(). Closing the descriptor closes its handle.
+ * - A handle opened with FILE_FLAG_OVERLAPPED is associated with the port at its first
+ *   operation. A handle can be associated with one port only.
+ * - Other handles, e.g. from _open(), the console or an inherited pipe, are read and written
+ *   synchronously, as regular files on the readiness pollers: the loop waits for them, for
+ *   a console read until Enter.
+ * - On an overlapped disk file an operation takes [pointer, pointer + size) of the file
+ *   pointer when posted, as if the operations posted before it transfer all their bytes:
+ *   a write posted while a read at the end of the file is pending leaves a hole. An
+ *   operation that transfers less gives the rest back unless a later one took the pointer,
+ *   and a read leaves it at most at the end of the file, also after a seek past the end.
+ * - Overlapped writes go to the end of the file only if the handle has FILE_APPEND_DATA and
+ *   no FILE_WRITE_DATA access: _O_APPEND of _open_osfhandle() is a CRT flag they do not see.
+ * - A read at the end of the file or of a pipe returns 0. A failed operation returns the
+ *   negated Win32 error, or errno for a synchronous handle.
+ * - The descriptor -1, e.g. of a closed TFileHandle, gives EBADF. Another invalid descriptor
+ *   is checked by the CRT, as by read() on the other pollers: the UCRT ends the process.
  */
 class TIOCp: public TPollerBase {
 public:
     /// Alias for the poller-driven socket type.
     using TSocket = NNet::TPollerDrivenSocket<TIOCp>;
-    /// Alias for the poller-driven file handle type. Not supported: its operations are never delivered, see TIOCp.
+    /// Alias for the poller-driven file handle type. It takes a CRT descriptor, see TIOCp.
     using TFileHandle = NNet::TPollerDrivenFileHandle<TIOCp>;
 
     /**
@@ -74,7 +85,9 @@ public:
         int Sock = -1; // for accept
         int Fd = -1;
         bool Connect = false;
-        bool File = false;
+        HANDLE File = nullptr; // of a file associated with the port
+        DWORD Size = 0; // bytes of a disk file's pointer taken when posted
+        bool Read = false; // a file read: the end of the file or of a pipe gives 0 bytes
 
         // Resets the OVERLAPPED and every field except Handle for a new operation on fd.
         // A field added above must be reset here too.
@@ -87,7 +100,9 @@ public:
             Sock = -1;
             Fd = fd;
             Connect = false;
-            File = false;
+            File = nullptr;
+            Size = 0;
+            Read = false;
         }
     };
 
@@ -96,7 +111,7 @@ public:
     /**
      * @brief Posts an asynchronous read operation.
      *
-     * @param fd   The file descriptor.
+     * @param fd   The CRT descriptor of the file, see TIOCp.
      * @param buf  Buffer to store read data.
      * @param size Number of bytes to read.
      * @param op   State of the operation, with the coroutine to resume when it completes.
@@ -105,7 +120,7 @@ public:
     /**
      * @brief Posts an asynchronous write operation.
      *
-     * @param fd   The file descriptor.
+     * @param fd   The CRT descriptor of the file, see TIOCp.
      * @param buf  Buffer containing data to write.
      * @param size Number of bytes to write.
      * @param op   State of the operation, with the coroutine to resume when it completes.
@@ -148,9 +163,9 @@ public:
      */
     void Connect(int fd, const sockaddr* addr, socklen_t len, TOperation& op);
     /**
-     * @brief Cancels all pending operations on the specified file descriptor.
+     * @brief Cancels all pending operations on the specified socket.
      *
-     * @param fd The file descriptor.
+     * @param fd The socket.
      */
     void Cancel(int fd);
     /**
@@ -158,11 +173,9 @@ public:
      *
      * Called when the coroutine is destroyed while waiting for the operation.
      * Cancels it with CancelIoEx and returns only after its completion is
-     * dequeued, so its buffers and @p op may be freed. A file operation gets
-     * no completion, since TPollerDrivenFileHandle does not register its
-     * handle: for it the call returns once its OVERLAPPED is no longer pending.
-     * The completion is dropped, so its coroutine is not resumed. Other
-     * completions dequeued meanwhile are delivered by the next Poll().
+     * dequeued, so its buffers and @p op may be freed. The completion is
+     * dropped, so its coroutine is not resumed. Other completions dequeued
+     * meanwhile are delivered by the next Poll().
      *
      * @param op State of the operation, not delivered yet.
      * @return The result of the dropped completion if it was collected already
@@ -170,9 +183,9 @@ public:
      */
     int Cancel(TOperation& op);
     /**
-     * @brief Registers a file descriptor with the IOCP.
+     * @brief Registers a socket with the IOCP.
      *
-     * @param fd The file descriptor to register.
+     * @param fd The socket to register.
      */
     void Register(int fd);
     /**
@@ -197,6 +210,16 @@ private:
     [[noreturn]] static void Throw(TOperation& op, int err, const std::error_category& category, const char* what);
     // Returns the result of the operation of a dequeued completion.
     int Complete(const OVERLAPPED_ENTRY& entry);
+    // Returns the handle of CRT descriptor fd if it is associated with the port, nullptr if it
+    // is synchronous. For a disk file takes size bytes of the file pointer for op.
+    HANDLE StartFile(int fd, int size, TOperation& op);
+    // Counts a file operation posted with result ok, or completes or throws if it failed at once.
+    void PostedFile(TOperation& op, BOOL ok, const char* what);
+    // Gives back the part of the file pointer that op took and did not transfer.
+    void Rewind(TOperation& op, DWORD transferred);
+
+    enum class EFile : unsigned char { Unknown, Port, Disk, Sync };
+    std::vector<EFile> Files_; // by CRT descriptor, until the poller closes it
 
     HANDLE Port_;
 
