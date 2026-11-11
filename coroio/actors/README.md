@@ -86,7 +86,7 @@ No specializations needed. No `RegisterSerializer` needed for local-only use.
 
 ### Non-POD messages (user-provided)
 
-Any type that is not trivially copyable + standard layout must provide both specializations inside `namespace NNet::NActors`:
+Any type that is not trivially copyable + standard layout must provide three specializations inside `namespace NNet::NActors`:
 
 ```cpp
 struct TLogEntry {
@@ -97,31 +97,42 @@ struct TLogEntry {
 
 namespace NNet::NActors {
 
+// wire format: 4-byte tag count, tag values, then text
 template<>
-void SerializeToStream<TLogEntry>(const TLogEntry& obj, std::ostringstream& oss) {
-    // wire format: 4-byte tag count, tag values, then text
-    uint32_t n = obj.Tags.size();
-    oss.write(reinterpret_cast<const char*>(&n), sizeof(n));
-    oss.write(reinterpret_cast<const char*>(obj.Tags.data()), n * sizeof(int));
-    oss << obj.Text;
+size_t SerializedSize<TLogEntry>(const TLogEntry& obj) {
+    return sizeof(uint32_t) + obj.Tags.size() * sizeof(int) + obj.Text.size();
 }
 
 template<>
-void DeserializeFromStream<TLogEntry>(TLogEntry& obj, std::istringstream& iss) {
+void SerializeTo<TLogEntry>(const TLogEntry& obj, std::span<char> out) {
+    uint32_t n = obj.Tags.size();
+    char* p = out.data();
+    std::memcpy(p, &n, sizeof(n));
+    p += sizeof(n);
+    std::memcpy(p, obj.Tags.data(), n * sizeof(int));
+    p += n * sizeof(int);
+    std::memcpy(p, obj.Text.data(), obj.Text.size());
+}
+
+template<>
+void DeserializeFrom<TLogEntry>(TLogEntry& obj, TBlob& blob) {
+    const char* p = static_cast<const char*>(blob.Data.get());
     uint32_t n = 0;
-    iss.read(reinterpret_cast<char*>(&n), sizeof(n));
+    std::memcpy(&n, p, sizeof(n));
+    p += sizeof(n);
     obj.Tags.resize(n);
-    iss.read(reinterpret_cast<char*>(obj.Tags.data()), n * sizeof(int));
-    obj.Text = iss.str().substr(iss.tellg());
+    std::memcpy(obj.Tags.data(), p, n * sizeof(int));
+    p += n * sizeof(int);
+    obj.Text.assign(p, static_cast<const char*>(blob.Data.get()) + blob.Size);
 }
 
 } // namespace NNet::NActors
 ```
 
 - In-process (`Near`): `new T(args...)`, pointer stored in `TBlob`. Recipient gets the object by rvalue ref.
-- Over network (`Far`): calls `SerializeToStream` → copies bytes to flat buffer. Receiving end calls `DeserializeFromStream`.
+- Over network (`Far`): the sender reserves `SerializedSize` bytes right after the `THeader` in the node's outbound buffer and `SerializeTo` writes them there (`out` is exactly that size and may be unaligned). The receiving end calls `DeserializeFrom` with the envelope's blob: it reads `blob.Data.get()` / `blob.Size`, and may take `blob.Data` to keep pointers into the received bytes instead of copying them.
 
-**Forgetting to specialize both functions is a compile-time error** (`static_assert` fires inside the template stubs).
+**Forgetting a specialization is a compile-time error** (`static_assert` fires inside the template stubs).
 
 ### TMessagesFactory (distributed mode only)
 

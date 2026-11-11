@@ -1,7 +1,6 @@
 #include <chrono>
 #include <array>
 #include <exception>
-#include <sstream>
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
@@ -430,23 +429,33 @@ struct TWrappedString {
 namespace NNet::NActors {
 
 template<>
-void SerializeToStream<std::string>(const std::string& obj, std::ostringstream& oss) {
-    oss << obj;
+size_t SerializedSize<std::string>(const std::string& obj) {
+    return obj.size();
 }
 
 template<>
-void DeserializeFromStream<std::string>(std::string& obj, std::istringstream& iss) {
-    obj = iss.str();
+void SerializeTo<std::string>(const std::string& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.data(), out.size());
 }
 
 template<>
-void SerializeToStream<TWrappedString>(const TWrappedString& obj, std::ostringstream& oss) {
-    oss << obj.Value;
+void DeserializeFrom<std::string>(std::string& obj, TBlob& blob) {
+    obj.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
 }
 
 template<>
-void DeserializeFromStream<TWrappedString>(TWrappedString& obj, std::istringstream& iss) {
-    obj.Value = iss.str();
+size_t SerializedSize<TWrappedString>(const TWrappedString& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TWrappedString>(const TWrappedString& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+template<>
+void DeserializeFrom<TWrappedString>(TWrappedString& obj, TBlob& blob) {
+    obj.Value.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
 }
 
 } // namespace NNet::NActors
@@ -500,6 +509,87 @@ void test_serialize_messages_factory_non_pod(void**) {
 
     auto mes = DeserializeFar<TWrappedString>(farBlob);
     assert_string_equal(mes.Value.c_str(), "Hello, World!");
+}
+
+// An output stream like TNode's outbound buffer: Acquire reserves, Commit publishes.
+struct TVectorStream {
+    std::vector<char> Data;
+    size_t Committed = 0;
+
+    std::span<char> Acquire(size_t size) {
+        if (Data.size() < Committed + size) {
+            Data.resize(Committed + size);
+        }
+        return {Data.data() + Committed, size};
+    }
+
+    void Commit(size_t size) {
+        Committed += size;
+    }
+};
+
+void test_serialize_far_inplace_round_trip(void**) {
+    TVectorStream stream;
+    const TActorId sender(1, 2, 3);
+    const TActorId recipient(2, 5, 7);
+    SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string("Hello, World!"));
+    SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string());
+
+    // The payload is exactly SerializedSize bytes after the header.
+    assert_int_equal(stream.Committed, 2 * sizeof(THeader) + 13);
+    THeader header;
+    std::memcpy(&header, stream.Data.data(), sizeof(header));
+    assert_true(header.Sender == sender);
+    assert_true(header.Recipient == recipient);
+    assert_int_equal(header.MessageId, TWrappedString::MessageId);
+    assert_int_equal(header.Size, 13);
+
+    TZeroCopyEnvelopeReader reader;
+    reader.Push(stream.Data.data(), stream.Committed);
+    auto first = reader.Pop();
+    assert_true(first.has_value());
+    assert_string_equal(DeserializeFar<TWrappedString>(first->Blob).Value.c_str(), "Hello, World!");
+    auto second = reader.Pop();
+    assert_true(second.has_value());
+    assert_int_equal(second->Blob.Size, 0);
+    assert_true(DeserializeFar<TWrappedString>(second->Blob).Value.empty());
+    assert_false(reader.Pop().has_value());
+}
+
+// Keeps the received bytes instead of copying them.
+struct TBlobView {
+    static constexpr TMessageId MessageId = 44;
+    TBlob::TRawPtr Bytes;
+    uint32_t Size = 0;
+};
+
+namespace NNet::NActors {
+
+template<>
+void DeserializeFrom<TBlobView>(TBlobView& obj, TBlob& blob) {
+    obj.Size = blob.Size;
+    obj.Bytes = std::move(blob.Data);
+}
+
+} // namespace NNet::NActors
+
+void test_deserialize_far_takes_blob(void**) {
+    const std::string text = "kept, not copied";
+    TBlob blob{
+        .Data = TBlob::TRawPtr(::operator new(text.size()), TBlobDeleter{[](void* ptr) {
+            ::operator delete(ptr);
+        }}),
+        .Size = static_cast<uint32_t>(text.size()),
+        .Type = TBlob::PointerType::Far,
+    };
+    std::memcpy(blob.Data.get(), text.data(), text.size());
+    void* bytes = blob.Data.get();
+
+    auto message = DeserializeFar<TBlobView>(blob);
+    assert_true(message.Bytes.get() == bytes);
+    assert_int_equal(message.Size, text.size());
+    assert_true(blob.Data.get() == nullptr);
+    assert_memory_equal(message.Bytes.get(), text.data(), text.size());
 }
 
 void test_unbounded_vector_queue(void**) {
@@ -1118,6 +1208,73 @@ void test_node_reconnects_to_dead_peer(void**) {
     assert_int_equal(received.Size, 0);
 }
 
+// Its serializer fails after the node reserved room for it.
+struct TFailingMessage {
+    static constexpr TMessageId MessageId = 45;
+    std::string Text;
+};
+
+namespace NNet::NActors {
+
+template<>
+size_t SerializedSize<TFailingMessage>(const TFailingMessage&) {
+    return 64;
+}
+
+template<>
+void SerializeTo<TFailingMessage>(const TFailingMessage&, std::span<char>) {
+    throw std::runtime_error("cannot serialize");
+}
+
+} // namespace NNet::NActors
+
+void test_node_drops_failed_serialization(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    const TActorId sender(1, 2, 3);
+    const TActorId recipient(2, 5, 7);
+    bool thrown = false;
+    try {
+        SerializeFarInplace<TFailingMessage>(node, sender, recipient, std::string("x"));
+    } catch (const std::runtime_error&) {
+        thrown = true;
+    }
+    node.Send(TEnvelope{.Sender = sender, .Recipient = recipient, .MessageId = 42});
+
+    THeader received;
+    bool done = false;
+    auto server = [](TPoller::TSocket& listener, THeader& received, bool& done) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        TByteReader reader(client);
+        co_await reader.Read(&received, sizeof(received));
+        done = true;
+    }(listener, received, done);
+
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (!done && TClock::now() < deadline) {
+        node.Drain();
+        loop.Step();
+    }
+
+    assert_true(thrown);
+    assert_true(done);
+    // The bytes reserved for the failed message never reach the wire.
+    assert_int_equal(received.MessageId, 42);
+    assert_int_equal(received.Size, 0);
+}
+
 class TRecordingActor : public IActor {
 public:
     explicit TRecordingActor(std::vector<TMessageId>& received)
@@ -1193,6 +1350,76 @@ void test_inbound_envelope_after_yield(void**) {
     assert_int_equal(received[1], 200);
 }
 
+class TStringCollector : public IBehaviorActor, public TBehavior<TStringCollector, TWrappedString> {
+public:
+    explicit TStringCollector(std::vector<std::string>& received)
+        : Received(received)
+    {
+        Become(this);
+    }
+
+    void Receive(TWrappedString&& message, TBlob, TActorContext::TPtr) {
+        Received.push_back(std::move(message.Value));
+    }
+
+    void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) { }
+
+    std::vector<std::string>& Received;
+};
+
+// A far message larger than the per-turn read budget is written in place by
+// SerializeFarInplace and read back by TBehavior through DeserializeFrom.
+void test_far_message_across_yield(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    bool inboundClosed = false;
+    TActorSystem sys(&poller, 1, [&](const std::string& message) {
+        inboundClosed = inboundClosed || message.find("InboundConnection") != std::string::npos;
+    });
+    std::vector<std::string> received;
+    const auto recipient = sys.Register(std::make_unique<TStringCollector>(received));
+
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    sys.Serve(std::move(listener));
+
+    // Above the 2 MiB budget of one turn.
+    std::string large(5 * 1024 * 1024, '\0');
+    for (size_t i = 0; i < large.size(); ++i) {
+        large[i] = static_cast<char>('a' + i % 23);
+    }
+    TVectorStream stream;
+    SerializeFarInplace<TWrappedString>(stream, TActorId(2, 1, 1), recipient, large);
+    SerializeFarInplace<TWrappedString>(stream, TActorId(2, 1, 1), recipient, std::string("tail"));
+
+    TPoller::TSocket client(poller, address.Domain());
+    bool written = false;
+    auto writer = [](TPoller::TSocket& client, TAddress address, TVectorStream& stream, bool& written) -> TFuture<void> {
+        co_await client.Connect(address);
+        co_await TByteWriter(client).Write(stream.Data.data(), stream.Committed);
+        written = true;
+    }(client, address, stream, written);
+
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (received.size() < 2 && TClock::now() < deadline) {
+        loop.Step();
+    }
+    client.Close();
+    const auto closeDeadline = TClock::now() + std::chrono::seconds(5);
+    while (!inboundClosed && TClock::now() < closeDeadline) {
+        loop.Step();
+    }
+
+    assert_true(written);
+    assert_true(inboundClosed);
+    assert_int_equal(received.size(), 2);
+    assert_true(received[0] == large);
+    assert_string_equal(received[1].c_str(), "tail");
+}
+
 void test_intrusive_list_stale_tag(void**) {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
@@ -1261,6 +1488,8 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_serialize_pod);
     ADD_TEST(cmocka_unit_test, test_serialize_non_pod);
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory);
+    ADD_TEST(cmocka_unit_test, test_serialize_far_inplace_round_trip);
+    ADD_TEST(cmocka_unit_test, test_deserialize_far_takes_blob);
     ADD_TEST(cmocka_unit_test, test_envelope_reader);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
@@ -1273,7 +1502,9 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_behavior_actor);
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
+    ADD_TEST(cmocka_unit_test, test_node_drops_failed_serialization);
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
+    ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);

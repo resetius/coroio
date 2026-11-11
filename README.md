@@ -367,8 +367,9 @@ struct MyActor : IBehaviorActor, TBehavior<MyActor, TPing, TMessage> {
 
 **POD messages** serialize automatically. Non-POD types need:
 ```cpp
-template<> void SerializeToStream<T>(const T&, std::ostringstream&);
-template<> void DeserializeFromStream<T>(T&, std::istringstream&);
+template<> size_t SerializedSize<T>(const T&);                // exact wire size
+template<> void SerializeTo<T>(const T&, std::span<char> out); // writes into the outbound buffer
+template<> void DeserializeFrom<T>(T&, TBlob& blob);          // may take blob.Data
 ```
 
 ---

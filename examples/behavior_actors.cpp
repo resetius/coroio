@@ -7,6 +7,7 @@
 #include <coroio/actors/actorsystem.hpp>
 
 #include <cstdint>
+#include <cstring>
 
 using namespace NNet;
 using namespace NNet::NActors;
@@ -23,13 +24,18 @@ struct TPing {
 namespace NNet::NActors {
 
 template<>
-void SerializeToStream<TMessage>(const TMessage& obj, std::ostringstream& oss) {
-    oss << obj.Text;
+size_t SerializedSize<TMessage>(const TMessage& obj) {
+    return obj.Text.size();
 }
 
 template<>
-void DeserializeFromStream<TMessage>(TMessage& obj, std::istringstream& iss) {
-    obj.Text = iss.str();
+void SerializeTo<TMessage>(const TMessage& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Text.data(), out.size());
+}
+
+template<>
+void DeserializeFrom<TMessage>(TMessage& obj, TBlob& blob) {
+    obj.Text.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
 }
 
 } // namespace NNet::NActors
