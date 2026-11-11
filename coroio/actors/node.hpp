@@ -22,7 +22,8 @@ namespace NActors {
 class IOutputStream {
 public:
     virtual ~IOutputStream() = default;
-    /// Reserves `size` contiguous bytes in the buffer and returns a span over them.
+    /// Reserves `size` contiguous bytes after the committed ones and returns a span over them.
+    /// A reservation that is not committed (its writer threw) is reused by the next `Acquire`.
     virtual std::span<char> Acquire(size_t size) = 0;
     /// Marks `size` previously acquired bytes as ready to send.
     virtual void Commit(size_t size) = 0;
@@ -83,6 +84,8 @@ public:
     // TODO: remove me, envelope needed only for local actors
     void Send(TEnvelope&& envelope) override {
         auto blob = std::move(envelope.Blob);
+        // TODO: a blob already in Far form (a received non-POD message Forward-ed to another
+        // node) is serialized again as if it held a T object; pass such blobs through as bytes.
         if (blob.Size > 0) {
             blob = Factory.SerializeFar(envelope.MessageId, std::move(blob));
         }
@@ -101,17 +104,14 @@ public:
     }
 
     std::span<char> Acquire(size_t size) override {
-        if (UncommittedBytes + size > OutputBuffer.size()) {
-            OutputBuffer.resize(UncommittedBytes + size);
+        if (CommittedBytes + size > OutputBuffer.size()) {
+            OutputBuffer.resize(CommittedBytes + size);
         }
-        auto buf = std::span<char>(OutputBuffer.data() + UncommittedBytes, size);
-        UncommittedBytes += size;
-        return buf;
+        return std::span<char>(OutputBuffer.data() + CommittedBytes, size);
     }
 
     void Commit(size_t size) override {
         CommittedBytes += size;
-        UncommittedBytes = CommittedBytes;
     }
 
     void StartConnect() override {
@@ -138,7 +138,7 @@ private:
             while (CommittedBytes > 0) {
                 SendBuffer.swap(OutputBuffer);
                 auto readSize = CommittedBytes;
-                UncommittedBytes = CommittedBytes = 0;
+                CommittedBytes = 0;
                 co_await TByteWriter(Socket).Write(SendBuffer.data(), readSize);
             }
             co_return;
@@ -190,7 +190,6 @@ private:
     std::function<TSocket(TAddress&)> SocketFactory;
     THostPort HostPort;
     std::vector<char> OutputBuffer;
-    size_t UncommittedBytes = 0;
     size_t CommittedBytes = 0;
     std::vector<char> SendBuffer;
 };

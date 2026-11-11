@@ -1,8 +1,10 @@
 #pragma once
 
 #include <memory>
-#include <sstream>
 #include <cstring>
+#include <limits>
+#include <span>
+#include <stdexcept>
 #include <type_traits>
 #include <functional>
 
@@ -92,7 +94,7 @@ struct TBlobDeleter {
  *   POD types use a pool allocator; non-POD types use `new`.
  * - **Far** — a flat byte buffer for network transmission. POD: the Near
  *   pointer is reused as-is (bytes are already contiguous). Non-POD:
- *   produced by `SerializeToStream` / `SerializeFarInplace`.
+ *   written by `SerializeTo` (see `SerializeFar` / `SerializeFarInplace`).
  *
  * Move-only; owns the payload via `TRawPtr`.
  */
@@ -120,7 +122,7 @@ constexpr bool is_pod_v = std::is_trivially_copyable_v<T> && std::is_standard_la
  * @brief `true` if `T` declares `using LocalMessage = ...;` (any type).
  *
  * Local messages are never sent to remote nodes, so no Far serialization
- * (`SerializeToStream<T>`) is required for them. Sending one to an actor on
+ * (`SerializedSize<T>` / `SerializeTo<T>`) is required for them. Sending one to an actor on
  * another node is dropped (and logged).
  */
 template<typename T, typename = void>
@@ -209,33 +211,57 @@ TBlob SerializeNear(TAllocator& alloc, Args&&... args)
 }
 
 /**
- * @brief User-provided serialization hook for non-POD message types.
+ * @brief User-provided hooks that write the Far form of a non-POD message.
  *
- * Specialize this function to enable non-POD messages to cross node boundaries.
- * The default (unspecialized) template triggers a `static_assert` at compile
- * time if a non-POD type is sent to a remote node without a specialization.
- *
- * Must be specialized alongside `DeserializeFromStream<T>`.
+ * Specialize both to let a non-POD message cross node boundaries (and
+ * `DeserializeFrom<T>` for the receiving side). `SerializedSize` returns the
+ * exact payload size; `SerializeTo` then writes exactly that many bytes into
+ * `out`, which is a region of the node's outbound buffer (`out.size()` equals
+ * `SerializedSize(obj)`; it may be unaligned). The unspecialized templates
+ * trigger a `static_assert` when a non-POD type is sent to a remote node.
  *
  * @code
  * template<>
- * void SerializeToStream<MyMsg>(const MyMsg& msg, std::ostringstream& oss) {
- *     oss << msg.field1 << ' ' << msg.field2;
+ * size_t SerializedSize<MyMsg>(const MyMsg& msg) {
+ *     return msg.Text.size();
+ * }
+ *
+ * template<>
+ * void SerializeTo<MyMsg>(const MyMsg& msg, std::span<char> out) {
+ *     std::memcpy(out.data(), msg.Text.data(), out.size());
  * }
  * @endcode
  */
 template<typename T>
-void SerializeToStream(const T& obj, std::ostringstream& oss)
+size_t SerializedSize(const T& obj)
 {
     static_assert(sizeof(T) == 0, "Serialization not implemented for this type");
+    return 0;
+}
+
+template<typename T>
+void SerializeTo(const T& obj, std::span<char> out)
+{
+    static_assert(sizeof(T) == 0, "Serialization not implemented for this type");
+}
+
+/// `SerializedSize(obj)`, checked against the 32-bit size field of `THeader`.
+template<typename T>
+uint32_t FarPayloadSize(const T& obj)
+{
+    const size_t size = SerializedSize(obj);
+    if (size > std::numeric_limits<uint32_t>::max()) {
+        throw std::length_error("far message payload exceeds 4 GiB");
+    }
+    return static_cast<uint32_t>(size);
 }
 
 /**
  * @brief Converts a Near blob to a Far (wire-safe) blob.
  *
  * POD: marks the existing blob as Far without copying — raw bytes are already
- * contiguous and safe to transmit. Non-POD: calls `SerializeToStream<T>` and
- * copies the result into a new heap buffer.
+ * contiguous and safe to transmit. Non-POD: allocates `SerializedSize<T>`
+ * bytes and fills them with `SerializeTo<T>`.
  *
  * @param blob Near blob to convert (moved in).
  * @return Far blob ready for sending over the network.
@@ -248,14 +274,12 @@ TBlob SerializeFar(TBlob blob)
         return blob; // For POD, far == near, just share the pointer
     } else {
         T* obj = reinterpret_cast<T*>(blob.Data.get());
-        std::ostringstream oss;
-        SerializeToStream(*obj, oss);
-        void* data = ::operator new(oss.str().size());
-        std::memcpy(data, oss.str().data(), oss.str().size());
-        auto rawPtr = TBlob::TRawPtr(data, TBlobDeleter{[](void* ptr) {
+        const uint32_t size = FarPayloadSize(*obj);
+        auto rawPtr = TBlob::TRawPtr(::operator new(size), TBlobDeleter{[](void* ptr) {
             ::operator delete(ptr);
         }});
-        return TBlob{std::move(rawPtr), static_cast<uint32_t>(oss.str().size()), TBlob::PointerType::Far};
+        SerializeTo(*obj, std::span<char>(static_cast<char*>(rawPtr.get()), size));
+        return TBlob{std::move(rawPtr), size, TBlob::PointerType::Far};
     }
 }
 
@@ -266,7 +290,8 @@ TBlob SerializeFar(TBlob blob)
  * `THeader + payload` into the node's outbound buffer in one contiguous
  * region — no intermediate allocation.
  *
- * POD: copies raw bytes. Non-POD: calls `SerializeToStream<T>`.
+ * POD: copies raw bytes. Non-POD: reserves `SerializedSize<T>` bytes after the
+ * header and lets `SerializeTo<T>` write them in place.
  *
  * @tparam T       Message type.
  * @tparam TStream Stream with `Acquire(size_t) → span<char>` / `Commit(size_t)`.
@@ -282,25 +307,22 @@ void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, A
         constexpr auto size = sizeof_data<T>() + sizeof(THeader);
         auto buf = stream.Acquire(size);
         char* p = static_cast<char*>(buf.data());
-        new (p) THeader {sender, recipient, T::MessageId, sizeof_data<T>()};
+        // The buffer position follows the previous payload, so it may be unaligned for THeader.
+        const THeader header{sender, recipient, T::MessageId, sizeof_data<T>()};
+        std::memcpy(p, &header, sizeof(header));
         p += sizeof(THeader);
+        // TODO: this position may be unaligned for T too (UB by the standard, works on
+        // x86-64/arm64); construct T aside and memcpy it, as the header above.
         new (p) T(std::forward<Args>(args)...);
         stream.Commit(size);
     } else {
-        // TODO: optimize:
-        // 1. estimate size of serialized T
-        // 2. allocate enough space in stream
-        // 3. serialize T to stream
-        // 4. write header with size
-        // 5. commit the whole buffer
-        std::ostringstream oss;
-        SerializeToStream(T(std::forward<Args>(args)...), oss);
-        auto size = oss.str().size() + sizeof(THeader);
+        const T obj(std::forward<Args>(args)...);
+        const uint32_t payload = FarPayloadSize(obj);
+        const size_t size = sizeof(THeader) + payload;
         auto buf = stream.Acquire(size);
-        char* p = static_cast<char*>(buf.data());
-        new (p) THeader {sender, recipient, T::MessageId, static_cast<uint32_t>(oss.str().size())};
-        p += sizeof(THeader);
-        std::memcpy(p, oss.str().data(), oss.str().size());
+        const THeader header{sender, recipient, T::MessageId, payload};
+        std::memcpy(buf.data(), &header, sizeof(header));
+        SerializeTo(obj, std::span<char>(buf.data() + sizeof(THeader), payload));
         stream.Commit(size);
     }
 }
@@ -325,42 +347,51 @@ auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() =
 }
 
 /**
- * @brief User-provided deserialization hook for non-POD message types.
+ * @brief User-provided hook that builds a non-POD message from its Far form.
  *
- * Specialize alongside `SerializeToStream<T>` to enable non-POD messages to
- * cross node boundaries. The default (unspecialized) template triggers a
- * `static_assert` at compile time if called without a specialization.
+ * Specialize alongside `SerializedSize<T>` / `SerializeTo<T>`. The payload is
+ * `blob.Data.get()` / `blob.Size` as delivered by the envelope reader. The
+ * message may keep pointers into it by taking `blob.Data`: `DeserializeFar`
+ * then leaves the blob empty (`Size` 0), so it can no longer be forwarded.
+ * Otherwise the caller frees the blob. The default `TZeroCopyEnvelopeReader`
+ * allocates every payload with `operator new` (16-byte aligned);
+ * `TZeroCopyEnvelopeReaderV2` hands out unaligned bytes inside its chunks,
+ * which must not outlive the reader. The unspecialized template triggers a
+ * `static_assert` when called without a specialization.
  *
  * @code
  * template<>
- * void DeserializeFromStream<MyMsg>(MyMsg& msg, std::istringstream& iss) {
- *     iss >> msg.field1 >> msg.field2;
+ * void DeserializeFrom<MyMsg>(MyMsg& msg, TBlob& blob) {
+ *     msg.Text.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
  * }
  * @endcode
  */
 template<typename T>
-void DeserializeFromStream(T& obj, std::istringstream& iss) {
+void DeserializeFrom(T& obj, TBlob& blob) {
     static_assert(sizeof(T) == 0, "Deserialization not implemented for this type");
 }
 
 /**
  * @brief Deserializes a Far blob back into a `T`.
  *
- * POD with data members: returns `T&` — same as `DeserializeNear` (bytes are
- * already valid C++ objects). Non-POD or empty POD: calls
- * `DeserializeFromStream<T>` and returns `T` by value.
+ * POD: same as `DeserializeNear` — `T&` into the bytes for a type with data
+ * members, a default-constructed `T` for an empty one. Non-POD: calls
+ * `DeserializeFrom<T>` and returns `T` by value; when it takes the blob's
+ * bytes, the blob is left empty.
  *
  * @param blob Far blob received from the network.
  * @return `T&` for POD types with data; `T` by value for non-POD or empty types.
  */
 template<typename T>
-auto DeserializeFar(const TBlob& blob) -> std::conditional_t<is_pod_v<T> && (sizeof_data<T>()>0), T&, T> {
+auto DeserializeFar(TBlob& blob) -> std::conditional_t<is_pod_v<T> && (sizeof_data<T>()>0), T&, T> {
     if constexpr (is_pod_v<T>) {
         return DeserializeNear<T>(blob);
     } else {
-        std::istringstream iss(std::string(reinterpret_cast<const char*>(blob.Data.get()), blob.Size));
         T obj;
-        DeserializeFromStream(obj, iss);
+        DeserializeFrom(obj, blob);
+        if (!blob.Data) {
+            blob.Size = 0;
+        }
         return obj;
     }
 }
