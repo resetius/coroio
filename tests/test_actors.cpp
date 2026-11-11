@@ -1118,6 +1118,70 @@ void test_node_reconnects_to_dead_peer(void**) {
     assert_int_equal(received.Size, 0);
 }
 
+class TRecordingActor : public IActor {
+public:
+    explicit TRecordingActor(std::vector<TMessageId>& received)
+        : Received(received)
+    { }
+
+    void Receive(TMessageId messageId, TBlob, TActorContext::TPtr) override {
+        Received.push_back(messageId);
+    }
+
+    std::vector<TMessageId>& Received;
+};
+
+// A read that stops at the per-turn byte budget may leave complete envelopes
+// buffered; they must be delivered without waiting for more bytes.
+void test_inbound_envelope_after_yield(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TActorSystem sys(&poller, 1);
+    std::vector<TMessageId> received;
+    const auto recipient = sys.Register(std::make_unique<TRecordingActor>(received));
+
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    sys.Serve(std::move(listener));
+
+    std::vector<char> bytes;
+    auto append = [&](TMessageId messageId, uint32_t size) {
+        const THeader header{.Sender = TActorId(2, 1, 1), .Recipient = recipient, .MessageId = messageId, .Size = size};
+        const auto* p = reinterpret_cast<const char*>(&header);
+        bytes.insert(bytes.end(), p, p + sizeof(header));
+        bytes.insert(bytes.end(), size, 'x');
+    };
+    // Above the 2 MiB budget of one turn.
+    append(100, 3 * 1024 * 1024);
+    append(200, 16);
+    const size_t small = sizeof(THeader) + 16;
+
+    TPoller::TSocket client(poller, address.Domain());
+    bool written = false;
+    // The tail of the large envelope arrives in one read with the small one.
+    auto writer = [](TPoller& poller, TPoller::TSocket& client, TAddress address, std::vector<char>& bytes, size_t tail, bool& written) -> TFuture<void> {
+        co_await client.Connect(address);
+        const size_t head = bytes.size() - tail;
+        co_await TByteWriter(client).Write(bytes.data(), head);
+        co_await poller.Sleep(std::chrono::milliseconds(200));
+        co_await TByteWriter(client).Write(bytes.data() + head, tail);
+        written = true;
+    }(poller, client, address, bytes, small + 64, written);
+
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (received.size() < 2 && TClock::now() < deadline) {
+        loop.Step();
+    }
+
+    assert_true(written);
+    assert_int_equal(received.size(), 2);
+    assert_int_equal(received[0], 100);
+    assert_int_equal(received[1], 200);
+}
+
 void test_intrusive_list_stale_tag(void**) {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
@@ -1198,6 +1262,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_behavior_actor);
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
+    ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
