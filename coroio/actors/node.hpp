@@ -84,6 +84,8 @@ public:
     // TODO: remove me, envelope needed only for local actors
     void Send(TEnvelope&& envelope) override {
         auto blob = std::move(envelope.Blob);
+        // TODO: a blob already in Far form (a received non-POD message Forward-ed to another
+        // node) is serialized again as if it held a T object; pass such blobs through as bytes.
         if (blob.Size > 0) {
             blob = Factory.SerializeFar(envelope.MessageId, std::move(blob));
         }

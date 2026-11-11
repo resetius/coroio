@@ -311,6 +311,8 @@ void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, A
         const THeader header{sender, recipient, T::MessageId, sizeof_data<T>()};
         std::memcpy(p, &header, sizeof(header));
         p += sizeof(THeader);
+        // TODO: this position may be unaligned for T too (UB by the standard, works on
+        // x86-64/arm64); construct T aside and memcpy it, as the header above.
         new (p) T(std::forward<Args>(args)...);
         stream.Commit(size);
     } else {
