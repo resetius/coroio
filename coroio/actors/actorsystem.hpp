@@ -369,9 +369,13 @@ private:
         TEnvelopeReader envelopeReader(InflightBytes, /*lowWatermark = */ 1024);
         uint64_t message = 0;
 
+        // Set when the last batch stopped at MaxBytesBeforeYield: complete envelopes
+        // may still be buffered, and a read would wait for bytes that may never come.
+        bool mayHaveEnvelopes = false;
+
         try {
             while (true) {
-                if (envelopeReader.Size() < InflightBytes || envelopeReader.NeedMoreData()) {
+                if (!mayHaveEnvelopes) {
                     auto buffer = envelopeReader.Acquire(ReadSize);
                     auto size = co_await socket.ReadSome(buffer.data(), buffer.size());
                     if (size < 0) {
@@ -386,6 +390,7 @@ private:
                 //envelopeReader.PrintDebugInfo();
 
                 size_t bytesProcessed = 0;
+                mayHaveEnvelopes = false;
                 while (auto envelope = envelopeReader.Pop()) {
                     if (envelope->Recipient.NodeId() != NodeId_) [[unlikely]] {
                         if (Logger_) Logger_("Received message for different node: " + envelope->Recipient.ToString());
@@ -395,6 +400,7 @@ private:
                     bytesProcessed += envelope->Blob.Size + sizeof(THeader);
                     Send(envelope->Sender, envelope->Recipient, envelope->MessageId, std::move(envelope->Blob));
                     if (bytesProcessed >= MaxBytesBeforeYield) {
+                        mayHaveEnvelopes = true;
                         break;
                     }
                 }
