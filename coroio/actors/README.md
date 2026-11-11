@@ -130,7 +130,7 @@ void DeserializeFrom<TLogEntry>(TLogEntry& obj, TBlob& blob) {
 ```
 
 - In-process (`Near`): `new T(args...)`, pointer stored in `TBlob`. Recipient gets the object by rvalue ref.
-- Over network (`Far`): the sender reserves `SerializedSize` bytes right after the `THeader` in the node's outbound buffer and `SerializeTo` writes them there (`out` is exactly that size and may be unaligned). The receiving end calls `DeserializeFrom` with the envelope's blob: it reads `blob.Data.get()` / `blob.Size`, and may take `blob.Data` to keep pointers into the received bytes instead of copying them.
+- Over network (`Far`): the sender reserves `SerializedSize` bytes right after the `THeader` in the node's outbound buffer and `SerializeTo` writes them there (`out` is exactly that size and may be unaligned). The receiving end calls `DeserializeFrom` with the envelope's blob: it reads `blob.Data.get()` / `blob.Size`, and may take `blob.Data` to keep pointers into the received bytes instead of copying them (the blob is then empty and cannot be forwarded). The default `TZeroCopyEnvelopeReader` allocates every payload with `operator new` (16-byte aligned); `TZeroCopyEnvelopeReaderV2` hands out unaligned bytes that must not outlive the reader.
 
 **Forgetting a specialization is a compile-time error** (`static_assert` fires inside the template stubs).
 

@@ -307,7 +307,9 @@ void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, A
         constexpr auto size = sizeof_data<T>() + sizeof(THeader);
         auto buf = stream.Acquire(size);
         char* p = static_cast<char*>(buf.data());
-        new (p) THeader {sender, recipient, T::MessageId, sizeof_data<T>()};
+        // The buffer position follows the previous payload, so it may be unaligned for THeader.
+        const THeader header{sender, recipient, T::MessageId, sizeof_data<T>()};
+        std::memcpy(p, &header, sizeof(header));
         p += sizeof(THeader);
         new (p) T(std::forward<Args>(args)...);
         stream.Commit(size);
@@ -316,7 +318,8 @@ void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, A
         const uint32_t payload = FarPayloadSize(obj);
         const size_t size = sizeof(THeader) + payload;
         auto buf = stream.Acquire(size);
-        new (buf.data()) THeader {sender, recipient, T::MessageId, payload};
+        const THeader header{sender, recipient, T::MessageId, payload};
+        std::memcpy(buf.data(), &header, sizeof(header));
         SerializeTo(obj, std::span<char>(buf.data() + sizeof(THeader), payload));
         stream.Commit(size);
     }
@@ -346,9 +349,13 @@ auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() =
  *
  * Specialize alongside `SerializedSize<T>` / `SerializeTo<T>`. The payload is
  * `blob.Data.get()` / `blob.Size` as delivered by the envelope reader. The
- * message may keep pointers into it by taking `blob.Data` (the blob is then
- * empty); otherwise the caller frees the blob. The unspecialized template
- * triggers a `static_assert` when called without a specialization.
+ * message may keep pointers into it by taking `blob.Data`: `DeserializeFar`
+ * then leaves the blob empty (`Size` 0), so it can no longer be forwarded.
+ * Otherwise the caller frees the blob. The default `TZeroCopyEnvelopeReader`
+ * allocates every payload with `operator new` (16-byte aligned);
+ * `TZeroCopyEnvelopeReaderV2` hands out unaligned bytes inside its chunks,
+ * which must not outlive the reader. The unspecialized template triggers a
+ * `static_assert` when called without a specialization.
  *
  * @code
  * template<>
@@ -365,9 +372,10 @@ void DeserializeFrom(T& obj, TBlob& blob) {
 /**
  * @brief Deserializes a Far blob back into a `T`.
  *
- * POD with data members: returns `T&` — same as `DeserializeNear` (bytes are
- * already valid C++ objects). Non-POD or empty POD: calls `DeserializeFrom<T>`
- * and returns `T` by value; it may take the blob's bytes.
+ * POD: same as `DeserializeNear` — `T&` into the bytes for a type with data
+ * members, a default-constructed `T` for an empty one. Non-POD: calls
+ * `DeserializeFrom<T>` and returns `T` by value; when it takes the blob's
+ * bytes, the blob is left empty.
  *
  * @param blob Far blob received from the network.
  * @return `T&` for POD types with data; `T` by value for non-POD or empty types.
@@ -379,6 +387,9 @@ auto DeserializeFar(TBlob& blob) -> std::conditional_t<is_pod_v<T> && (sizeof_da
     } else {
         T obj;
         DeserializeFrom(obj, blob);
+        if (!blob.Data) {
+            blob.Size = 0;
+        }
         return obj;
     }
 }

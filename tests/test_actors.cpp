@@ -589,7 +589,42 @@ void test_deserialize_far_takes_blob(void**) {
     assert_true(message.Bytes.get() == bytes);
     assert_int_equal(message.Size, text.size());
     assert_true(blob.Data.get() == nullptr);
+    assert_int_equal(blob.Size, 0);
     assert_memory_equal(message.Bytes.get(), text.data(), text.size());
+}
+
+// Claims a payload one byte over the 32-bit size field of THeader.
+struct TOversizedMessage {
+    static constexpr TMessageId MessageId = 46;
+    std::string Text;
+};
+
+namespace NNet::NActors {
+
+template<>
+size_t SerializedSize<TOversizedMessage>(const TOversizedMessage&) {
+    return size_t(1) << 32;
+}
+
+template<>
+void SerializeTo<TOversizedMessage>(const TOversizedMessage&, std::span<char>) {
+    fail_msg("SerializeTo must not run for an oversized payload");
+}
+
+} // namespace NNet::NActors
+
+void test_serialize_far_rejects_oversized_payload(void**) {
+    TVectorStream stream;
+    bool thrown = false;
+    try {
+        SerializeFarInplace<TOversizedMessage>(stream, TActorId(1, 2, 3), TActorId(2, 5, 7), std::string("x"));
+    } catch (const std::length_error&) {
+        thrown = true;
+    }
+    assert_true(thrown);
+    // The size is checked before anything is reserved.
+    assert_true(stream.Data.empty());
+    assert_int_equal(stream.Committed, 0);
 }
 
 void test_unbounded_vector_queue(void**) {
@@ -1490,6 +1525,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory);
     ADD_TEST(cmocka_unit_test, test_serialize_far_inplace_round_trip);
     ADD_TEST(cmocka_unit_test, test_deserialize_far_takes_blob);
+    ADD_TEST(cmocka_unit_test, test_serialize_far_rejects_oversized_payload);
     ADD_TEST(cmocka_unit_test, test_envelope_reader);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
