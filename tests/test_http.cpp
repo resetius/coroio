@@ -292,6 +292,66 @@ void test_http_response_handling_chunked(void**) {
     assert_string_equal(responseData.c_str(), expectedResponse.c_str());
 }
 
+void test_http_headers_case_insensitive(void**) {
+    std::string headerPart =
+        "POST /x HTTP/1.1\r\n"
+        "host: localhost\r\n"
+        "CONTENT-LENGTH: 5\r\n"
+        "transfer-Encoding: identity\r\n"
+        "cOnNeCtIoN: close\r\n"
+        "\r\n";
+    auto bodyReader = [](char* buffer, size_t size) -> TFuture<ssize_t> {
+        size_t n = std::min<size_t>(size, 5);
+        std::memcpy(buffer, "Hello", n);
+        co_return n;
+    };
+    TRequest request(std::move(headerPart), bodyReader);
+
+    const auto& headers = request.Headers();
+    assert_true(headers.find("Host") != headers.end());
+    assert_true(headers.find("HOST") != headers.end());
+    assert_true(headers.find("content-length")->second == "5");
+    assert_true(headers.find("Transfer-Encoding")->second == "identity");
+    assert_true(headers.find("Connection")->second == "close");
+    assert_true(request.RequireConnectionClose());
+    assert_true(headers.size() == 4);
+
+    std::string body;
+    [](TRequest& request, std::string& body) -> TVoidTask {
+        body = co_await request.ReadBodyFull();
+    } (request, body);
+    assert_string_equal(body.c_str(), "Hello");
+}
+
+void test_http_response_headers_case_insensitive(void**) {
+    std::string responseData;
+    auto writer = [&](const void* data, size_t size) -> TFuture<ssize_t> {
+        responseData.append(static_cast<const char*>(data), size);
+        co_return size;
+    };
+
+    TResponse response(writer);
+    response.SetHeader("Content-Type", "text/plain");
+    response.SetHeader("content-type", "text/html");
+    response.SetHeader("CONNECTION", "close");
+
+    [](TResponse& response) -> TVoidTask {
+        co_await response.WriteBodyFull("Hi");
+    } (response);
+
+    // One entry per name, first spelling kept, last value wins;
+    // Content-Length is not added twice and Connection: close is recognized.
+    std::string expectedResponse =
+        "HTTP/1.1 200 OK\r\n"
+        "CONNECTION: close\r\n"
+        "Content-Length: 2\r\n"
+        "Content-Type: text/html\r\n"
+        "\r\n"
+        "Hi";
+    assert_string_equal(responseData.c_str(), expectedResponse.c_str());
+    assert_true(response.IsClosed());
+}
+
 namespace {
 
 // Delivers the given chunks one per ReadSome; reports a closed connection
@@ -564,6 +624,8 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_http_request_handling_advanced);
     ADD_TEST(cmocka_unit_test, test_http_request_handling_2requests_in_1buffer);
     ADD_TEST(cmocka_unit_test, test_http_request_handling_chunked_body);
+    ADD_TEST(cmocka_unit_test, test_http_headers_case_insensitive);
+    ADD_TEST(cmocka_unit_test, test_http_response_headers_case_insensitive);
     ADD_TEST(cmocka_unit_test, test_http_response_handling_basic);
     ADD_TEST(cmocka_unit_test, test_http_response_handling_chunked);
     ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_split_two_chunks);

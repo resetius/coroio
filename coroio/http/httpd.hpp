@@ -11,11 +11,33 @@
 #include <sstream>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
+#include <map>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
 namespace NNet
 {
+
+/// ASCII case-insensitive "less" for header names (RFC 9110 section 5.1).
+struct THeaderNameLess {
+    using is_transparent = void;
+    bool operator()(std::string_view a, std::string_view b) const {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+            return Lower(x) < Lower(y);
+        });
+    }
+private:
+    static char Lower(char c) {
+        return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c;
+    }
+};
+
+/// Request headers: names compare case-insensitively; for duplicates the last value wins.
+using THeaders = std::map<std::string_view, std::string_view, THeaderNameLess>;
+/// Response headers: names compare case-insensitively; the first-seen spelling of a name is kept.
+using TResponseHeaders = std::map<std::string, std::string, THeaderNameLess>;
 
 /**
  * @brief Parsed HTTP request URI: `/path?key=value&...#fragment`.
@@ -86,7 +108,7 @@ public:
     /// Returns `true` if the client sent `Connection: close` or is HTTP/1.0.
     bool RequireConnectionClose() const;
     /// All request headers as a `name → value` map (views into the header buffer).
-    const std::map<std::string_view, std::string_view>& Headers() const;
+    const THeaders& Headers() const;
 
 private:
     void ParseRequestLine();
@@ -97,7 +119,7 @@ private:
 
     std::string Header_;
     size_t HeaderStartPos_ = 0;
-    std::map<std::string_view, std::string_view> Headers_;
+    THeaders Headers_;
     size_t ContentLength_ = 0;
     bool HasBody_ = false;
     bool Chunked_ = false;
@@ -172,7 +194,7 @@ private:
     TFuture<void> CompleteWrite(const char* data, size_t size);
 
     int StatusCode_ = 200;
-    std::map<std::string, std::string> Headers_;
+    TResponseHeaders Headers_;
     bool HeadersSent_ = false;
     bool Chunked_ = false;
     bool IsClosed_ = false;

@@ -169,7 +169,7 @@ void TRequest::ParseHeaders() {
     }
 }
 
-const std::map<std::string_view, std::string_view>& TRequest::Headers() const {
+const THeaders& TRequest::Headers() const {
     return Headers_;
 }
 
