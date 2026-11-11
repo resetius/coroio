@@ -1137,7 +1137,11 @@ void test_inbound_envelope_after_yield(void**) {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
-    TActorSystem sys(&poller, 1);
+    // The inbound connection reports the peer's close here when it ends.
+    bool inboundClosed = false;
+    TActorSystem sys(&poller, 1, [&](const std::string& message) {
+        inboundClosed = inboundClosed || message.find("InboundConnection") != std::string::npos;
+    });
     std::vector<TMessageId> received;
     const auto recipient = sys.Register(std::make_unique<TRecordingActor>(received));
 
@@ -1175,8 +1179,15 @@ void test_inbound_envelope_after_yield(void**) {
     while (received.size() < 2 && TClock::now() < deadline) {
         loop.Step();
     }
+    // Let the inbound coroutine see EOF and free itself before the system goes away.
+    client.Close();
+    const auto closeDeadline = TClock::now() + std::chrono::seconds(5);
+    while (!inboundClosed && TClock::now() < closeDeadline) {
+        loop.Step();
+    }
 
     assert_true(written);
+    assert_true(inboundClosed);
     assert_int_equal(received.size(), 2);
     assert_int_equal(received[0], 100);
     assert_int_equal(received[1], 200);
