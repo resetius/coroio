@@ -165,6 +165,8 @@ private:
                 //auto deadline = NNet::TClock::now() + std::chrono::milliseconds(5000);
                 TAddress addr = co_await HostPort.Resolve(Resolver);
                 Socket = SocketFactory(addr);
+                // Small messages (acks) must not wait for Nagle and delayed ACK.
+                Socket.SetNoDelay();
                 co_await Socket.Connect(addr /*, deadline*/);
                 Connected = true;
                 std::cout << "Connected to " << HostPort.ToString() << "\n";

@@ -353,6 +353,7 @@ private:
         while (true) {
             auto client = co_await socket.Accept();
             if (client) {
+                client->SetNoDelay();
                 InboundConnection<TSocket, TEnvelopeReader>(std::move(*client));
             } else if (!IsTransientAcceptError(client.error())) {
                 if (Logger_) Logger_("Accept failed: " + std::system_category().message(client.error()));

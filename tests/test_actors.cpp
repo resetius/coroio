@@ -4,6 +4,9 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
+#ifndef _WIN32
+#include <netinet/tcp.h>
+#endif
 #include <signal.h>
 #include <iostream>
 #include <thread>
@@ -1243,6 +1246,50 @@ void test_node_reconnects_to_dead_peer(void**) {
     assert_int_equal(received.Size, 0);
 }
 
+void test_node_sets_tcp_nodelay(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    int fd = -1;
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller, &fd](const TAddress& addr) {
+            TPoller::TSocket socket(poller, addr.Domain());
+            fd = socket.Fd();
+            return socket;
+        },
+        THostPort("127.0.0.1", port));
+    node.Send(TEnvelope{.Sender = TActorId(1, 2, 3), .Recipient = TActorId(2, 5, 7), .MessageId = 42});
+
+    bool done = false;
+    auto server = [](TPoller::TSocket& listener, bool& done) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        THeader header;
+        TByteReader reader(client);
+        co_await reader.Read(&header, sizeof(header));
+        done = true;
+    }(listener, done);
+
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (!done && TClock::now() < deadline) {
+        loop.Step();
+        node.Drain();
+    }
+    assert_true(done);
+
+    int value = 0;
+    socklen_t len = sizeof(value);
+    assert_int_equal(getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char*) &value, &len), 0);
+    assert_true(value != 0);
+}
+
 // Its serializer fails after the node reserved room for it.
 struct TFailingMessage {
     static constexpr TMessageId MessageId = 45;
@@ -1539,6 +1586,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
     ADD_TEST(cmocka_unit_test, test_node_drops_failed_serialization);
+    ADD_TEST(cmocka_unit_test, test_node_sets_tcp_nodelay);
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);

@@ -603,6 +603,13 @@ public:
     const std::optional<TAddress>& LocalAddr() const;
     /// Returns the underlying socket descriptor.
     int Fd() const;
+    /**
+     * @brief Disables Nagle's algorithm (TCP_NODELAY) on a TCP socket.
+     *
+     * Best effort: returns false, and leaves the socket usable, if the option cannot be set
+     * (not a TCP socket, or a connection already reset by the peer).
+     */
+    bool SetNoDelay();
 
 protected:
     std::optional<TAddress> LocalAddr_;
