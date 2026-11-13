@@ -1,5 +1,9 @@
 #include "socket.hpp"
 
+#ifndef _WIN32
+#include <netinet/tcp.h>
+#endif
+
 namespace NNet {
 
 TSocketBase<void>::TSocketBase(TPollerBase& poller, int domain, int type)
@@ -136,6 +140,11 @@ const std::optional<TAddress>& TSocket::RemoteAddr() const {
 
 int TSocket::Fd() const {
     return Fd_;
+}
+
+bool TSocket::SetNoDelay() {
+    int value = 1;
+    return setsockopt(Fd_, IPPROTO_TCP, TCP_NODELAY, (char*) &value, sizeof(value)) == 0;
 }
 
 TFileHandle::TFileHandle(TFileHandle&& other)
