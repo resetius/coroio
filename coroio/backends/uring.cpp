@@ -4,6 +4,8 @@
 
 #include <algorithm>
 
+#include <sys/uio.h>
+
 #ifdef HAVE_URING
 
 namespace NNet {
@@ -91,11 +93,18 @@ void TUring::Read(int fd, void* buf, int size, TOperation& op) {
 }
 
 void TUring::Write(int fd, const void* buf, int size, TOperation& op) {
+    if (CanWriteNow(fd)) {
+        // RWF_NOWAIT: a full pipe gives EAGAIN even if it is blocking, a regular file EOPNOTSUPP.
+        iovec iov = {const_cast<void*>(buf), static_cast<size_t>(size)};
+        if (WrittenNow(fd, pwritev2(fd, &iov, 1, -1, RWF_NOWAIT), op)) {
+            return;
+        }
+    }
     struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_write(sqe, fd, buf, size, -1);
     //memcpy(Buffer_.data(), buf, size);
     //io_uring_prep_write_fixed(sqe, fd, Buffer_.data(), size, 0, 0);
-    SetData(sqe, op);
+    SetData(sqe, op, true);
 }
 
 void TUring::Recv(int fd, void* buf, int size, TOperation& op) {
@@ -105,9 +114,13 @@ void TUring::Recv(int fd, void* buf, int size, TOperation& op) {
 }
 
 void TUring::Send(int fd, const void* buf, int size, TOperation& op) {
+    // MSG_NOSIGNAL as in IORING_OP_SEND, which never raises SIGPIPE.
+    if (CanWriteNow(fd) && WrittenNow(fd, send(fd, buf, size, MSG_DONTWAIT | MSG_NOSIGNAL), op)) {
+        return;
+    }
     struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_send(sqe, fd, buf, size, 0);
-    SetData(sqe, op);
+    SetData(sqe, op, true);
 }
 
 void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, TOperation& op) {
@@ -134,6 +147,9 @@ void TUring::Cancel(int fd) {
 }
 
 void TUring::PrepClose(TEvent& change) {
+    if (change.Fd >= 0 && change.Fd < static_cast<int>(Descriptors_.size())) {
+        Descriptors_[change.Fd].RingWrites = false; // the number may come back for another file
+    }
     if (!HasOperations(change.Fd)) {
         // Nothing to cancel: the kernel looks up a cancel by fd among all pending operations.
         io_uring_sqe* sqe = GetSqe();
@@ -159,24 +175,54 @@ void TUring::PrepClose(TEvent& change) {
     change.Type = 0;
 }
 
-void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
+void TUring::SetData(io_uring_sqe* sqe, TOperation& op, bool write) {
     op.Index = Ring_.sq.sqe_tail - 1;
     io_uring_sqe_set_data(sqe, &op);
     op.Fd = sqe->fd;
+    op.Write = write;
     if (op.Fd >= 0) { // not e.g. an accept on a closed socket, which fails with -EBADF
-        Operations_[op.Fd]++;
+        Descriptors_[op.Fd].Operations++;
+        Descriptors_[op.Fd].Writes += write;
     }
 }
 
 void TUring::Done(TOperation& op) {
     if (op.Fd >= 0) {
-        assert(Operations_[op.Fd] > 0);
-        Operations_[op.Fd]--;
+        auto& d = Descriptors_[op.Fd];
+        assert(d.Operations > 0 && d.Writes >= op.Write);
+        d.Operations--;
+        d.Writes -= op.Write;
     }
 }
 
 bool TUring::HasOperations(int fd) const {
-    return fd >= 0 && fd < static_cast<int>(Operations_.size()) && Operations_[fd] > 0;
+    return fd >= 0 && fd < static_cast<int>(Descriptors_.size()) && Descriptors_[fd].Operations > 0;
+}
+
+bool TUring::CanWriteNow(int fd) const {
+    if (fd < 0) {
+        return false;
+    }
+    if (fd >= static_cast<int>(Descriptors_.size())) {
+        return true;
+    }
+    return !Descriptors_[fd].Writes && !Descriptors_[fd].RingWrites;
+}
+
+bool TUring::WrittenNow(int fd, ssize_t ret, TOperation& op) {
+    if (ret < 0) {
+        int err = errno;
+        if (err == EOPNOTSUPP && fd < static_cast<int>(Descriptors_.size())) {
+            Descriptors_[fd].RingWrites = true;
+        }
+        if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR || err == EOPNOTSUPP) {
+            return false;
+        }
+        ret = -err; // e.g. EPIPE or ECONNRESET, as the ring would give
+    }
+    op.Result = static_cast<int>(ret);
+    op.Handle = {};
+    return true;
 }
 
 int TUring::Cancel(TOperation& op) {

@@ -104,7 +104,13 @@ public:
      */
     void Read(int fd, void* buf, int size, TOperation& op);
     /**
-     * @brief Posts an asynchronous write operation.
+     * @brief Writes at once if that does not block, otherwise posts an asynchronous write operation.
+     *
+     * The write is tried first with pwritev2(RWF_NOWAIT) unless an earlier write on @p fd is
+     * still in the ring. If it writes some bytes or fails with an error other than EAGAIN,
+     * the operation is complete: op.Handle is reset and the result is in op.Result, and the
+     * coroutine is not resumed. A file that does not support RWF_NOWAIT, e.g. a regular file,
+     * is written through the ring from then on, until it is closed by the poller.
      *
      * @param fd The file descriptor.
      * @param buf Buffer with data to write.
@@ -122,7 +128,9 @@ public:
      */
     void Recv(int fd, void* buf, int size, TOperation& op);
     /**
-     * @brief Posts an asynchronous send operation.
+     * @brief Sends at once if that does not block, otherwise posts an asynchronous send operation.
+     *
+     * Like Write(), with send(MSG_DONTWAIT | MSG_NOSIGNAL) as the first try.
      *
      * @param fd The file descriptor.
      * @param buf Buffer containing data to send.
@@ -221,8 +229,8 @@ private:
     /// Obtains an SQE for @p op on @p fd. If that throws, op.Handle is reset: the operation is not posted.
     io_uring_sqe* GetSqe(TOperation& op, int fd) {
         try {
-            if (fd >= static_cast<int>(Operations_.size())) {
-                Operations_.resize(fd + 1); // here, so that SetData() cannot throw
+            if (fd >= static_cast<int>(Descriptors_.size())) {
+                Descriptors_.resize(fd + 1); // here, so that SetData() cannot throw
             }
             return GetSqe();
         } catch (...) {
@@ -240,7 +248,11 @@ private:
     /// Queues the close of a close change, hard-linked after a cancel by fd if the descriptor has operations. Not named Close: it would hide TPollerBase::Close.
     void PrepClose(TEvent& change);
     /// Points the SQE just obtained to @p op, records its position in the SQ and counts it for its descriptor.
-    void SetData(io_uring_sqe* sqe, TOperation& op);
+    void SetData(io_uring_sqe* sqe, TOperation& op, bool write = false);
+    /// Whether a write on @p fd may be tried at once: no write of it is in the ring, which it would pass.
+    bool CanWriteNow(int fd) const;
+    /// Completes @p op with the result of a write tried at once; false if it has to go through the ring.
+    bool WrittenNow(int fd, ssize_t ret, TOperation& op);
     /// Uncounts @p op, whose completion is taken or whose SQE is dropped.
     void Done(TOperation& op);
     /// Whether operations posted on @p fd may still be in the kernel.
@@ -252,7 +264,12 @@ private:
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
     NDetail::TCompletions Completions_; ///< Completions not delivered yet.
-    std::vector<unsigned> Operations_; ///< Per descriptor: operations posted whose completion is not taken yet.
+    struct TDescriptor {
+        unsigned Operations = 0; ///< Operations posted whose completion is not taken yet.
+        unsigned Writes = 0; ///< Writes among them.
+        bool RingWrites = false; ///< The file refused RWF_NOWAIT: write it through the ring only.
+    };
+    std::vector<TDescriptor> Descriptors_; ///< Per descriptor number.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
     bool Enabled_ = false; ///< Whether Enable() has bound the ring to a thread.
 };
