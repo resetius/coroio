@@ -1944,6 +1944,313 @@ void test_driven_accept_not_listening(void**) {
     assert_false(accepted.has_value());
 }
 
+namespace {
+
+#ifdef _WIN32
+constexpr int ConnReset = WSAECONNRESET;
+#else
+constexpr int ConnReset = ECONNRESET;
+#endif
+
+template<typename TPoller>
+constexpr bool kDrivenSocket = !std::is_same_v<typename TPoller::TSocket, TSocket>;
+
+template<typename TFile>
+TFuture<void> ReadLease(TFile& file, std::optional<TReadBuffer>* lease) {
+    lease->emplace(co_await file.ReadBuffer());
+}
+
+// Appends one ReadBuffer() to *data. Gives the error code, or -1 at the end of the stream.
+template<typename TFile>
+TFuture<void> AppendLease(TFile& file, std::string* data, int* result) {
+    try {
+        TReadBuffer lease = co_await file.ReadBuffer();
+        data->append(lease.Data().data(), lease.Data().size());
+        *result = lease.Data().empty() ? -1 : 0;
+    } catch (const std::system_error& ex) {
+        *result = ex.code().value();
+    }
+}
+
+template<typename TPoller, typename TFile>
+std::string ReadToEnd(TLoop<TPoller>& loop, TFile& file) {
+    std::string data;
+    int result = 0;
+    while (result == 0) {
+        auto read = AppendLease(file, &data, &result);
+        StepUntilDone(loop, read);
+    }
+    assert_int_equal(result, -1);
+    return data;
+}
+
+template<typename TSocket>
+TFuture<void> ConnectTo(TSocket& socket, const TAddress& address) {
+    co_await socket.Connect(address);
+}
+
+template<typename TPoller>
+struct TConnected {
+    using TSocket = typename TPoller::TSocket;
+
+    explicit TConnected(TLoop<TPoller>& loop)
+        : Address{"127.0.0.1", GetFreePort()}
+        , Listener(loop.Poller(), Address.Domain())
+        , Client(loop.Poller(), Address.Domain())
+    {
+        Listener.Bind(Address);
+        Listener.Listen();
+        std::optional<TSocket> server;
+        auto accept = AcceptInto(Listener, &server);
+        auto connect = ConnectTo(Client, Address);
+        StepUntilDone(loop, connect);
+        StepUntilDone(loop, accept);
+        Server = std::move(*server);
+    }
+
+    TAddress Address;
+    TSocket Listener;
+    TSocket Client;
+    TSocket Server;
+};
+
+} // namespace
+
+// The end of the stream is an empty lease, again on every later read.
+template<typename TPoller>
+void test_read_buffer_eof(void**) {
+    TLoop<TPoller> loop;
+    TConnected<TPoller> c(loop);
+    assert_int_equal(send(c.Client.Fd(), "hello", 5, 0), 5);
+    c.Client.Close();
+    assert_string_equal(ReadToEnd(loop, c.Server).c_str(), "hello");
+    std::string data;
+    int result = 0;
+    auto again = AppendLease(c.Server, &data, &result);
+    StepUntilDone(loop, again);
+    assert_int_equal(result, -1);
+}
+
+template<typename TPoller>
+void test_read_buffer_error(void**) {
+    TLoop<TPoller> loop;
+    TConnected<TPoller> c(loop);
+    linger reset = {1, 0};
+    assert_int_equal(setsockopt(c.Client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&reset), sizeof(reset)), 0);
+    c.Client.Close();
+    std::string data;
+    int result = 0;
+    auto read = AppendLease(c.Server, &data, &result);
+    StepUntilDone(loop, read);
+    assert_int_equal(result, ConnReset);
+}
+
+// Consume() drops bytes from the front, the lease moves, and its destructor gives the buffer back.
+template<typename TPoller>
+void test_read_buffer_consume(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 64, .Count = 1});
+    TConnected<TPoller> c(loop);
+    assert_int_equal(send(c.Client.Fd(), "hello world", 11, 0), 11);
+    std::optional<TReadBuffer> lease;
+    auto read = ReadLease(c.Server, &lease);
+    StepUntilDone(loop, read);
+    assert_true(std::string_view(lease->Data().data(), lease->Data().size()) == "hello world");
+    lease->Consume(6);
+    TReadBuffer moved = std::move(*lease);
+    lease.reset();
+    assert_true(std::string_view(moved.Data().data(), moved.Data().size()) == "world");
+    moved.Consume(5);
+    assert_true(moved.Data().empty());
+    bool rejected = false;
+    try {
+        loop.Poller().ConfigureReadBuffers({});
+    } catch (const std::logic_error&) {
+        rejected = true;
+    }
+    assert_true(rejected);
+    moved = TReadBuffer{};
+    // The only buffer is back.
+    assert_int_equal(send(c.Client.Fd(), "!", 1, 0), 1);
+    auto next = ReadLease(c.Server, &lease);
+    StepUntilDone(loop, next);
+    assert_int_equal(lease->Data().size(), 1);
+    assert_int_equal(lease->Data()[0], '!');
+}
+
+// ReadSome() and ReadBuffer() of one socket return its bytes in order, also
+// when the poller has read ahead before ReadSome().
+template<typename TPoller>
+void test_read_buffer_mixed_order(void**) {
+    TLoop<TPoller> loop;
+    TConnected<TPoller> c(loop);
+    std::string data;
+    int result = 0;
+    assert_int_equal(send(c.Client.Fd(), "01", 2, 0), 2);
+    while (data.size() < 2) {
+        auto read = AppendLease(c.Server, &data, &result);
+        StepUntilDone(loop, read);
+        assert_int_equal(result, 0);
+    }
+    for (const char* chunk : {"23", "45", "67"}) {
+        assert_int_equal(send(c.Client.Fd(), chunk, 2, 0), 2);
+        loop.Step();
+    }
+    for (int i = 0; data.size() < 8; i++) {
+        if (i % 2 == 0) {
+            char buf[1];
+            int got = 0;
+            auto read = ReadInto(c.Server, buf, sizeof(buf), &got);
+            StepUntilDone(loop, read);
+            assert_int_equal(got, 1);
+            data.push_back(buf[0]);
+        } else {
+            auto read = AppendLease(c.Server, &data, &result);
+            StepUntilDone(loop, read);
+            assert_int_equal(result, 0);
+        }
+    }
+    assert_string_equal(data.c_str(), "01234567");
+}
+
+// A reader that holds every buffer gets no more: the readiness pollers throw.
+// Bytes sent faster than they are read stay in order.
+template<typename TPoller>
+void test_read_buffer_back_pressure(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 256, .Count = 2, .PerSocketLimit = 1});
+    TConnected<TPoller> c(loop);
+    std::optional<TReadBuffer> held[2];
+    for (auto& lease : held) {
+        assert_int_equal(send(c.Client.Fd(), "x", 1, 0), 1);
+        auto read = ReadLease(c.Server, &lease);
+        StepUntilDone(loop, read);
+    }
+    assert_int_equal(send(c.Client.Fd(), "y", 1, 0), 1);
+    std::string data;
+    int result = 0;
+    auto starved = AppendLease(c.Server, &data, &result);
+    StepUntilDone(loop, starved);
+    assert_int_equal(result, static_cast<int>(std::errc::no_buffer_space));
+    held[0].reset();
+    held[1].reset();
+
+    std::string sent(256 * 1024, 0);
+    for (size_t i = 0; i < sent.size(); i++) {
+        sent[i] = static_cast<char>('a' + i % 23);
+    }
+    TByteWriter writer(c.Client);
+    auto write = writer.Write(sent.data(), sent.size());
+    std::string got;
+    while (got.size() < sent.size() + 1) {
+        auto read = AppendLease(c.Server, &got, &result);
+        StepUntilDone(loop, read);
+        assert_int_equal(result, 0);
+    }
+    StepUntilDone(loop, write);
+    assert_true(got == "y" + sent);
+}
+
+// A reader waiting when its socket closes is not resumed on the readiness
+// pollers, as with ReadSome(); the driven ones resume it with an error. The
+// buffer comes back, and a socket that reuses the number reads its own bytes.
+template<typename TPoller>
+void test_read_buffer_close_pending(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 64, .Count = 1});
+    std::string data;
+    int result = 0;
+    {
+        TConnected<TPoller> c(loop);
+        std::optional<TFuture<void>> reader{AppendLease(c.Server, &data, &result)};
+        loop.Step();
+        c.Server.Close();
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        if constexpr (kDrivenSocket<TPoller>) {
+            assert_true(reader->done());
+            assert_true(result > 0);
+        } else {
+            assert_false(reader->done());
+        }
+        reader.reset();
+    }
+    loop.Step();
+    TConnected<TPoller> c(loop);
+    assert_int_equal(send(c.Client.Fd(), "z", 1, 0), 1);
+    result = 0;
+    data.clear();
+    auto read = AppendLease(c.Server, &data, &result);
+    StepUntilDone(loop, read);
+    assert_int_equal(result, 0);
+    assert_string_equal(data.c_str(), "z");
+}
+
+// A reader destroyed while waiting gives its buffer back and loses no bytes.
+template<typename TPoller>
+void test_read_buffer_destroyed_waiter(void**) {
+    TLoop<TPoller> loop;
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 64, .Count = 1});
+    TConnected<TPoller> c(loop);
+    std::string data;
+    int result = 0;
+    for (bool submitted : {false, true}) {
+        std::optional<TFuture<void>> reader{AppendLease(c.Server, &data, &result)};
+        if (submitted) {
+            loop.Step();
+        }
+        reader.reset();
+        assert_int_equal(send(c.Client.Fd(), submitted ? "b" : "a", 1, 0), 1);
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        assert_true(data.empty());
+        auto read = AppendLease(c.Server, &data, &result);
+        StepUntilDone(loop, read);
+        assert_int_equal(result, 0);
+        assert_string_equal(data.c_str(), submitted ? "b" : "a");
+        data.clear();
+    }
+}
+
+#ifndef _WIN32
+// Pipes and regular files: the end of the stream and a read error.
+template<typename TPoller>
+void test_read_buffer_files(void**) {
+    using TFileHandle = typename TPoller::TFileHandle;
+    TLoop<TPoller> loop;
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 64, .Count = 2});
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    {
+        TFileHandle in(p[0], loop.Poller());
+        TFileHandle out(p[1], loop.Poller());
+        assert_int_equal(write(p[1], "pipe", 4), 4);
+        std::string data;
+        int result = 0;
+        auto first = AppendLease(in, &data, &result);
+        StepUntilDone(loop, first);
+        assert_string_equal(data.c_str(), "pipe");
+        // Not readable: the write end.
+        auto bad = AppendLease(out, &data, &result);
+        StepUntilDone(loop, bad);
+        assert_int_equal(result, EBADF);
+        out.Close();
+        assert_string_equal(ReadToEnd(loop, in).c_str(), "");
+    }
+    char path[] = "/tmp/coroio_read_buffer_XXXXXX";
+    int fd = mkstemp(path);
+    assert_true(fd >= 0);
+    unlink(path);
+    std::string sent(1000, 'f');
+    assert_int_equal(write(fd, sent.data(), sent.size()), static_cast<ssize_t>(sent.size()));
+    assert_int_equal(lseek(fd, 0, SEEK_SET), 0);
+    TFileHandle file(fd, loop.Poller());
+    assert_true(ReadToEnd(loop, file) == sent);
+}
+#endif
+
 #ifdef _WIN32
 // A failed or aborted read or write gets the error in its packet, not 0 bytes
 // that look like the end of the stream (#183).
@@ -4342,6 +4649,16 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_iocp_file_concurrent);
     ADD_TEST(cmocka_unit_test, test_iocp_pipe);
     ADD_TEST(cmocka_unit_test, test_iocp_accepted_socket);
+#endif
+    ADD_TEST(my_unit_poller, test_read_buffer_eof);
+    ADD_TEST(my_unit_poller, test_read_buffer_error);
+    ADD_TEST(my_unit_poller, test_read_buffer_consume);
+    ADD_TEST(my_unit_poller, test_read_buffer_mixed_order);
+    ADD_TEST(my_unit_poller, test_read_buffer_back_pressure);
+    ADD_TEST(my_unit_poller, test_read_buffer_close_pending);
+    ADD_TEST(my_unit_poller, test_read_buffer_destroyed_waiter);
+#ifndef _WIN32
+    ADD_TEST(my_unit_poller, test_read_buffer_files);
 #endif
     ADD_TEST(cmocka_unit_test, test_completions);
 

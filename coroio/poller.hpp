@@ -10,6 +10,7 @@
 #include <assert.h>
 
 #include "base.hpp"
+#include "read_buffer.hpp"
 
 #ifdef Yield
 #undef Yield
@@ -358,6 +359,18 @@ public:
     auto TimersSize() const {
         return Timers_.size();
     }
+    /**
+     * @brief Sets the buffers of ReadBuffer() on this poller's handles.
+     *
+     * @throws std::logic_error after the first ReadBuffer(), std::invalid_argument for a bad config.
+     */
+    void ConfigureReadBuffers(const TReadBufferConfig& config) {
+        Buffers_.Configure(config);
+    }
+    /// The buffers of ReadBuffer(), used by the handles.
+    NDetail::TBufferPool& ReadBuffers() {
+        return Buffers_;
+    }
 
 protected:
     /**
@@ -469,6 +482,7 @@ protected:
     unsigned LastFiredTimer_ = (unsigned)(-1); ///< ID of the last fired timer.
     std::chrono::milliseconds MaxDuration_ = std::chrono::milliseconds(100); ///< Maximum poll duration.
     timespec MaxDurationTs_ = GetMaxDuration(MaxDuration_); ///< Max duration represented as timespec.
+    NDetail::TBufferPool Buffers_; ///< Buffers of ReadBuffer().
 
 private:
     void QueueRemoval(int fd, int close) {
