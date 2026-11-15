@@ -55,6 +55,26 @@ TIOCp::TIOCp()
 
 TIOCp::~TIOCp()
 {
+    // The system writes into the buffer of a WSARecv in flight until its packet comes.
+    size_t inFlight = Closing_.size();
+    for (auto& state : Buffered_) {
+        if (state && state->InFlight) {
+            CancelIoEx((HANDLE)(SOCKET)state->Fd, &state->Op);
+            inFlight++;
+        }
+    }
+    while (inFlight > 0) {
+        OVERLAPPED_ENTRY entry;
+        ULONG fired = 0;
+        if (!GetQueuedCompletionStatusEx(Port_, &entry, 1, &fired, 1000, FALSE)) {
+            break;
+        }
+        if (static_cast<TOperation*>(entry.lpOverlapped)->Buffered) {
+            inFlight--;
+        }
+    }
+    Buffered_.clear();
+    Closing_.clear();
     CloseHandle(Port_);
 }
 
@@ -296,6 +316,8 @@ int TIOCp::Cancel(TOperation& op)
             int result = Complete(Entries_[i]);
             if (other == &op) {
                 done = true;
+            } else if (other->Buffered) {
+                OnBuffered(*other, result, true);
             } else {
                 Completions_.Reap(other, result);
             }
@@ -306,6 +328,182 @@ int TIOCp::Cancel(TOperation& op)
 
 void TIOCp::WakeupReadyHandles() {
     Completions_.Wakeup();
+}
+
+bool TIOCp::TakeBuffered(int fd, TReadBuffer& lease)
+{
+    if (fd < 0) {
+        throw std::system_error(EBADF, std::generic_category(), "read");
+    }
+    if (fd >= static_cast<int>(Buffered_.size()) || !Buffered_[fd]) {
+        return false;
+    }
+    auto& state = *Buffered_[fd];
+    if (state.Pending()) {
+        lease = std::move(state.Ready[state.Head++]);
+        if (!state.Pending()) {
+            state.Ready.clear();
+            state.Head = 0;
+        }
+        return true;
+    }
+    if (state.Error) {
+        throw std::system_error(std::exchange(state.Error, 0), std::generic_category(), "read");
+    }
+    if (state.Eof) {
+        lease = {};
+        return true;
+    }
+    return false;
+}
+
+int TIOCp::ReadBuffered(int fd, void* buf, size_t size)
+{
+    if (fd < 0) {
+        throw std::system_error(EBADF, std::generic_category(), "read");
+    }
+    if (fd >= static_cast<int>(Buffered_.size()) || !Buffered_[fd]) {
+        return -1;
+    }
+    auto& state = *Buffered_[fd];
+    size_t copied = 0;
+    while (copied < size && state.Pending()) {
+        auto& lease = state.Ready[state.Head];
+        size_t n = std::min(size - copied, lease.Data().size());
+        memcpy(static_cast<char*>(buf) + copied, lease.Data().data(), n);
+        lease.Consume(n);
+        copied += n;
+        if (lease.Data().empty()) {
+            lease = {};
+            state.Head++;
+        }
+    }
+    if (!state.Pending()) {
+        state.Ready.clear();
+        state.Head = 0;
+    }
+    if (copied || !size) {
+        return static_cast<int>(copied);
+    }
+    if (state.Error) {
+        throw std::system_error(std::exchange(state.Error, 0), std::generic_category(), "read");
+    }
+    return state.Eof ? 0 : -1;
+}
+
+void TIOCp::WaitBuffered(int fd, bool file, TOperation& op)
+{
+    assert(!file); // files read one buffer at a time, see BufferedFiles
+    (void)file;
+    try {
+        if (fd >= static_cast<int>(Buffered_.size())) {
+            Buffered_.resize(fd + 1);
+        }
+        if (!Buffered_[fd]) {
+            Buffered_[fd] = std::make_unique<TBufferedFd>();
+            Buffered_[fd]->Fd = fd;
+        }
+        auto& state = *Buffered_[fd];
+        assert(!state.Waiter); // one reader per socket
+        if (!state.InFlight) {
+            Post(state);
+        }
+        state.Waiter = &op;
+    } catch (...) {
+        op.Handle = {};
+        throw;
+    }
+}
+
+void TIOCp::DropWaiter(int fd, TOperation& op)
+{
+    op.Handle = {};
+    if (fd >= 0 && fd < static_cast<int>(Buffered_.size()) && Buffered_[fd] && Buffered_[fd]->Waiter == &op) {
+        Buffered_[fd]->Waiter = nullptr;
+    } else {
+        Completions_.Drop(op); // woken already
+    }
+}
+
+void TIOCp::Post(TBufferedFd& state)
+{
+    std::span<char> buf = Buffers_.Acquire(state.Posted);
+    try {
+        state.Op.Handle = std::noop_coroutine(); // pending; the completion goes to OnBuffered()
+        Recv(state.Fd, buf.data(), static_cast<int>(buf.size()), state.Op);
+    } catch (...) {
+        state.Posted = {};
+        throw;
+    }
+    state.Op.Buffered = &state;
+    state.InFlight = true;
+}
+
+void TIOCp::OnBuffered(TOperation& op, int result, bool reaped)
+{
+    auto* state = op.Buffered;
+    state->InFlight = false;
+    op.Handle = {};
+    if (state->Fd >= static_cast<int>(Buffered_.size()) || Buffered_[state->Fd].get() != state) {
+        // Its socket is closed: the buffer goes back.
+        for (auto& closing : Closing_) {
+            if (closing.get() == state) {
+                std::swap(closing, Closing_.back());
+                Closing_.pop_back();
+                break;
+            }
+        }
+        return;
+    }
+    if (result > 0) {
+        Buffers_.Commit(state->Posted, result);
+        state->Ready.push_back(std::move(state->Posted));
+    } else {
+        state->Posted = {};
+        if (result == 0) {
+            state->Eof = true;
+        } else if (result != -WSA_OPERATION_ABORTED) { // aborted by Cancel(int): post again
+            state->Error = -result;
+        }
+    }
+    if (!state->Eof && !state->Error && state->Pending() < Buffers_.Config().PerSocketLimit) {
+        try {
+            Post(*state); // read ahead
+        } catch (const std::system_error& ex) {
+            if (ex.code() != std::errc::no_buffer_space) {
+                state->Error = ex.code().value();
+            } // otherwise the reader posts when it waits, and gets the error then
+        }
+    }
+    if (state->Waiter && (state->Pending() || state->Eof || state->Error)) {
+        Wake(*state, 0, reaped);
+    }
+}
+
+void TIOCp::Wake(TBufferedFd& state, int result, bool reaped)
+{
+    auto* op = std::exchange(state.Waiter, nullptr);
+    if (reaped) {
+        Completions_.Reap(op, result);
+    } else {
+        Completions_.Collect(op, result);
+    }
+}
+
+void TIOCp::ResetBuffered(int fd)
+{
+    if (fd < 0 || fd >= static_cast<int>(Buffered_.size()) || !Buffered_[fd]) {
+        return;
+    }
+    auto& state = Buffered_[fd];
+    if (state->Waiter) {
+        Wake(*state, -WSA_OPERATION_ABORTED, false);
+    }
+    if (state->InFlight) {
+        // Closing the socket aborts the WSARecv, whose packet still points to the state.
+        Closing_.push_back(std::move(state));
+    }
+    state.reset();
 }
 
 long TIOCp::GetTimeoutMs() {
@@ -384,6 +582,9 @@ void TIOCp::Poll()
             if ((change.Type & TEvent::CLOSE_FILE) && change.Fd < static_cast<int>(Files_.size())) {
                 Files_[change.Fd] = EFile::Unknown; // a new file may get the number
             }
+            if (change.Type & TEvent::CLOSE_SOCKET) {
+                ResetBuffered(change.Fd);
+            }
             // Closing ends the pending overlapped operations, whose packets still reach the port.
             CloseDescriptor(change);
         }
@@ -401,7 +602,12 @@ void TIOCp::Poll()
 
     for (DWORD i = 0; i < fired && res == TRUE; i++) {
         auto* op = static_cast<TOperation*>(Entries_[i].lpOverlapped);
-        Completions_.Collect(op, Complete(Entries_[i]));
+        int result = Complete(Entries_[i]);
+        if (op->Buffered) {
+            OnBuffered(*op, result, false);
+        } else {
+            Completions_.Collect(op, result);
+        }
     }
 
     ProcessTimers();

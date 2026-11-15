@@ -62,7 +62,13 @@ public:
     using TSocket = NNet::TPollerDrivenSocket<TIOCp>;
     /// Alias for the poller-driven file handle type. It takes a CRT descriptor, see TIOCp.
     using TFileHandle = NNet::TPollerDrivenFileHandle<TIOCp>;
+    /// ReadBuffer() of a file reads into a free buffer, one read at a time.
+    static constexpr bool BufferedFiles = false;
 
+private:
+    struct TBufferedFd;
+
+public:
     /**
      * @brief State of one operation, kept by the caller.
      *
@@ -88,6 +94,7 @@ public:
         HANDLE File = nullptr; // of a file associated with the port
         DWORD Size = 0; // bytes of a disk file's pointer taken when posted
         bool Read = false; // a file read: the end of the file or of a pipe gives 0 bytes
+        TBufferedFd* Buffered = nullptr; // the read ahead of ReadBuffer() that posted it
 
         // Resets the OVERLAPPED and every field except Handle for a new operation on fd.
         // A field added above must be reset here too.
@@ -103,6 +110,7 @@ public:
             File = nullptr;
             Size = 0;
             Read = false;
+            Buffered = nullptr;
         }
     };
 
@@ -183,6 +191,22 @@ public:
      */
     int Cancel(TOperation& op);
     /**
+     * @brief Takes the next lease read ahead from socket @p fd, for ReadBuffer().
+     *
+     * The first WaitBuffered() on @p fd posts a WSARecv into a free buffer. Each one that
+     * completes posts the next, up to TReadBufferConfig::PerSocketLimit leases.
+     *
+     * @return False if nothing is read yet; true with an empty @p lease at the end of the stream.
+     * @throws std::system_error with the error of the read, once.
+     */
+    bool TakeBuffered(int fd, TReadBuffer& lease);
+    /// Copies up to @p size bytes of the leases of @p fd, as TakeBuffered() takes them. Returns -1 if nothing is read yet, 0 at the end of the stream.
+    int ReadBuffered(int fd, void* buf, size_t size);
+    /// Resumes op.Handle once TakeBuffered() has a result for socket @p fd; op.Result is -WSA_OPERATION_ABORTED if @p fd is closed first. Throws ENOBUFS if all buffers are leased.
+    void WaitBuffered(int fd, bool file, TOperation& op);
+    /// Drops the wait of @p op, whose coroutine is destroyed. The WSARecv in flight stays.
+    void DropWaiter(int fd, TOperation& op);
+    /**
      * @brief Registers a socket with the IOCP.
      *
      * @param fd The socket to register.
@@ -217,6 +241,33 @@ private:
     void PostedFile(TOperation& op, BOOL ok, const char* what);
     // Gives back the part of the file pointer that op took and did not transfer.
     void Rewind(TOperation& op, DWORD transferred);
+
+    // Read ahead of one socket for TakeBuffered().
+    struct TBufferedFd {
+        TOperation Op; // the WSARecv in flight
+        TReadBuffer Posted; // its buffer
+        std::vector<TReadBuffer> Ready; // not taken from Head on
+        size_t Head = 0;
+        TOperation* Waiter = nullptr;
+        int Fd = -1;
+        int Error = 0;
+        bool InFlight = false;
+        bool Eof = false;
+
+        size_t Pending() const {
+            return Ready.size() - Head;
+        }
+    };
+
+    // Posts the next WSARecv of state.
+    void Post(TBufferedFd& state);
+    void OnBuffered(TOperation& op, int result, bool reaped);
+    void Wake(TBufferedFd& state, int result, bool reaped);
+    // Drops the read ahead of a socket that is closed: its waiter gets the abort.
+    void ResetBuffered(int fd);
+
+    std::vector<std::unique_ptr<TBufferedFd>> Buffered_; // by socket
+    std::vector<std::unique_ptr<TBufferedFd>> Closing_; // closed with a WSARecv in flight, until it completes
 
     enum class EFile : unsigned char { Unknown, Port, Disk, Sync };
     std::vector<EFile> Files_; // by CRT descriptor, until the poller closes it

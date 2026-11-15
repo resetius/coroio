@@ -56,6 +56,10 @@ TFuture<TReadBuffer> ReadIntoBuffer(THandle& handle, TBufferPool& pool) {
 template<typename T>
 constexpr bool BufferedReads = requires(T& poller, TReadBuffer& lease) { poller.TakeBuffered(0, lease); };
 
+/// Whether poller T reads ahead for file handles too.
+template<typename T>
+constexpr bool BufferedFileReads = BufferedReads<T> && T::BufferedFiles;
+
 /// ReadBuffer() of a poller that reads ahead.
 template<typename T>
 struct TBufferedRead {
@@ -1107,7 +1111,7 @@ public:
         struct TAwaitable {
             ~TAwaitable() {
                 if (op.Handle) {
-                    if constexpr (NDetail::BufferedReads<T>) {
+                    if constexpr (NDetail::BufferedFileReads<T>) {
                         if (buffered) {
                             poller->DropWaiter(fd, op);
                             return;
@@ -1118,14 +1122,14 @@ public:
             }
 
             bool await_ready() {
-                if constexpr (NDetail::BufferedReads<T>) {
+                if constexpr (NDetail::BufferedFileReads<T>) {
                     return buffered && (copied = poller->ReadBuffered(fd, buf, size)) >= 0;
                 }
                 return false;
             }
             void await_suspend(std::coroutine_handle<> h) {
                 op.Handle = h;
-                if constexpr (NDetail::BufferedReads<T>) {
+                if constexpr (NDetail::BufferedFileReads<T>) {
                     if (buffered) {
                         poller->WaitBuffered(fd, true, op);
                         return;
@@ -1135,7 +1139,7 @@ public:
             }
 
             auto await_resume() {
-                if constexpr (NDetail::BufferedReads<T>) {
+                if constexpr (NDetail::BufferedFileReads<T>) {
                     if (buffered) {
                         return BufferedResume();
                     }
@@ -1185,7 +1189,7 @@ public:
 
     /// Reads into a buffer of the poller, see TPollerDrivenSocket::ReadBuffer().
     auto ReadBuffer() {
-        if constexpr (NDetail::BufferedReads<T>) {
+        if constexpr (NDetail::BufferedFileReads<T>) {
             Buffered_ = true;
             return NDetail::TBufferedRead<T>{Poller_, Fd_, true};
         } else {
