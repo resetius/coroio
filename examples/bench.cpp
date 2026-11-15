@@ -19,8 +19,11 @@ using namespace std;
 namespace {
 
 void usage(const char* name) {
-    printf("%s [-n num_pipes] [-a num_active] [-w num_writes] [-m method]\n", name);
+    printf("%s [-n num_pipes] [-a num_active] [-w num_writes] [-m method] [-r some|buffer|adapter]\n", name);
 }
+
+// How a reader reads: ReadSome(); ReadBuffer(); ReadSome() after one ReadBuffer().
+enum class ERead { Some, Buffer, Adapter };
 
 struct Stat {
     int writes = 0;
@@ -53,6 +56,36 @@ TFuture<void> pipe_reader(TSocket& r, TSocket& w, Stat& s) {
     co_return;
 }
 
+// Reads with ReadBuffer(), or with the adapter only the first time, then as pipe_reader.
+template<typename TSocket>
+TFuture<void> pipe_buffer_reader(TSocket& r, TSocket& w, Stat& s, bool adapter) {
+    try {
+        for (bool more = true; more; more = !adapter) {
+            TReadBuffer lease = co_await r.ReadBuffer();
+            if (lease.Data().empty()) {
+                break;
+            }
+            s.count += lease.Data().size();
+            for (size_t i = 0; i < lease.Data().size() && s.writes; i++) {
+                s.writes--;
+                if (co_await w.WriteSome(lease.Data().data() + i, 1) != 1) {
+                    s.failures ++;
+                }
+                s.fired++;
+            }
+        }
+    } catch (const std::exception& ex) {
+        s.failures ++;
+    }
+    if (adapter) {
+        // The lease is gone: a reader that kept one would hold a buffer of the ring forever.
+        co_await pipe_reader(r, w, s);
+        co_return;
+    }
+    s.out ++;
+    co_return;
+}
+
 template<typename TSocket>
 TFuture<void> write_one(TSocket& w, Stat& s) {
     char buf[1] = {'e'};
@@ -67,7 +100,7 @@ TFuture<void> yield(TPollerBase& poller) {
 }
 
 template<typename TPoller>
-std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active) {
+std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active, ERead read) {
     Stat s;
     using TFileHandle = typename TPoller::TFileHandle;
     using TSocket = typename TPoller::TSocket;
@@ -102,7 +135,13 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
     s.writes = num_writes;
 
     for (int i = 0; i < num_pipes; i++) {
-        handles.emplace_back(pipe_reader(pipes[i*2], pipes[((i+1)%num_pipes)*2+1], s));
+        auto& r = pipes[i*2];
+        auto& w = pipes[((i+1)%num_pipes)*2+1];
+        if (read == ERead::Some) {
+            handles.emplace_back(pipe_reader(r, w, s));
+        } else {
+            handles.emplace_back(pipe_buffer_reader(r, w, s, read == ERead::Adapter));
+        }
     }
 
     handles.emplace_back(yield(loop.Poller())); // initialize events (sleep in readers)
@@ -135,12 +174,12 @@ std::chrono::microseconds run_one(int num_pipes, int num_writes, int num_active)
 }
 
 template<typename TPoller>
-void run_test(int num_pipes, int num_writes, int num_active) {
+void run_test(int num_pipes, int num_writes, int num_active, ERead read) {
     int runs = 25;
     vector<uint64_t> results;
     results.reserve(runs);
     for (int i = 0; i < runs; i++) {
-        auto d = run_one<TPoller>(num_pipes, num_writes, num_active).count();
+        auto d = run_one<TPoller>(num_pipes, num_writes, num_active, read).count();
         results.emplace_back(d);
     }
     sort(results.begin(), results.end());
@@ -160,6 +199,7 @@ int main(int argc, char** argv) {
     int num_writes = num_pipes;
     int num_active = 1;
     const char* method = "poll";
+    ERead read = ERead::Some;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-n") && i < argc-1) {
@@ -170,34 +210,45 @@ int main(int argc, char** argv) {
             num_writes = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "-m") && i < argc-1) {
             method = argv[++i];
+        } else if (!strcmp(argv[i], "-r") && i < argc-1) {
+            const char* name = argv[++i];
+            if (!strcmp(name, "some")) {
+                read = ERead::Some;
+            } else if (!strcmp(name, "buffer")) {
+                read = ERead::Buffer;
+            } else if (!strcmp(name, "adapter")) {
+                read = ERead::Adapter;
+            } else {
+                usage(argv[0]); return 1;
+            }
         } else {
             usage(argv[0]); return 1;
         }
     }
     if (!strcmp(method, "select")) {
-        run_test<TSelect>(num_pipes, num_writes, num_active);
+        run_test<TSelect>(num_pipes, num_writes, num_active, read);
     }
     else if (!strcmp(method, "poll")) {
-        run_test<TPoll>(num_pipes, num_writes, num_active);
+        run_test<TPoll>(num_pipes, num_writes, num_active, read);
     }
 #ifdef HAVE_EPOLL
     else if (!strcmp(method, "epoll")) {
-        run_test<TEPoll>(num_pipes, num_writes, num_active);
+        run_test<TEPoll>(num_pipes, num_writes, num_active, read);
     }
 #endif
 #ifdef HAVE_URING
     else if (!strcmp(method, "uring")) {
-        run_test<TUring>(num_pipes, num_writes, num_active);
+        run_test<TUring>(num_pipes, num_writes, num_active, read);
     }
 #endif
 #ifdef HAVE_KQUEUE
     else if (!strcmp(method, "kqueue")) {
-        run_test<TKqueue>(num_pipes, num_writes, num_active);
+        run_test<TKqueue>(num_pipes, num_writes, num_active, read);
     }
 #endif
 #ifdef HAVE_IOCP
     else if (!strcmp(method, "iocp")) {
-        run_test<TIOCp>(num_pipes, num_writes, num_active);
+        run_test<TIOCp>(num_pipes, num_writes, num_active, read);
     }
 #endif
 

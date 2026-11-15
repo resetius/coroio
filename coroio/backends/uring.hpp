@@ -60,7 +60,7 @@ namespace NNet {
  * @endcode
  *
  */
-class TUring: public TPollerBase {
+class TUring: public TPollerBase, private NDetail::TBufferPool::IOwner {
 public:
     /// Alias for the poller-driven socket type.
     using TSocket = NNet::TPollerDrivenSocket<TUring>;
@@ -166,6 +166,24 @@ public:
      */
     int Cancel(TOperation& op);
     /**
+     * @brief Takes the next lease read ahead from @p fd, for ReadBuffer().
+     *
+     * The first WaitBuffered() on @p fd starts reading ahead: a multishot recv (a socket)
+     * or read (a pipe) into the buffer ring, or one read at a time for a regular file.
+     * The read ahead stops at TReadBufferConfig::PerSocketLimit leases and when the ring
+     * is empty, and goes on when the reader waits again or a buffer comes back.
+     *
+     * @return False if nothing is read yet; true with an empty @p lease at the end of the stream.
+     * @throws std::system_error with the error of the read, once.
+     */
+    bool TakeBuffered(int fd, TReadBuffer& lease);
+    /// Copies up to @p size bytes of the leases of @p fd, as TakeBuffered() takes them. Returns -1 if nothing is read yet, 0 at the end of the stream.
+    int ReadBuffered(int fd, void* buf, size_t size);
+    /// Resumes op.Handle once TakeBuffered() has a result for @p fd; op.Result is -ECANCELED if @p fd is closed first. One waiter per descriptor.
+    void WaitBuffered(int fd, bool file, TOperation& op);
+    /// Drops the wait of @p op, whose coroutine is destroyed. Nothing goes to the kernel: the read ahead goes on.
+    void DropWaiter(int fd, TOperation& op);
+    /**
      * @brief Registers a file descriptor with the IO_uring poller.
      *
      * @param fd The file descriptor to register.
@@ -240,12 +258,50 @@ private:
     /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.
     bool Reap(TOperation& op, int* result);
 
+    // Read ahead of one descriptor for TakeBuffered().
+    struct TBufferedFd {
+        std::vector<TReadBuffer> Ready; // not taken from Head on
+        size_t Head = 0;
+        TOperation* Waiter = nullptr;
+        int Error = 0;
+        uint32_t Gen = 0; // in user_data: completions of a closed descriptor's read give their buffers back
+        bool Armed = false; // a read is in the kernel
+        bool Eof = false;
+        bool File = false;
+        bool Single = false; // a regular file: multishot needs a pollable one
+        bool Throttled = false; // cancelled at PerSocketLimit
+        bool Starved = false; // ended by -ENOBUFS
+
+        size_t Pending() const {
+            return Ready.size() - Head;
+        }
+    };
+    using TFdGen = std::pair<int, uint32_t>;
+
+    /// Sets up the buffer ring at the first WaitBuffered().
+    void SetupBuffers();
+    /// Gives the buffer of a lease back to the kernel, as the TBufferPool::IOwner.
+    void Release(uint16_t id) override;
+    void RingAdd(uint16_t id);
+    void Arm(int fd, TBufferedFd& state);
+    void OnBuffered(const io_uring_cqe* cqe, bool reaped);
+    void Wake(TBufferedFd& state, int result, bool reaped);
+    /// Queues the cancels at PerSocketLimit and the reads that go on.
+    void PrepBuffered();
+    /// Drops the read ahead of a descriptor that is closed: its waiter gets -ECANCELED.
+    void ResetBuffered(int fd);
+
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
     NDetail::TCompletions Completions_; ///< Completions not delivered yet.
     std::vector<unsigned> Operations_; ///< Per descriptor: operations posted whose completion is not taken yet.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
+    std::vector<TBufferedFd> Buffered_; ///< Per descriptor: the read ahead of TakeBuffered().
+    io_uring_buf_ring* BufRing_ = nullptr; ///< The buffers of Buffers_, for the kernel to pick.
+    std::vector<TFdGen> Rearm_; ///< Reads to go on at the next Wait().
+    std::vector<TFdGen> Throttle_; ///< Reads to cancel at the next Wait().
+    std::vector<TFdGen> Starved_; ///< Reads that go on when a buffer comes back.
 };
 
 } // namespace NNet

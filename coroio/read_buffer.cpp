@@ -21,7 +21,9 @@ void TBufferPool::Configure(const TReadBufferConfig& config) {
 void TBufferPool::Allocate() {
     if (!Arena_) {
         // One pool, so that a buffer has an id. Its pages are touched only when used.
-        Arena_.emplace(Config_.BufferSize, 64, Config_.Count, 1);
+        // One more cache line per buffer: TUring's ring hands them out in turn, and
+        // 16 KiB apart they would all fall into the same cache sets.
+        Arena_.emplace(Config_.BufferSize + 64, 64, Config_.Count, 1);
         Thread_ = std::this_thread::get_id();
     }
 }

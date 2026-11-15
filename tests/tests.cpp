@@ -1955,6 +1955,15 @@ constexpr int ConnReset = ECONNRESET;
 template<typename TPoller>
 constexpr bool kDrivenSocket = !std::is_same_v<typename TPoller::TSocket, TSocket>;
 
+// The kernel picks the buffers from a ring: a read waits for one instead of failing.
+template<typename TPoller>
+constexpr bool kBufferRing =
+#if defined(__linux__) && defined(HAVE_URING)
+    std::is_same_v<TPoller, TUring>;
+#else
+    false;
+#endif
+
 template<typename TFile>
 TFuture<void> ReadLease(TFile& file, std::optional<TReadBuffer>* lease) {
     lease->emplace(co_await file.ReadBuffer());
@@ -2113,8 +2122,8 @@ void test_read_buffer_mixed_order(void**) {
     assert_string_equal(data.c_str(), "01234567");
 }
 
-// A reader that holds every buffer gets no more: the readiness pollers throw.
-// Bytes sent faster than they are read stay in order.
+// A reader that holds every buffer gets no more: the readiness pollers throw,
+// TUring waits until one comes back. Bytes sent faster than they are read stay in order.
 template<typename TPoller>
 void test_read_buffer_back_pressure(void**) {
     TLoop<TPoller> loop;
@@ -2130,8 +2139,18 @@ void test_read_buffer_back_pressure(void**) {
     std::string data;
     int result = 0;
     auto starved = AppendLease(c.Server, &data, &result);
-    StepUntilDone(loop, starved);
-    assert_int_equal(result, static_cast<int>(std::errc::no_buffer_space));
+    if constexpr (kBufferRing<TPoller>) {
+        for (int i = 0; i < 3; i++) {
+            loop.Step();
+        }
+        assert_false(starved.done());
+        held[0].reset();
+        StepUntilDone(loop, starved);
+        assert_int_equal(result, 0);
+    } else {
+        StepUntilDone(loop, starved);
+        assert_int_equal(result, static_cast<int>(std::errc::no_buffer_space));
+    }
     held[0].reset();
     held[1].reset();
 
@@ -2141,7 +2160,7 @@ void test_read_buffer_back_pressure(void**) {
     }
     TByteWriter writer(c.Client);
     auto write = writer.Write(sent.data(), sent.size());
-    std::string got;
+    std::string got = data; // "y" if read already
     while (got.size() < sent.size() + 1) {
         auto read = AppendLease(c.Server, &got, &result);
         StepUntilDone(loop, read);
@@ -2248,6 +2267,109 @@ void test_read_buffer_files(void**) {
     assert_int_equal(lseek(fd, 0, SEEK_SET), 0);
     TFileHandle file(fd, loop.Poller());
     assert_true(ReadToEnd(loop, file) == sent);
+}
+#endif
+
+#if defined(__linux__) && defined(HAVE_URING)
+// The bytes read ahead for a socket closed meanwhile go back to the ring, not
+// to the socket that reuses its number: their completions carry the old generation.
+void test_uring_read_buffer_stale_generation(void**) {
+    TLoop<TUring> loop;
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 64, .Count = 4});
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TUring::TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    int reused = 0;
+    int last = -1;
+    for (int i = 0; i < 8; i++) {
+        auto [client, server] = ConnectedPair(loop, listener, address);
+        reused += client.Fd() == last;
+        last = client.Fd();
+        std::string data;
+        int result = 0;
+        assert_int_equal(send(server.Fd(), "new", 3, 0), 3);
+        auto first = AppendLease(client, &data, &result);
+        StepUntilDone(loop, first);
+        assert_string_equal(data.c_str(), "new");
+        auto reader = AppendLease(client, &data, &result);
+        loop.Step();
+        assert_int_equal(send(server.Fd(), "old", 3, 0), 3);
+        client.Close();
+        StepUntilDone(loop, reader);
+        assert_int_equal(result, ECANCELED);
+        loop.Step(); // the close completes, so the next client gets the number
+    }
+    assert_true(reused > 0);
+}
+
+// A close cancels the read ahead of its socket, which close() alone leaves holding
+// the file, before the number is released: the peer sees the end of the stream,
+// and a descriptor opened meanwhile keeps its own read.
+void test_uring_read_buffer_close_cancels_read_ahead(void**) {
+    TLoop<TUring> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    int fds[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    auto handle = std::make_unique<TUring::TSocket>(fds[0], loop.Poller());
+    std::string data;
+    int result = 0;
+    {
+        auto reader = AppendLease(*handle, &data, &result); // destroyed waiting: the read ahead stays
+        loop.Step();
+    }
+    handle.reset();
+    int next[2];
+    assert_int_equal(pipe(next), 0);
+    TUring::TFileHandle nextHandle(next[0], loop.Poller());
+    auto nextRead = AppendLease(nextHandle, &data, &result);
+    char c;
+    bool eof = false;
+    for (int i = 0; i < 100 && !eof; i++) {
+        loop.Step();
+        eof = recv(fds[1], &c, 1, MSG_DONTWAIT) == 0;
+    }
+    assert_true(eof);
+    assert_int_equal(write(next[1], "n", 1), 1);
+    StepUntilDone(loop, nextRead);
+    assert_string_equal(data.c_str(), "n");
+    close(fds[1]);
+    close(next[1]);
+}
+
+// A sender faster than its reader stops being read at PerSocketLimit leases,
+// so it leaves buffers for the other sockets, and its bytes wait in its socket.
+void test_uring_read_buffer_socket_limit(void**) {
+    TLoop<TUring> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    loop.Poller().ConfigureReadBuffers({.BufferSize = 16, .Count = 64, .PerSocketLimit = 2});
+    TConnected<TUring> fast(loop);
+    TConnected<TUring> slow(loop);
+    std::optional<TReadBuffer> held;
+    assert_int_equal(send(fast.Client.Fd(), "f", 1, 0), 1);
+    auto first = ReadLease(fast.Server, &held);
+    StepUntilDone(loop, first);
+    std::string sent;
+    for (int i = 0; i < 64; i++) {
+        std::string chunk(16, static_cast<char>('a' + i % 26));
+        assert_int_equal(send(fast.Client.Fd(), chunk.data(), chunk.size(), 0), 16);
+        sent += chunk;
+        loop.Step();
+    }
+    assert_int_equal(send(slow.Client.Fd(), "s", 1, 0), 1);
+    std::string data;
+    int result = 0;
+    auto other = AppendLease(slow.Server, &data, &result);
+    StepUntilDone(loop, other);
+    assert_string_equal(data.c_str(), "s");
+    held.reset();
+    data.clear();
+    while (data.size() < sent.size()) {
+        auto read = AppendLease(fast.Server, &data, &result);
+        StepUntilDone(loop, read);
+        assert_int_equal(result, 0);
+    }
+    assert_true(data == sent);
 }
 #endif
 
@@ -4659,6 +4781,11 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_read_buffer_destroyed_waiter);
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_read_buffer_files);
+#endif
+#if defined(__linux__) && defined(HAVE_URING)
+    ADD_TEST(cmocka_unit_test, test_uring_read_buffer_stale_generation);
+    ADD_TEST(cmocka_unit_test, test_uring_read_buffer_close_cancels_read_ahead);
+    ADD_TEST(cmocka_unit_test, test_uring_read_buffer_socket_limit);
 #endif
     ADD_TEST(cmocka_unit_test, test_completions);
 
