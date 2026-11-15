@@ -52,6 +52,48 @@ TFuture<TReadBuffer> ReadIntoBuffer(THandle& handle, TBufferPool& pool) {
     });
 }
 
+/// Whether poller T reads ahead into its buffers: TakeBuffered(), WaitBuffered() and friends.
+template<typename T>
+constexpr bool BufferedReads = requires(T& poller, TReadBuffer& lease) { poller.TakeBuffered(0, lease); };
+
+/// ReadBuffer() of a poller that reads ahead.
+template<typename T>
+struct TBufferedRead {
+    ~TBufferedRead() {
+        if (op.Handle) {
+            // The coroutine is destroyed while waiting.
+            poller->DropWaiter(fd, op);
+        }
+    }
+
+    bool await_ready() {
+        return (ready = poller->TakeBuffered(fd, lease));
+    }
+
+    void await_suspend(std::coroutine_handle<> h) {
+        op.Handle = h;
+        poller->WaitBuffered(fd, file, op);
+    }
+
+    TReadBuffer await_resume() {
+        if (!ready) {
+            if (op.Result < 0) {
+                throw std::system_error(-op.Result, std::generic_category(), "read");
+            }
+            ready = poller->TakeBuffered(fd, lease);
+            assert(ready);
+        }
+        return std::move(lease);
+    }
+
+    T* poller;
+    int fd;
+    bool file;
+    bool ready = false;
+    TReadBuffer lease = {};
+    typename T::TOperation op = {};
+};
+
 } // namespace NDetail
 
 /**
@@ -851,17 +893,39 @@ public:
         struct TAwaitable {
             ~TAwaitable() {
                 if (op.Handle) {
+                    if constexpr (NDetail::BufferedReads<T>) {
+                        if (buffered) {
+                            poller->DropWaiter(fd, op);
+                            return;
+                        }
+                    }
                     poller->Cancel(op);
                 }
             }
 
-            bool await_ready() const { return false; }
+            bool await_ready() {
+                if constexpr (NDetail::BufferedReads<T>) {
+                    return buffered && (copied = poller->ReadBuffered(fd, buf, size)) >= 0;
+                }
+                return false;
+            }
             void await_suspend(std::coroutine_handle<> h) {
                 op.Handle = h;
+                if constexpr (NDetail::BufferedReads<T>) {
+                    if (buffered) {
+                        poller->WaitBuffered(fd, false, op);
+                        return;
+                    }
+                }
                 poller->Recv(fd, buf, size, op);
             }
 
             auto await_resume() {
+                if constexpr (NDetail::BufferedReads<T>) {
+                    if (buffered) {
+                        return BufferedResume();
+                    }
+                }
                 auto ret = op.Result;
                 if (ret < 0) {
 #ifdef _WIN32
@@ -880,20 +944,44 @@ public:
                 return ret;
             }
 
+            // After ReadBuffer(): takes from its leases, which the poller reads ahead.
+            int BufferedResume() {
+                if (copied < 0) {
+                    if (op.Result < 0) {
+                        throw std::system_error(-op.Result, std::generic_category(), "read");
+                    }
+                    copied = poller->ReadBuffered(fd, buf, size);
+                    assert(copied >= 0);
+                }
+                return copied;
+            }
+
             T* poller;
             int fd;
 
             void* buf;
             size_t size;
+            bool buffered;
+            int copied = -1;
             typename T::TOperation op = {};
         };
 
-        return TAwaitable{Poller_, Fd_, buf, size};
+        return TAwaitable{Poller_, Fd_, buf, size, Buffered_};
     }
 
-    /// Reads into a buffer of the poller, see TSocketBase::ReadBuffer().
-    TFuture<TReadBuffer> ReadBuffer() {
-        return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
+    /**
+     * @brief Reads into a buffer of the poller, see TSocketBase::ReadBuffer().
+     *
+     * A poller that reads ahead (TUring) keeps reading into its buffers from the first
+     * call on: ReadSome() on the socket then takes from the same leases, with a copy.
+     */
+    auto ReadBuffer() {
+        if constexpr (NDetail::BufferedReads<T>) {
+            Buffered_ = true;
+            return NDetail::TBufferedRead<T>{Poller_, Fd_, false};
+        } else {
+            return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
+        }
     }
 
     /**
@@ -962,6 +1050,7 @@ public:
 
 private:
     T* Poller_;
+    bool Buffered_ = false; ///< ReadBuffer() was called: ReadSome() takes from its leases.
 };
 
 /**
@@ -1018,17 +1107,39 @@ public:
         struct TAwaitable {
             ~TAwaitable() {
                 if (op.Handle) {
+                    if constexpr (NDetail::BufferedReads<T>) {
+                        if (buffered) {
+                            poller->DropWaiter(fd, op);
+                            return;
+                        }
+                    }
                     poller->Cancel(op);
                 }
             }
 
-            bool await_ready() const { return false; }
+            bool await_ready() {
+                if constexpr (NDetail::BufferedReads<T>) {
+                    return buffered && (copied = poller->ReadBuffered(fd, buf, size)) >= 0;
+                }
+                return false;
+            }
             void await_suspend(std::coroutine_handle<> h) {
                 op.Handle = h;
+                if constexpr (NDetail::BufferedReads<T>) {
+                    if (buffered) {
+                        poller->WaitBuffered(fd, true, op);
+                        return;
+                    }
+                }
                 poller->Read(fd, buf, size, op);
             }
 
             auto await_resume() {
+                if constexpr (NDetail::BufferedReads<T>) {
+                    if (buffered) {
+                        return BufferedResume();
+                    }
+                }
                 auto ret = op.Result;
                 if (ret < 0) {
 #ifdef _WIN32
@@ -1047,20 +1158,39 @@ public:
                 return ret;
             }
 
+            // After ReadBuffer(): takes from its leases, which the poller reads ahead.
+            int BufferedResume() {
+                if (copied < 0) {
+                    if (op.Result < 0) {
+                        throw std::system_error(-op.Result, std::generic_category(), "read");
+                    }
+                    copied = poller->ReadBuffered(fd, buf, size);
+                    assert(copied >= 0);
+                }
+                return copied;
+            }
+
             T* poller;
             int fd;
 
             void* buf;
             size_t size;
+            bool buffered;
+            int copied = -1;
             typename T::TOperation op = {};
         };
 
-        return TAwaitable{Poller_, Fd_, buf, size};
+        return TAwaitable{Poller_, Fd_, buf, size, Buffered_};
     }
 
-    /// Reads into a buffer of the poller, see TSocketBase::ReadBuffer().
-    TFuture<TReadBuffer> ReadBuffer() {
-        return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
+    /// Reads into a buffer of the poller, see TPollerDrivenSocket::ReadBuffer().
+    auto ReadBuffer() {
+        if constexpr (NDetail::BufferedReads<T>) {
+            Buffered_ = true;
+            return NDetail::TBufferedRead<T>{Poller_, Fd_, true};
+        } else {
+            return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
+        }
     }
 
     /**
@@ -1129,6 +1259,7 @@ public:
 
 private:
     T* Poller_;
+    bool Buffered_ = false; ///< ReadBuffer() was called: ReadSome() takes from its leases.
 };
 
 } // namespace NNet

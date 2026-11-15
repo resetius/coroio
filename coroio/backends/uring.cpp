@@ -3,6 +3,7 @@
 #include <coroio/notifier.hpp>
 
 #include <algorithm>
+#include <cstring>
 
 #ifdef HAVE_URING
 
@@ -11,6 +12,29 @@ namespace NNet {
 std::unique_ptr<INotifier> TUring::CreateNotifier() {
     return std::make_unique<TNotifier<TUring>>(*this);
 }
+
+namespace {
+
+constexpr int BufferGroup = 0;
+
+// The user_data of a buffered read: odd, unlike a TOperation address.
+uint64_t Tag(int fd, uint32_t gen) {
+    return (static_cast<uint64_t>(gen) << 32) | (static_cast<uint64_t>(fd) << 1) | 1;
+}
+
+bool IsTag(uint64_t data) {
+    return data & 1;
+}
+
+int TagFd(uint64_t data) {
+    return static_cast<int>(static_cast<uint32_t>(data) >> 1);
+}
+
+uint32_t TagGen(uint64_t data) {
+    return static_cast<uint32_t>(data >> 32);
+}
+
+} // namespace
 
 // The kernel sizes the hash that cancels by user_data search from the CQ: 16 buckets for the
 // default 512 entries, so such a cancel walked ~1/32 of the pending operations; 8192 gives 256, the most.
@@ -56,7 +80,13 @@ TUring::TUring(int queueSize, int completionQueueSize)
 }
 
 TUring::~TUring() {
+    Buffered_.clear(); // the leases not taken go back to the ring
     io_uring_submit(&Ring_); // best effort: closes prepared by a Wait() that threw
+    if (BufRing_) {
+        // Before the exit, which cancels the multishot reads later: none may pick a buffer of the freed pool.
+        io_uring_free_buf_ring(&Ring_, BufRing_, Buffers_.Config().Count, BufferGroup);
+        Buffers_.SetOwner(nullptr);
+    }
     io_uring_queue_exit(&Ring_);
     close(RingFd_);
     close(EpollFd_);
@@ -212,6 +242,10 @@ bool TUring::Reap(TOperation& op, int* result) {
     bool found = false;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
+        if (IsTag(cqe->user_data)) {
+            OnBuffered(cqe, true);
+            continue;
+        }
         auto* other = static_cast<TOperation*>(io_uring_cqe_get_data(cqe));
         if (other == &op) {
             Done(op);
@@ -242,11 +276,13 @@ int TUring::Wait(timespec ts) {
             continue; // a close already in the ring
         }
         if (ev.Type & TEvent::CLOSE) {
+            ResetBuffered(ev.Fd);
             PrepClose(ev);
         } else {
             Cancel(ev.Fd);
         }
     }
+    PrepBuffered();
 
     Reset();
     if (Completions_.Carry()) {
@@ -278,7 +314,9 @@ int TUring::Wait(timespec ts) {
     int completed = 0;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
-        if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
+        if (IsTag(cqe->user_data)) {
+            OnBuffered(cqe, false);
+        } else if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
             Done(*op);
             Completions_.Collect(op, cqe->res);
         }
@@ -293,6 +331,234 @@ int TUring::Wait(timespec ts) {
 
 void TUring::WakeupReadyHandles() {
     Completions_.Wakeup();
+}
+
+bool TUring::TakeBuffered(int fd, TReadBuffer& lease) {
+    if (fd < 0) {
+        throw std::system_error(EBADF, std::generic_category(), "read");
+    }
+    if (fd >= static_cast<int>(Buffered_.size())) {
+        return false;
+    }
+    auto& state = Buffered_[fd];
+    if (state.Pending()) {
+        lease = std::move(state.Ready[state.Head++]);
+        if (!state.Pending()) {
+            state.Ready.clear();
+            state.Head = 0;
+        }
+        return true;
+    }
+    if (state.Error) {
+        throw std::system_error(std::exchange(state.Error, 0), std::generic_category(), "read");
+    }
+    if (state.Eof) {
+        lease = {};
+        return true;
+    }
+    return false;
+}
+
+int TUring::ReadBuffered(int fd, void* buf, size_t size) {
+    if (fd < 0) {
+        throw std::system_error(EBADF, std::generic_category(), "read");
+    }
+    if (fd >= static_cast<int>(Buffered_.size())) {
+        return -1;
+    }
+    auto& state = Buffered_[fd];
+    size_t copied = 0;
+    while (copied < size && state.Pending()) {
+        auto& lease = state.Ready[state.Head];
+        size_t n = std::min(size - copied, lease.Data().size());
+        memcpy(static_cast<char*>(buf) + copied, lease.Data().data(), n);
+        lease.Consume(n);
+        copied += n;
+        if (lease.Data().empty()) {
+            lease = {};
+            state.Head++;
+        }
+    }
+    if (!state.Pending()) {
+        state.Ready.clear();
+        state.Head = 0;
+    }
+    if (copied || !size) {
+        return static_cast<int>(copied);
+    }
+    if (state.Error) {
+        throw std::system_error(std::exchange(state.Error, 0), std::generic_category(), "read");
+    }
+    return state.Eof ? 0 : -1;
+}
+
+void TUring::WaitBuffered(int fd, bool file, TOperation& op) {
+    try {
+        if (fd >= static_cast<int>(Buffered_.size())) {
+            Buffered_.resize(fd + 1);
+        }
+        if (fd >= static_cast<int>(Operations_.size())) {
+            Operations_.resize(fd + 1);
+        }
+        SetupBuffers();
+        auto& state = Buffered_[fd];
+        assert(!state.Waiter); // one reader per descriptor
+        state.File = file;
+        if (!state.Armed) {
+            Arm(fd, state);
+        }
+        state.Waiter = &op;
+    } catch (...) {
+        op.Handle = {};
+        throw;
+    }
+}
+
+void TUring::DropWaiter(int fd, TOperation& op) {
+    op.Handle = {};
+    if (fd >= 0 && fd < static_cast<int>(Buffered_.size()) && Buffered_[fd].Waiter == &op) {
+        Buffered_[fd].Waiter = nullptr;
+    } else {
+        Completions_.Drop(op); // woken already
+    }
+}
+
+void TUring::SetupBuffers() {
+    if (BufRing_) {
+        return;
+    }
+    Buffers_.Allocate();
+    const auto& config = Buffers_.Config();
+    int err = 0;
+    BufRing_ = io_uring_setup_buf_ring(&Ring_, config.Count, BufferGroup, 0, &err);
+    if (!BufRing_) {
+        throw std::system_error(-err, std::generic_category(), "io_uring_setup_buf_ring");
+    }
+    int mask = io_uring_buf_ring_mask(config.Count);
+    for (uint32_t id = 0; id < config.Count; id++) {
+        io_uring_buf_ring_add(BufRing_, Buffers_.Buffer(id), config.BufferSize, id, mask, id);
+    }
+    io_uring_buf_ring_advance(BufRing_, config.Count);
+    Buffers_.SetOwner(this);
+}
+
+void TUring::RingAdd(uint16_t id) {
+    const auto& config = Buffers_.Config();
+    io_uring_buf_ring_add(BufRing_, Buffers_.Buffer(id), config.BufferSize, id, io_uring_buf_ring_mask(config.Count), 0);
+    io_uring_buf_ring_advance(BufRing_, 1);
+}
+
+void TUring::Release(uint16_t id) {
+    RingAdd(id);
+    if (!Starved_.empty()) {
+        Rearm_.push_back(Starved_.back());
+        Starved_.pop_back();
+    }
+}
+
+void TUring::Arm(int fd, TBufferedFd& state) {
+    io_uring_sqe* sqe = GetSqe();
+    if (state.Single) {
+        io_uring_prep_read(sqe, fd, nullptr, Buffers_.Config().BufferSize, -1);
+        sqe->flags |= IOSQE_BUFFER_SELECT;
+        sqe->buf_group = BufferGroup;
+    } else if (state.File) {
+        io_uring_prep_read_multishot(sqe, fd, 0, -1, BufferGroup);
+    } else {
+        io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, 0);
+        sqe->flags |= IOSQE_BUFFER_SELECT;
+        sqe->buf_group = BufferGroup;
+    }
+    io_uring_sqe_set_data64(sqe, Tag(fd, state.Gen));
+    Operations_[fd]++; // so that a close cancels it
+    state.Armed = true;
+    state.Starved = false;
+    state.Throttled = false;
+}
+
+void TUring::OnBuffered(const io_uring_cqe* cqe, bool reaped) {
+    int fd = TagFd(cqe->user_data);
+    bool more = cqe->flags & IORING_CQE_F_MORE;
+    if (!more) {
+        assert(Operations_[fd] > 0);
+        Operations_[fd]--;
+    }
+    auto& state = Buffered_[fd];
+    bool own = TagGen(cqe->user_data) == state.Gen;
+    if (cqe->flags & IORING_CQE_F_BUFFER) {
+        auto id = static_cast<uint16_t>(cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+        if (own && cqe->res > 0) {
+            state.Ready.push_back(Buffers_.Commit(id, cqe->res));
+        } else {
+            RingAdd(id);
+        }
+    }
+    if (!own) {
+        return;
+    }
+    if (!more) {
+        state.Armed = false;
+    }
+    if (cqe->res == 0) {
+        state.Eof = true;
+    } else if (cqe->res == -ENOBUFS) {
+        state.Starved = true;
+    } else if (cqe->res == -EBADFD && state.File && !state.Single) {
+        state.Single = true; // a regular file: read it one buffer at a time
+    } else if (cqe->res < 0 && cqe->res != -ECANCELED) {
+        state.Error = -cqe->res;
+    }
+    if (state.Waiter && (state.Pending() || state.Eof || state.Error)) {
+        Wake(state, 0, reaped);
+    } else if (state.Waiter && !state.Armed) {
+        (state.Starved ? Starved_ : Rearm_).emplace_back(fd, state.Gen);
+    }
+    if (state.Armed && !state.Throttled && state.Pending() >= Buffers_.Config().PerSocketLimit) {
+        // Leaves the rest in the socket, so one fast sender does not take the whole ring.
+        state.Throttled = true;
+        Throttle_.emplace_back(fd, state.Gen);
+    }
+}
+
+void TUring::Wake(TBufferedFd& state, int result, bool reaped) {
+    auto* op = std::exchange(state.Waiter, nullptr);
+    if (reaped) {
+        Completions_.Reap(op, result);
+    } else {
+        Completions_.Collect(op, result);
+    }
+}
+
+void TUring::PrepBuffered() {
+    for (auto [fd, gen] : Throttle_) {
+        if (Buffered_[fd].Gen == gen && Buffered_[fd].Armed) {
+            io_uring_sqe* sqe = GetSqe();
+            io_uring_prep_cancel64(sqe, Tag(fd, gen), 0);
+            io_uring_sqe_set_data(sqe, nullptr);
+        }
+    }
+    Throttle_.clear();
+    for (auto [fd, gen] : Rearm_) {
+        auto& state = Buffered_[fd];
+        if (state.Gen == gen && !state.Armed && !state.Eof && !state.Error) {
+            Arm(fd, state);
+        }
+    }
+    Rearm_.clear();
+}
+
+void TUring::ResetBuffered(int fd) {
+    if (fd >= static_cast<int>(Buffered_.size())) {
+        return;
+    }
+    auto& state = Buffered_[fd];
+    if (state.Waiter) {
+        Wake(state, -ECANCELED, false);
+    }
+    // The read in the kernel is cancelled by the close; its completions carry the old generation.
+    TBufferedFd next;
+    next.Gen = state.Gen + 1;
+    state = std::move(next);
 }
 
 void TUring::Submit() {
