@@ -258,13 +258,20 @@ private:
     /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.
     bool Reap(TOperation& op, int* result);
 
-    // Read ahead of one descriptor for TakeBuffered().
-    struct TBufferedFd {
-        std::vector<TReadBuffer> Ready; // not taken from Head on
-        size_t Head = 0;
+    // A buffer read ahead and not taken yet: Size bytes from Pos.
+    struct TQueued {
+        uint32_t Size = 0;
+        uint32_t Pos = 0;
+        uint16_t Id = 0;
+    };
+    // Read ahead of one descriptor for TakeBuffered(), in one cache line: the first buffer is kept inline.
+    struct alignas(64) TBufferedFd {
         TOperation* Waiter = nullptr;
-        int Error = 0;
+        std::vector<TQueued> More; // after Front, not taken from Head on
         uint32_t Gen = 0; // in user_data: completions of a closed descriptor's read give their buffers back
+        int Error = 0;
+        TQueued Front; // Size 0: none
+        uint32_t Head = 0;
         bool Armed = false; // a read is in the kernel
         bool Eof = false;
         bool File = false;
@@ -273,7 +280,24 @@ private:
         bool Starved = false; // ended by -ENOBUFS
 
         size_t Pending() const {
-            return Ready.size() - Head;
+            return (Front.Size != 0) + More.size() - Head;
+        }
+
+        void Push(TQueued buffer) {
+            if (Front.Size == 0) {
+                Front = buffer;
+            } else {
+                More.push_back(buffer);
+            }
+        }
+
+        // Front is taken or read up: moves the next buffer into it.
+        void Refill() {
+            Front = Head < More.size() ? More[Head++] : TQueued{};
+            if (Head == More.size()) {
+                More.clear();
+                Head = 0;
+            }
         }
     };
     using TFdGen = std::pair<int, uint32_t>;
@@ -282,7 +306,9 @@ private:
     void SetupBuffers();
     /// Gives the buffer of a lease back to the kernel, as the TBufferPool::IOwner.
     void Release(uint16_t id) override;
+    /// Queues buffer @p id for the ring; FlushReturned() gives the queued ones to the kernel.
     void RingAdd(uint16_t id);
+    void FlushReturned();
     void Arm(int fd, TBufferedFd& state);
     void OnBuffered(const io_uring_cqe* cqe, bool reaped);
     void Wake(TBufferedFd& state, int result, bool reaped);
@@ -302,6 +328,8 @@ private:
     std::vector<TFdGen> Rearm_; ///< Reads to go on at the next Wait().
     std::vector<TFdGen> Throttle_; ///< Reads to cancel at the next Wait().
     std::vector<TFdGen> Starved_; ///< Reads that go on when a buffer comes back.
+    std::vector<uint16_t> Returned_; ///< Buffers back from the leases, for the ring at the next Wait().
+    size_t InRing_ = 0; ///< Buffers given to the kernel whose completions are not taken yet.
 };
 
 } // namespace NNet

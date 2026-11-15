@@ -80,7 +80,6 @@ TUring::TUring(int queueSize, int completionQueueSize)
 }
 
 TUring::~TUring() {
-    Buffered_.clear(); // the leases not taken go back to the ring
     io_uring_submit(&Ring_); // best effort: closes prepared by a Wait() that threw
     if (BufRing_) {
         // Before the exit, which cancels the multishot reads later: none may pick a buffer of the freed pool.
@@ -341,12 +340,10 @@ bool TUring::TakeBuffered(int fd, TReadBuffer& lease) {
         return false;
     }
     auto& state = Buffered_[fd];
-    if (state.Pending()) {
-        lease = std::move(state.Ready[state.Head++]);
-        if (!state.Pending()) {
-            state.Ready.clear();
-            state.Head = 0;
-        }
+    if (state.Front.Size) {
+        lease = Buffers_.Commit(state.Front.Id, state.Front.Pos + state.Front.Size);
+        lease.Consume(state.Front.Pos);
+        state.Refill();
         return true;
     }
     if (state.Error) {
@@ -368,20 +365,17 @@ int TUring::ReadBuffered(int fd, void* buf, size_t size) {
     }
     auto& state = Buffered_[fd];
     size_t copied = 0;
-    while (copied < size && state.Pending()) {
-        auto& lease = state.Ready[state.Head];
-        size_t n = std::min(size - copied, lease.Data().size());
-        memcpy(static_cast<char*>(buf) + copied, lease.Data().data(), n);
-        lease.Consume(n);
+    while (copied < size && state.Front.Size) {
+        auto& front = state.Front;
+        size_t n = std::min<size_t>(size - copied, front.Size);
+        memcpy(static_cast<char*>(buf) + copied, Buffers_.Buffer(front.Id) + front.Pos, n);
+        front.Pos += static_cast<uint32_t>(n);
+        front.Size -= static_cast<uint32_t>(n);
         copied += n;
-        if (lease.Data().empty()) {
-            lease = {};
-            state.Head++;
+        if (!front.Size) {
+            RingAdd(front.Id);
+            state.Refill();
         }
-    }
-    if (!state.Pending()) {
-        state.Ready.clear();
-        state.Head = 0;
     }
     if (copied || !size) {
         return static_cast<int>(copied);
@@ -440,20 +434,35 @@ void TUring::SetupBuffers() {
     }
     io_uring_buf_ring_advance(BufRing_, config.Count);
     Buffers_.SetOwner(this);
+    Returned_.reserve(config.Count);
+    InRing_ = config.Count;
 }
 
 void TUring::RingAdd(uint16_t id) {
+    Returned_.push_back(id);
+}
+
+void TUring::FlushReturned() {
+    if (Returned_.empty()) {
+        return;
+    }
+    // One tail update per Wait(); a read that finds the ring empty meanwhile waits for it, as after -ENOBUFS.
     const auto& config = Buffers_.Config();
-    io_uring_buf_ring_add(BufRing_, Buffers_.Buffer(id), config.BufferSize, id, io_uring_buf_ring_mask(config.Count), 0);
-    io_uring_buf_ring_advance(BufRing_, 1);
+    int mask = io_uring_buf_ring_mask(config.Count);
+    for (size_t i = 0; i < Returned_.size(); i++) {
+        io_uring_buf_ring_add(BufRing_, Buffers_.Buffer(Returned_[i]), config.BufferSize, Returned_[i], mask, i);
+    }
+    io_uring_buf_ring_advance(BufRing_, Returned_.size());
+    InRing_ += Returned_.size();
+    for (size_t i = 0; i < Returned_.size() && !Starved_.empty(); i++) {
+        Rearm_.push_back(Starved_.back());
+        Starved_.pop_back();
+    }
+    Returned_.clear();
 }
 
 void TUring::Release(uint16_t id) {
     RingAdd(id);
-    if (!Starved_.empty()) {
-        Rearm_.push_back(Starved_.back());
-        Starved_.pop_back();
-    }
 }
 
 void TUring::Arm(int fd, TBufferedFd& state) {
@@ -486,9 +495,10 @@ void TUring::OnBuffered(const io_uring_cqe* cqe, bool reaped) {
     auto& state = Buffered_[fd];
     bool own = TagGen(cqe->user_data) == state.Gen;
     if (cqe->flags & IORING_CQE_F_BUFFER) {
+        InRing_--;
         auto id = static_cast<uint16_t>(cqe->flags >> IORING_CQE_BUFFER_SHIFT);
         if (own && cqe->res > 0) {
-            state.Ready.push_back(Buffers_.Commit(id, cqe->res));
+            state.Push({static_cast<uint32_t>(cqe->res), 0, id});
         } else {
             RingAdd(id);
         }
@@ -511,7 +521,8 @@ void TUring::OnBuffered(const io_uring_cqe* cqe, bool reaped) {
     if (state.Waiter && (state.Pending() || state.Eof || state.Error)) {
         Wake(state, 0, reaped);
     } else if (state.Waiter && !state.Armed) {
-        (state.Starved ? Starved_ : Rearm_).emplace_back(fd, state.Gen);
+        // Starved: wait for a buffer, unless some came back since the kernel looked.
+        (state.Starved && !InRing_ ? Starved_ : Rearm_).emplace_back(fd, state.Gen);
     }
     if (state.Armed && !state.Throttled && state.Pending() >= Buffers_.Config().PerSocketLimit) {
         // Leaves the rest in the socket, so one fast sender does not take the whole ring.
@@ -522,6 +533,8 @@ void TUring::OnBuffered(const io_uring_cqe* cqe, bool reaped) {
 
 void TUring::Wake(TBufferedFd& state, int result, bool reaped) {
     auto* op = std::exchange(state.Waiter, nullptr);
+    // The frame is resumed after the completions are taken: start loading it now.
+    __builtin_prefetch(op->Handle.address());
     if (reaped) {
         Completions_.Reap(op, result);
     } else {
@@ -530,6 +543,7 @@ void TUring::Wake(TBufferedFd& state, int result, bool reaped) {
 }
 
 void TUring::PrepBuffered() {
+    FlushReturned();
     for (auto [fd, gen] : Throttle_) {
         if (Buffered_[fd].Gen == gen && Buffered_[fd].Armed) {
             io_uring_sqe* sqe = GetSqe();
@@ -554,6 +568,9 @@ void TUring::ResetBuffered(int fd) {
     auto& state = Buffered_[fd];
     if (state.Waiter) {
         Wake(state, -ECANCELED, false);
+    }
+    for (; state.Front.Size; state.Refill()) {
+        RingAdd(state.Front.Id);
     }
     // The read in the kernel is cancelled by the close; its completions carry the old generation.
     TBufferedFd next;
