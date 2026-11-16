@@ -88,7 +88,7 @@ public:
      * @brief Constructs a TUring instance.
      *
      * @param queueSize The desired size of the io_uring submission queue (default is 256).
-     *                  At least 2: a close takes two linked entries.
+     *                  At least 3: a close takes up to three linked entries.
      *                  The completion queue has at least 8192 entries.
      */
     TUring(int queueSize = 256);
@@ -172,9 +172,18 @@ public:
     /**
      * @brief Registers a file descriptor with the IO_uring poller.
      *
+     * Puts the file in the ring's file table, so that its operations skip the
+     * lookup and reference counting of the file. The table keeps the file open:
+     * a registered descriptor must be closed with Close(). Does nothing if the
+     * table cannot hold @p fd.
+     *
      * @param fd The file descriptor to register.
      */
     void Register(int fd);
+    /// Same as Register(): poller-driven file handles call it, sockets call Register().
+    void RegisterFile(int fd) {
+        Register(fd);
+    }
    /**
      * @brief Waits for I/O completions.
      *
@@ -221,8 +230,8 @@ private:
     /// Obtains an SQE for @p op on @p fd. If that throws, op.Handle is reset: the operation is not posted.
     io_uring_sqe* GetSqe(TOperation& op, int fd) {
         try {
-            if (fd >= static_cast<int>(Operations_.size())) {
-                Operations_.resize(fd + 1); // here, so that SetData() cannot throw
+            if (fd >= static_cast<int>(Descriptors_.size())) {
+                Descriptors_.resize(fd + 1); // here, so that SetData() cannot throw
             }
             return GetSqe();
         } catch (...) {
@@ -252,7 +261,12 @@ private:
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
     struct io_uring Ring_; ///< The io_uring structure.
     NDetail::TCompletions Completions_; ///< Completions not delivered yet.
-    std::vector<unsigned> Operations_; ///< Per descriptor: operations posted whose completion is not taken yet.
+    struct TDescriptor {
+        unsigned Operations = 0; ///< Operations posted whose completion is not taken yet.
+        bool Fixed = false; ///< Registered: its number is also its slot in the file table.
+    };
+    std::vector<TDescriptor> Descriptors_; ///< Per descriptor number.
+    int FixedFiles_ = 0; ///< Slots in the file table.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
     bool Enabled_ = false; ///< Whether Enable() has bound the ring to a thread.
 };
