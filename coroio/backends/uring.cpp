@@ -4,6 +4,8 @@
 
 #include <algorithm>
 
+#include <sys/resource.h>
+
 #ifdef HAVE_URING
 
 namespace NNet {
@@ -30,12 +32,21 @@ TUring::TUring(int queueSize, int completionQueueSize)
     if (EpollFd_ < 0) {
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
-    int entries = std::max(queueSize, 2); // a close takes two SQEs
+    int entries = std::max(queueSize, 3); // a close takes up to three linked SQEs
     io_uring_params params = {};
     params.flags = IORING_SETUP_CQSIZE;
     params.cq_entries = std::max(2 * entries, completionQueueSize);
     if ((err = io_uring_queue_init_params(entries, &Ring_, &params)) < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
+    }
+    // A slot per descriptor number, up to 64Ki slots (8 bytes each in the kernel). Without the table
+    // (before Linux 5.19, or a limit) operations use plain descriptors.
+    rlimit files;
+    if (getrlimit(RLIMIT_NOFILE, &files) == 0) {
+        int size = static_cast<int>(std::min<rlim_t>(files.rlim_cur, 1 << 16));
+        if (io_uring_register_files_sparse(&Ring_, size) == 0) {
+            FixedFiles_ = size;
+        }
     }
 
 //        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
@@ -113,24 +124,42 @@ void TUring::Cancel(int fd) {
 }
 
 void TUring::PrepClose(TEvent& change) {
+    // A registered file stays open while its slot holds it: free the slot first.
+    bool fixed = change.Fd >= 0 && change.Fd < static_cast<int>(Descriptors_.size()) && Descriptors_[change.Fd].Fixed;
+    if (fixed) {
+        Descriptors_[change.Fd].Fixed = false;
+    }
     if (!HasOperations(change.Fd)) {
         // Nothing to cancel: the kernel looks up a cancel by fd among all pending operations.
-        io_uring_sqe* sqe = GetSqe();
+        io_uring_sqe* sqe;
+        if (fixed) {
+            sqe = GetSqe();
+            io_uring_prep_close_direct(sqe, change.Fd);
+            io_uring_sqe_set_data(sqe, nullptr);
+        }
+        sqe = GetSqe();
         io_uring_prep_close(sqe, change.Fd);
         io_uring_sqe_set_data(sqe, nullptr);
         change.Type = 0;
         return;
     }
-    if (io_uring_sq_space_left(&Ring_) < 2) {
-        Submit(); // never split the linked pair
+    if (io_uring_sq_space_left(&Ring_) < 2u + fixed) {
+        Submit(); // never split the linked SQEs
     }
     // Cancel by fd (ALL: a reader and a writer) before the close releases the number.
     // HARDLINK: the close must run even if the cancel fails, e.g. -EINVAL before 5.19.
+    // The cancel matches the operations of a registered file too: it compares the files.
     io_uring_sqe* sqe = io_uring_get_sqe(&Ring_);
     io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, change.Fd, nullptr, 0, 0);
     sqe->cancel_flags = IORING_ASYNC_CANCEL_FD | IORING_ASYNC_CANCEL_ALL;
     sqe->flags |= IOSQE_IO_HARDLINK;
     io_uring_sqe_set_data(sqe, nullptr);
+    if (fixed) {
+        sqe = io_uring_get_sqe(&Ring_);
+        io_uring_prep_close_direct(sqe, change.Fd);
+        sqe->flags |= IOSQE_IO_HARDLINK;
+        io_uring_sqe_set_data(sqe, nullptr);
+    }
     sqe = io_uring_get_sqe(&Ring_);
     io_uring_prep_close(sqe, change.Fd);
     io_uring_sqe_set_data(sqe, nullptr);
@@ -143,19 +172,22 @@ void TUring::SetData(io_uring_sqe* sqe, TOperation& op) {
     io_uring_sqe_set_data(sqe, &op);
     op.Fd = sqe->fd;
     if (op.Fd >= 0) { // not e.g. an accept on a closed socket, which fails with -EBADF
-        Operations_[op.Fd]++;
+        Descriptors_[op.Fd].Operations++;
+        if (Descriptors_[op.Fd].Fixed) {
+            sqe->flags |= IOSQE_FIXED_FILE;
+        }
     }
 }
 
 void TUring::Done(TOperation& op) {
     if (op.Fd >= 0) {
-        assert(Operations_[op.Fd] > 0);
-        Operations_[op.Fd]--;
+        assert(Descriptors_[op.Fd].Operations > 0);
+        Descriptors_[op.Fd].Operations--;
     }
 }
 
 bool TUring::HasOperations(int fd) const {
-    return fd >= 0 && fd < static_cast<int>(Operations_.size()) && Operations_[fd] > 0;
+    return fd >= 0 && fd < static_cast<int>(Descriptors_.size()) && Descriptors_[fd].Operations > 0;
 }
 
 int TUring::Cancel(TOperation& op) {
@@ -226,8 +258,16 @@ bool TUring::Reap(TOperation& op, int* result) {
     return found;
 }
 
-void TUring::Register(int) {
-
+void TUring::Register(int fd) {
+    if (fd < 0 || fd >= FixedFiles_) {
+        return;
+    }
+    if (fd >= static_cast<int>(Descriptors_.size())) {
+        Descriptors_.resize(fd + 1);
+    }
+    if (!Descriptors_[fd].Fixed && io_uring_register_files_update(&Ring_, fd, &fd, 1) == 1) {
+        Descriptors_[fd].Fixed = true;
+    }
 }
 
 int TUring::Wait(timespec ts) {
