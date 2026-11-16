@@ -2605,6 +2605,43 @@ void test_uring_destroyed_socket_writer(void**) {
     assert_string_equal(markers.c_str(), "v");
 }
 
+// A registered file is closed by Close(): its slot in the file table is freed
+// with the descriptor, so the reader of the pipe sees the end, and the number's
+// next file gets its own slot.
+void test_uring_registered_file_closed(void**) {
+    TLoop<TUring> loop;
+    int p[2], q[2];
+    assert_int_equal(pipe(p), 0);
+    assert_int_equal(pipe(q), 0);
+    const int number = p[1];
+    auto out = std::make_unique<TUring::TFileHandle>(p[1], loop.Poller());
+    TUring::TFileHandle in(p[0], loop.Poller());
+    int put = 0;
+    auto write = WriteFrom(*out, "a", 1, &put);
+    StepUntilDone(loop, write);
+    assert_int_equal(put, 1);
+    out.reset();
+    char buf[1] = {0};
+    int got = -1;
+    auto read = ReadInto(in, buf, 1, &got);
+    StepUntilDone(loop, read);
+    assert_int_equal(got, 1);
+    assert_int_equal(buf[0], 'a');
+    auto end = ReadInto(in, buf, 1, &got);
+    StepUntilDone(loop, end);
+    assert_int_equal(got, 0);
+
+    assert_int_equal(dup2(q[1], number), number);
+    close(q[1]);
+    TUring::TFileHandle next(number, loop.Poller());
+    auto nextWrite = WriteFrom(next, "b", 1, &put);
+    StepUntilDone(loop, nextWrite);
+    assert_int_equal(put, 1);
+    assert_int_equal(::read(q[0], buf, 1), 1);
+    assert_int_equal(buf[0], 'b');
+    close(q[0]);
+}
+
 // Completions collected by a Wait() not followed by WakeupReadyHandles() are
 // kept by the next Wait(): a destroyed coroutine drops its completion there
 // instead of waiting for one that will not come again.
@@ -4489,6 +4526,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_before_submit);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_file_reader_and_writer);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_socket_writer);
+    ADD_TEST(cmocka_unit_test, test_uring_registered_file_closed);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_repeated_wait);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_reader_with_full_cq);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TUring);
