@@ -31,16 +31,28 @@ TUring::TUring(int queueSize, int completionQueueSize)
         throw std::system_error(errno, std::generic_category(), "epoll_create1");
     }
     int entries = std::max(queueSize, 2); // a close takes two SQEs
-    io_uring_params params = {};
     // Completions of operations that waited are posted in our next io_uring_enter, in a batch,
     // instead of by task work signalled to the thread. Disabled until Enable(), so that the
     // ring is bound to the thread that runs it, not to the one that constructs it.
-    params.flags = IORING_SETUP_CQSIZE | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN
-        | IORING_SETUP_TASKRUN_FLAG | IORING_SETUP_R_DISABLED;
-    params.cq_entries = std::max(2 * entries, completionQueueSize);
-    if ((err = io_uring_queue_init_params(entries, &Ring_, &params)) < 0) {
+    // Kernels before 6.1 refuse that with -EINVAL: then COOP_TASKRUN (5.19), then neither.
+    const unsigned flags[] = {
+        IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_TASKRUN_FLAG | IORING_SETUP_R_DISABLED,
+        IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG,
+        0,
+    };
+    io_uring_params params;
+    for (unsigned f : flags) {
+        params = {};
+        params.flags = IORING_SETUP_CQSIZE | f;
+        params.cq_entries = std::max(2 * entries, completionQueueSize);
+        if ((err = io_uring_queue_init_params(entries, &Ring_, &params)) != -EINVAL) {
+            break;
+        }
+    }
+    if (err < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
+    Enabled_ = !(Ring_.flags & IORING_SETUP_R_DISABLED);
 
 //        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
 //            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");

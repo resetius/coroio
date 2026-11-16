@@ -2926,6 +2926,36 @@ void test_uring_runs_in_another_thread(void**) {
     assert_true(IsClosed(p[0]));
     assert_true(IsClosed(p[1]));
 }
+
+// A wait with a timeout returns at the timeout when nothing completes, and
+// early when a write in another thread completes a read: its task work is
+// deferred to the wait, which runs it.
+void test_uring_wait_timeout_with_deferred_completion(void**) {
+    using namespace std::chrono_literals;
+    TUring uring(256);
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    char c = 0;
+    TUring::TOperation op;
+    op.Handle = std::noop_coroutine();
+    uring.Read(p[0], &c, 1, op);
+    auto start = TClock::now();
+    assert_int_equal(uring.Wait({0, 50000000}), 0);
+    assert_true(TClock::now() - start >= 40ms);
+    std::thread writer([&]() {
+        std::this_thread::sleep_for(100ms);
+        assert_int_equal(write(p[1], "x", 1), 1);
+    });
+    start = TClock::now();
+    assert_int_equal(uring.Wait({5, 0}), 1);
+    assert_true(TClock::now() - start < 4s);
+    writer.join();
+    uring.WakeupReadyHandles();
+    assert_int_equal(op.Result, 1);
+    assert_int_equal(c, 'x');
+    close(p[0]);
+    close(p[1]);
+}
 #endif
 
 void test_base64(void**) {
@@ -4423,6 +4453,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_failed_wait);
     ADD_TEST(cmocka_unit_test, test_uring_runs_in_another_thread);
+    ADD_TEST(cmocka_unit_test, test_uring_wait_timeout_with_deferred_completion);
 #endif
 #endif
 #ifdef _WIN32
