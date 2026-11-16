@@ -6,7 +6,10 @@
 
 #include <coroio/address.hpp>
 #include <coroio/dns/resolver.hpp>
+#include <coroio/zerocopy.hpp>
 
+#include <cerrno>
+#include <memory>
 #include <span>
 
 namespace NNet {
@@ -132,13 +135,33 @@ public:
         return HostPort;
     }
 
+    /**
+     * @brief Sends batches of at least @p bytes without copying them, where the poller can (io_uring).
+     *
+     * 0, the default, copies every batch. Such a batch stays in memory until the kernel is done
+     * with it, e.g. until TCP has the ACK, so the node keeps a buffer per batch in flight.
+     */
+    void SetZeroCopyThreshold(size_t bytes) {
+        ZeroCopyThreshold = bytes;
+    }
+
 private:
+    static constexpr bool CanZeroCopy = requires (TSocket& socket, std::shared_ptr<TZeroCopyBuffer> buffer) {
+        socket.WriteSomeZeroCopy(buffer, nullptr, 0);
+    };
+
     TFuture<void> DoDrain() {
         try {
             while (CommittedBytes > 0) {
-                SendBuffer.swap(OutputBuffer);
                 auto readSize = CommittedBytes;
                 CommittedBytes = 0;
+                if constexpr (CanZeroCopy) {
+                    if (ZeroCopyThreshold > 0 && readSize >= ZeroCopyThreshold) {
+                        co_await WriteZeroCopy(readSize);
+                        continue;
+                    }
+                }
+                SendBuffer.swap(OutputBuffer);
                 co_await TByteWriter(Socket).Write(SendBuffer.data(), readSize);
             }
             co_return;
@@ -147,6 +170,37 @@ private:
             Connect();
             co_return;
         }
+    }
+
+    // Sends the committed bytes from a buffer that no zero-copy send reads any more.
+    TFuture<void> WriteZeroCopy(size_t size) {
+        auto buffer = FreeZeroCopyBuffer();
+        buffer->Data.swap(OutputBuffer);
+        const char* p = buffer->Data.data();
+        while (size != 0) {
+            auto written = co_await Socket.WriteSomeZeroCopy(buffer, p, size);
+            if (written == -EOPNOTSUPP || written == -ENOMEM) {
+                co_await TByteWriter(Socket).Write(p, size);
+                co_return;
+            }
+            if (written == 0) {
+                throw std::runtime_error("Connection closed");
+            }
+            if (written < 0) {
+                continue; // retry
+            }
+            p += written;
+            size -= written;
+        }
+    }
+
+    std::shared_ptr<TZeroCopyBuffer> FreeZeroCopyBuffer() {
+        for (auto& buffer : ZeroCopyBuffers) {
+            if (!buffer->Busy()) {
+                return buffer;
+            }
+        }
+        return ZeroCopyBuffers.emplace_back(std::make_shared<TZeroCopyBuffer>());
     }
 
     void Connect() {
@@ -194,6 +248,9 @@ private:
     std::vector<char> OutputBuffer;
     size_t CommittedBytes = 0;
     std::vector<char> SendBuffer;
+    size_t ZeroCopyThreshold = 0;
+    /// Buffers of zero-copy batches. The poller holds the busy ones as well, so the node may go first.
+    std::vector<std::shared_ptr<TZeroCopyBuffer>> ZeroCopyBuffers;
 };
 
 } // namespace NActors

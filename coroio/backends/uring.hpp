@@ -7,6 +7,7 @@
 #include <coroio/completions.hpp>
 #include <coroio/socket.hpp>
 #include <coroio/poller.hpp>
+#include <coroio/zerocopy.hpp>
 
 #include <liburing.h>
 #include <assert.h>
@@ -18,6 +19,7 @@
 #include <tuple>
 #include <vector>
 #include <coroutine>
+#include <memory>
 #include <queue>
 
 namespace NNet {
@@ -80,6 +82,11 @@ public:
      * The result of the completion is in TOperation::Result.
      */
     using TOperation = NDetail::TOperationState;
+    struct TZeroCopySend;
+    /// State of a zero-copy send, kept by the caller like TOperation.
+    struct TZeroCopyOperation: TOperation {
+        TZeroCopySend* Send = nullptr; ///< The poller's record of the send while it is posted.
+    };
     /**
      * @brief Constructs a TUring instance.
      *
@@ -127,6 +134,16 @@ public:
      */
     void Send(int fd, const void* buf, int size, TOperation& op);
     /**
+     * @brief Posts a send of @p size bytes at @p buf, inside @p buffer, without copying them.
+     *
+     * The result is delivered to @p op as for Send(). The kernel may read the bytes after it,
+     * until the send's notification: till then buffer->Busy() and the poller holds @p buffer.
+     * Sends all bytes unless an error stops it (MSG_WAITALL). The result is -EOPNOTSUPP on a
+     * socket that cannot send without copying and -ENOMEM over RLIMIT_MEMLOCK: copy them then.
+     * A kernel without IORING_OP_SEND_ZC (before 6.0) gets a plain send.
+     */
+    void SendZeroCopy(int fd, const void* buf, int size, TZeroCopyOperation& op, std::shared_ptr<TZeroCopyBuffer> buffer);
+    /**
      * @brief Posts an asynchronous accept operation.
      *
      * @param fd The listening socket descriptor.
@@ -165,6 +182,8 @@ public:
      *         or a negative value.
      */
     int Cancel(TOperation& op);
+    /// Cancel(TOperation&) for a zero-copy send. Its buffer is held until the notification.
+    int Cancel(TZeroCopyOperation& op);
     /**
      * @brief Registers a file descriptor with the IO_uring poller.
      *
@@ -239,6 +258,12 @@ private:
     bool HasOperations(int fd) const;
     /// Reaps the posted completions, except the one of @p op, whose result goes to @p result.
     bool Reap(TOperation& op, int* result);
+    /// Cancels @p op, posted with user_data @p data.
+    int Cancel(TOperation& op, __u64 data);
+    /// The operation whose result @p cqe holds, or null (a notification, an internal entry).
+    TOperation* Take(const io_uring_cqe* cqe);
+    /// Frees a zero-copy send whose CQEs are all taken or whose SQE is dropped.
+    void Release(TZeroCopySend* send);
 
     int RingFd_; ///< File descriptor for the io_uring.
     int EpollFd_; ///< Epoll file descriptor (for integration with epoll).
@@ -246,6 +271,17 @@ private:
     NDetail::TCompletions Completions_; ///< Completions not delivered yet.
     std::vector<unsigned> Operations_; ///< Per descriptor: operations posted whose completion is not taken yet.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
+    bool HasSendZc_ = false; ///< Whether the kernel has IORING_OP_SEND_ZC.
+    /// Every zero-copy send record: an SQE or a CQE may point to any, so none is freed before the poller.
+    std::vector<std::unique_ptr<TZeroCopySend>> ZeroCopySends_;
+    TZeroCopySend* FreeZeroCopySends_ = nullptr;
+};
+
+/// A zero-copy send. Its CQEs carry its address with ZeroCopyTag: the result, then the notification if the result has IORING_CQE_F_MORE.
+struct TUring::TZeroCopySend {
+    TOperation* Op = nullptr; ///< Whose result is not taken yet.
+    std::shared_ptr<TZeroCopyBuffer> Buffer; ///< Held until the notification.
+    TZeroCopySend* Next = nullptr; ///< In the free list.
 };
 
 } // namespace NNet

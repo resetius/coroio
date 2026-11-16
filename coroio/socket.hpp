@@ -14,13 +14,16 @@
 #include <fcntl.h>
 #endif
 
+#include <cerrno>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <variant>
 
 #include "poller.hpp"
 #include "address.hpp"
 #include "corochain.hpp"
+#include "zerocopy.hpp"
 
 namespace NNet {
 
@@ -900,6 +903,54 @@ public:
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
+    }
+
+    /**
+     * @brief Writes bytes of @p buffer without copying them, on a poller that can (TUring).
+     *
+     * Like WriteSome(), but the kernel may read [buf, buf + size), which lies in
+     * buffer->Data, after the write returns: keep it unchanged while buffer->Busy().
+     * Writes all bytes unless an error stops it. Returns -EOPNOTSUPP or -ENOMEM if
+     * the bytes cannot be sent without copying: write them with WriteSome() then.
+     */
+    auto WriteSomeZeroCopy(std::shared_ptr<TZeroCopyBuffer> buffer, const void* buf, size_t size)
+        requires requires { typename T::TZeroCopyOperation; }
+    {
+        struct TAwaitable {
+            ~TAwaitable() {
+                if (op.Handle) {
+                    poller->Cancel(op);
+                }
+            }
+
+            bool await_ready() const { return false; }
+            void await_suspend(std::coroutine_handle<> h) {
+                op.Handle = h;
+                poller->SendZeroCopy(fd, buf, size, op, std::move(buffer));
+            }
+
+            auto await_resume() {
+                auto ret = op.Result;
+                if (ret < 0) {
+                    int err = -ret;
+                    if (err == EINTR || err == EAGAIN || err == EINPROGRESS || err == EOPNOTSUPP || err == ENOMEM) {
+                        return ret; // retry, or copy hint
+                    }
+                    throw std::system_error(err, std::generic_category());
+                }
+                return ret;
+            }
+
+            T* poller;
+            int fd;
+
+            std::shared_ptr<TZeroCopyBuffer> buffer;
+            const void* buf;
+            size_t size;
+            typename T::TZeroCopyOperation op = {};
+        };
+
+        return TAwaitable{Poller_, Fd_, std::move(buffer), buf, size};
     }
 
     /// The WriteSomeYield and ReadSomeYield variants behave similarly to WriteSome/ReadSome.

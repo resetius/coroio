@@ -499,3 +499,5 @@ while (sys.ActorsSize() > 0)
 ```
 
 `TNode` reconnects automatically on connection failure (with 1 s backoff). See `examples/behavior_actors.cpp` and `examples/ping_actors.cpp` for complete runnable examples.
+
+On io_uring, `node->SetZeroCopyThreshold(bytes)` sends outbound batches of at least `bytes` with `IORING_OP_SEND_ZC` instead of copying them into the kernel (off by default). Such a batch keeps its buffer until the kernel is done with it (for TCP, until the ACK), so the node keeps a buffer per batch in flight. On loopback the kernel copies the bytes anyway. The pinned pages count against `RLIMIT_MEMLOCK` (often 8 MiB) unless the process has `CAP_IPC_LOCK`; over the limit the node copies the batch.

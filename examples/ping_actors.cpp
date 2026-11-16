@@ -124,6 +124,7 @@ int templatedMain(int argc, char** argv) {
     int inflight = 2;
     int messages = 100000;
     int readerType = 0;
+    size_t zeroCopyThreshold = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -173,8 +174,10 @@ int templatedMain(int argc, char** argv) {
                 std::cerr << "Invalid reader type. Use 0 for TZeroCopyEnvelopeReader or 1 for TZeroCopyEnvelopeReaderV2.\n";
                 return -1;
             }
+        } else if (!strcmp(argv[i], "--zero-copy-threshold") && i + 1 < argc) {
+            zeroCopyThreshold = std::stoul(argv[++i]);
         } else if (!strcmp(argv[i], "--help")) {
-            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]\n";
+            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size] [--zero-copy-threshold bytes]\n";
             return 0;
         } else if (!strcmp(argv[i], "--method")) {
             if (i + 1 < argc) {
@@ -189,6 +192,7 @@ int templatedMain(int argc, char** argv) {
     std::vector<TNodeId> nodeIds;
     TActorSystem sys(&loop.Poller(), myNodeId);
     for (auto&& [nodeId, node] : nodes) {
+        node->SetZeroCopyThreshold(zeroCopyThreshold);
         if (nodeId != myNodeId) {
             std::cerr << "Adding node with id: " << nodeId << "\n";
             sys.AddNode(nodeId, std::move(node));

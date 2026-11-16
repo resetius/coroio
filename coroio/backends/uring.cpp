@@ -37,6 +37,10 @@ TUring::TUring(int queueSize, int completionQueueSize)
     if ((err = io_uring_queue_init_params(entries, &Ring_, &params)) < 0) {
         throw std::system_error(-err, std::generic_category(), "io_uring_queue_init");
     }
+    if (io_uring_probe* probe = io_uring_get_probe_ring(&Ring_)) {
+        HasSendZc_ = io_uring_opcode_supported(probe, IORING_OP_SEND_ZC);
+        io_uring_free_probe(probe);
+    }
 
 //        if ((err = io_uring_register_eventfd(&Ring_, RingFd_)) < 0) {
 //            throw std::system_error(-err, std::generic_category(), "io_uring_register_eventfd");
@@ -87,6 +91,71 @@ void TUring::Send(int fd, const void* buf, int size, TOperation& op) {
     struct io_uring_sqe *sqe = GetSqe(op, fd);
     io_uring_prep_send(sqe, fd, buf, size, 0);
     SetData(sqe, op);
+}
+
+namespace {
+// Marks the user_data of a zero-copy send: records are aligned, so bit 0 is free.
+constexpr __u64 ZeroCopyTag = 1;
+} // namespace
+
+void TUring::SendZeroCopy(int fd, const void* buf, int size, TZeroCopyOperation& op, std::shared_ptr<TZeroCopyBuffer> buffer) {
+    op.Send = nullptr;
+    if (!HasSendZc_) {
+        Send(fd, buf, size, op);
+        return;
+    }
+    TZeroCopySend* send = FreeZeroCopySends_;
+    try {
+        if (!send) {
+            send = ZeroCopySends_.emplace_back(std::make_unique<TZeroCopySend>()).get();
+        } else {
+            FreeZeroCopySends_ = send->Next;
+        }
+    } catch (...) {
+        op.Handle = {};
+        throw;
+    }
+    io_uring_sqe* sqe;
+    try {
+        sqe = GetSqe(op, fd);
+    } catch (...) {
+        send->Next = FreeZeroCopySends_;
+        FreeZeroCopySends_ = send;
+        throw;
+    }
+    // WAITALL: the kernel sends the rest of a short send itself, so a batch gets one notification.
+    io_uring_prep_send_zc(sqe, fd, buf, size, MSG_WAITALL, 0);
+    SetData(sqe, op);
+    io_uring_sqe_set_data64(sqe, reinterpret_cast<__u64>(send) | ZeroCopyTag);
+    buffer->Sends++;
+    send->Buffer = std::move(buffer);
+    send->Op = &op;
+    op.Send = send;
+}
+
+void TUring::Release(TZeroCopySend* send) {
+    send->Buffer->Sends--;
+    send->Buffer.reset();
+    send->Op = nullptr;
+    send->Next = FreeZeroCopySends_;
+    FreeZeroCopySends_ = send;
+}
+
+TUring::TOperation* TUring::Take(const io_uring_cqe* cqe) {
+    if (!(cqe->user_data & ZeroCopyTag)) [[likely]] {
+        return static_cast<TOperation*>(io_uring_cqe_get_data(cqe));
+    }
+    auto* send = reinterpret_cast<TZeroCopySend*>(cqe->user_data & ~ZeroCopyTag);
+    if (cqe->flags & IORING_CQE_F_NOTIF) {
+        assert(!send->Op && "the notification follows the result");
+        Release(send);
+        return nullptr;
+    }
+    auto* op = std::exchange(send->Op, nullptr);
+    if (!(cqe->flags & IORING_CQE_F_MORE)) {
+        Release(send);
+    }
+    return op;
 }
 
 void TUring::Accept(int fd, sockaddr* addr, socklen_t* len, TOperation& op) {
@@ -159,6 +228,14 @@ bool TUring::HasOperations(int fd) const {
 }
 
 int TUring::Cancel(TOperation& op) {
+    return Cancel(op, reinterpret_cast<__u64>(&op));
+}
+
+int TUring::Cancel(TZeroCopyOperation& op) {
+    return Cancel(op, op.Send ? reinterpret_cast<__u64>(op.Send) | ZeroCopyTag : reinterpret_cast<__u64>(&op));
+}
+
+int TUring::Cancel(TOperation& op, __u64 data) {
     op.Handle = {};
     if (Completions_.Drop(op)) {
         return op.Result;
@@ -171,10 +248,13 @@ int TUring::Cancel(TOperation& op) {
     unsigned head = *Ring_.sq.khead;
     if (op.Index - head < Ring_.sq.sqe_tail - head) {
         struct io_uring_sqe *sqe = &Ring_.sq.sqes[op.Index & *Ring_.sq.kring_mask];
-        if (sqe->user_data == reinterpret_cast<__u64>(&op)) {
+        if (sqe->user_data == data) {
             Done(op);
             io_uring_prep_nop(sqe);
             io_uring_sqe_set_data(sqe, nullptr);
+            if (data & ZeroCopyTag) {
+                Release(reinterpret_cast<TZeroCopySend*>(data & ~ZeroCopyTag));
+            }
             return -ECANCELED;
         }
     }
@@ -192,7 +272,7 @@ int TUring::Cancel(TOperation& op) {
             return result;
         }
     }
-    io_uring_prep_cancel(sqe, &op, 0);
+    io_uring_prep_cancel64(sqe, data, 0);
     io_uring_sqe_set_data(sqe, nullptr);
 
     // The kernel may use the operation's buffers until its completion is posted,
@@ -212,7 +292,7 @@ bool TUring::Reap(TOperation& op, int* result) {
     bool found = false;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
-        auto* other = static_cast<TOperation*>(io_uring_cqe_get_data(cqe));
+        auto* other = Take(cqe);
         if (other == &op) {
             Done(op);
             found = true;
@@ -278,7 +358,7 @@ int TUring::Wait(timespec ts) {
     int completed = 0;
     io_uring_for_each_cqe(&Ring_, head, cqe) {
         completed ++;
-        if (auto* op = static_cast<TOperation*>(io_uring_cqe_get_data(cqe))) {
+        if (auto* op = Take(cqe)) {
             Done(*op);
             Completions_.Collect(op, cqe->res);
         }
