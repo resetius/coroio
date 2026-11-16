@@ -21,6 +21,8 @@
 
 #ifndef _WIN32
 #include <sys/resource.h>
+#include <sys/mman.h>
+#include <dirent.h>
 #else
 #include <fcntl.h> // for _O_BINARY
 #endif
@@ -2927,6 +2929,50 @@ void test_uring_runs_in_another_thread(void**) {
     assert_true(IsClosed(p[1]));
 }
 
+// IORING_SQ_TASKRUN may stay set after the work it announced ran: a producer
+// sets it after the waiter ran that work. Wait() must not spin on it. The flag
+// is set by hand here, through a second mapping of the ring.
+void test_uring_wait_with_stale_taskrun_flag(void**) {
+    using namespace std::chrono_literals;
+    TUring uring(256);
+    uring.Wait({0, 0});
+    int ringFd = -1; // the newest ring is this one
+    if (DIR* dir = opendir("/proc/self/fd")) {
+        while (dirent* entry = readdir(dir)) {
+            char link[64] = {};
+            std::string path = std::string("/proc/self/fd/") + entry->d_name;
+            if (readlink(path.c_str(), link, sizeof(link) - 1) > 0 && !strcmp(link, "anon_inode:[io_uring]")) {
+                ringFd = std::max(ringFd, atoi(entry->d_name));
+            }
+        }
+        closedir(dir);
+    }
+    assert_true(ringFd >= 0);
+    io_uring probe;
+    io_uring_params params = {};
+    assert_int_equal(io_uring_queue_init_params(2, &probe, &params), 0); // for the offset of the flags
+    io_uring_queue_exit(&probe);
+    void* rings = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, ringFd, IORING_OFF_SQ_RING);
+    assert_true(rings != MAP_FAILED);
+    static unsigned* flags;
+    flags = reinterpret_cast<unsigned*>(static_cast<char*>(rings) + params.sq_off.flags);
+    __atomic_fetch_or(flags, IORING_SQ_TASKRUN, __ATOMIC_SEQ_CST);
+    // A wait that spins on the flag ends only when the alarm clears it.
+    struct sigaction action = {}, saved;
+    action.sa_handler = [](int) {
+        __atomic_fetch_and(flags, ~IORING_SQ_TASKRUN, __ATOMIC_SEQ_CST);
+    };
+    sigaction(SIGALRM, &action, &saved);
+    alarm(3);
+    auto start = TClock::now();
+    uring.Wait({0, 0});
+    auto elapsed = TClock::now() - start;
+    alarm(0);
+    sigaction(SIGALRM, &saved, nullptr);
+    munmap(rings, 4096);
+    assert_true(elapsed < 1s);
+}
+
 // A wait with a timeout returns at the timeout when nothing completes, and
 // early when a write in another thread completes a read: its task work is
 // deferred to the wait, which runs it.
@@ -4454,6 +4500,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_failed_wait);
     ADD_TEST(cmocka_unit_test, test_uring_runs_in_another_thread);
     ADD_TEST(cmocka_unit_test, test_uring_wait_timeout_with_deferred_completion);
+    ADD_TEST(cmocka_unit_test, test_uring_wait_with_stale_taskrun_flag);
 #endif
 #endif
 #ifdef _WIN32

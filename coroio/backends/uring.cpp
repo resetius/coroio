@@ -323,7 +323,13 @@ void TUring::WakeupReadyHandles() {
 }
 
 bool TUring::RunTaskWork() {
-    return (IO_URING_READ_ONCE(*Ring_.sq.kflags) & IORING_SQ_TASKRUN) && io_uring_get_events(&Ring_) >= 0;
+    if (!(IO_URING_READ_ONCE(*Ring_.sq.kflags) & IORING_SQ_TASKRUN)) {
+        return false;
+    }
+    // The flag is a hint: a producer may set it after this thread already ran its work, and then
+    // nothing clears it until new work comes. Only a call that posted completions made progress.
+    unsigned tail = io_uring_smp_load_acquire(Ring_.cq.ktail);
+    return io_uring_get_events(&Ring_) >= 0 && io_uring_smp_load_acquire(Ring_.cq.ktail) != tail;
 }
 
 void TUring::Enable() {
