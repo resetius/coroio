@@ -2832,6 +2832,229 @@ void test_uring_closes_on_small_queues(void**) {
         }
     }
 }
+
+namespace {
+
+std::shared_ptr<TZeroCopyBuffer> PatternBuffer(size_t size) {
+    auto buffer = std::make_shared<TZeroCopyBuffer>();
+    buffer->Data.resize(size);
+    for (size_t i = 0; i < size; i++) {
+        buffer->Data[i] = static_cast<char>(i * 7 + i / 4096);
+    }
+    return buffer;
+}
+
+// The result of the write, or minus the error it threw.
+TFuture<void> WriteZeroCopy(TUring::TSocket& socket, const std::shared_ptr<TZeroCopyBuffer>& buffer, size_t size, int* put) {
+    try {
+        *put = co_await socket.WriteSomeZeroCopy(buffer, buffer->Data.data(), size);
+    } catch (const std::system_error& ex) {
+        *put = -ex.code().value();
+    }
+}
+
+// The server's window is a few KiB and the client's send buffer holds more than 256 KiB,
+// so a zero-copy write of 256 KiB completes while most of it waits in the client's queue.
+std::pair<TUring::TSocket, TUring::TSocket> SmallWindowPair(TLoop<TUring>& loop, TUring::TSocket& listener, const TAddress& address, int sndbuf = 1 << 20) {
+    TUring::TSocket client(loop.Poller(), address.Domain());
+    assert_int_equal(setsockopt(client.Fd(), SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)), 0);
+    std::optional<TUring::TSocket> server;
+    auto accept = AcceptInto(listener, &server);
+    auto connect = client.Connect(address);
+    StepUntilDone(loop, connect);
+    StepUntilDone(loop, accept);
+    return {std::move(client), std::move(*server)};
+}
+
+void ListenWithSmallWindow(TUring::TSocket& listener, const TAddress& address) {
+    int rcvbuf = 4096; // inherited by accepted sockets
+    assert_int_equal(setsockopt(listener.Fd(), SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)), 0);
+    listener.Bind(address);
+    listener.Listen();
+}
+
+// Reads @p size bytes with recv(), driving the loop meanwhile.
+std::vector<char> ReceiveAll(TLoop<TUring>& loop, int fd, size_t size) {
+    std::vector<char> data(size);
+    size_t got = 0;
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (got < size && TClock::now() < deadline) {
+        auto n = recv(fd, data.data() + got, size - got, MSG_DONTWAIT);
+        if (n > 0) {
+            got += n;
+        } else {
+            loop.Step();
+        }
+    }
+    assert_int_equal(got, size);
+    return data;
+}
+
+template<typename TCondition>
+void StepUntil(TLoop<TUring>& loop, TCondition condition) {
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    while (!condition() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(condition());
+}
+
+} // namespace
+
+// The kernel reads the bytes after the result, until the notification: a change made
+// in between reaches the peer.
+void test_uring_zero_copy_buffer_busy_until_notification(void**) {
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    ListenWithSmallWindow(listener, address);
+    auto [client, server] = SmallWindowPair(loop, listener, address);
+
+    const size_t size = 256 << 10;
+    auto buffer = PatternBuffer(size);
+    int put = 0;
+    auto writer = WriteZeroCopy(client, buffer, size, &put);
+    if (!buffer->Busy()) {
+        skip(); // no IORING_OP_SEND_ZC: a plain send
+    }
+    StepUntilDone(loop, writer);
+    assert_int_equal(put, size);
+    for (int i = 0; i < 3; i++) {
+        loop.Step();
+    }
+    assert_true(buffer->Busy());
+
+    buffer->Data[size - 1] ^= 0x5a;
+    auto received = ReceiveAll(loop, server.Fd(), size);
+    assert_memory_equal(received.data(), buffer->Data.data(), size);
+    StepUntil(loop, [&] { return !buffer->Busy(); });
+}
+
+// The poller holds the buffer until the notification, and frees it if it goes first.
+void test_uring_zero_copy_poller_holds_buffer(void**) {
+    using TSocket = TUring::TSocket;
+    const size_t size = 256 << 10;
+    const auto expected = PatternBuffer(size);
+    std::weak_ptr<TZeroCopyBuffer> weak;
+    for (bool notified : {true, false}) {
+        TLoop<TUring> loop;
+        loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+        TAddress address{"127.0.0.1", GetFreePort()};
+        TSocket listener(loop.Poller(), address.Domain());
+        ListenWithSmallWindow(listener, address);
+        auto [client, server] = SmallWindowPair(loop, listener, address);
+
+        auto buffer = PatternBuffer(size);
+        weak = buffer;
+        int put = 0;
+        auto writer = WriteZeroCopy(client, buffer, size, &put);
+        if (!buffer->Busy()) {
+            skip();
+        }
+        StepUntilDone(loop, writer);
+        assert_int_equal(put, size);
+        buffer.reset();
+        assert_false(weak.expired());
+        if (notified) {
+            auto received = ReceiveAll(loop, server.Fd(), size);
+            assert_memory_equal(received.data(), expected->Data.data(), size);
+            StepUntil(loop, [&] { return weak.expired(); });
+        }
+    }
+    // The last poller was destroyed with the notification pending.
+    assert_true(weak.expired());
+}
+
+// Destroyed while the kernel waits for room: the cancel returns with the result,
+// and the buffer stays held until the notification of the bytes queued so far.
+void test_uring_zero_copy_cancelled(void**) {
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    ListenWithSmallWindow(listener, address);
+    auto [client, server] = SmallWindowPair(loop, listener, address, 64 << 10);
+
+    const size_t size = 4 << 20; // more than the send buffer and the window take
+    auto buffer = PatternBuffer(size);
+    int put = 0;
+    std::optional<TFuture<void>> writer{WriteZeroCopy(client, buffer, size, &put)};
+    if (!buffer->Busy()) {
+        skip();
+    }
+    for (int i = 0; i < 3; i++) {
+        loop.Step();
+    }
+    assert_false(writer->done());
+    writer.reset();
+    assert_int_equal(put, 0); // not resumed
+    assert_true(buffer->Busy());
+
+    // The server goes with unread bytes, so the client gets a reset that frees its queue.
+    std::optional<TSocket> dropped{std::move(server)};
+    dropped.reset();
+    StepUntil(loop, [&] { return !buffer->Busy(); });
+}
+
+// Failed sends post a notification too (IORING_CQE_F_MORE): the buffer is free after it.
+void test_uring_zero_copy_errors(void**) {
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+
+    // Not a TCP socket: the bytes are to be copied.
+    int pair[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    TSocket local(pair[0], loop.Poller());
+    auto buffer = PatternBuffer(4096);
+    int put = 0;
+    auto writer = WriteZeroCopy(local, buffer, 4096, &put);
+    if (!buffer->Busy()) {
+        close(pair[1]);
+        skip();
+    }
+    StepUntilDone(loop, writer);
+    assert_int_equal(put, -EOPNOTSUPP);
+    StepUntil(loop, [&] { return !buffer->Busy(); });
+    close(pair[1]);
+
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    ListenWithSmallWindow(listener, address);
+
+    // Over RLIMIT_MEMLOCK, which binds only without CAP_IPC_LOCK.
+    if (geteuid() != 0) {
+        auto [client, server] = SmallWindowPair(loop, listener, address);
+        rlimit old;
+        assert_int_equal(getrlimit(RLIMIT_MEMLOCK, &old), 0);
+        rlimit low{64 << 10, old.rlim_max};
+        assert_int_equal(setrlimit(RLIMIT_MEMLOCK, &low), 0);
+        buffer = PatternBuffer(256 << 10);
+        auto big = WriteZeroCopy(client, buffer, buffer->Data.size(), &put);
+        StepUntilDone(loop, big);
+        assert_int_equal(setrlimit(RLIMIT_MEMLOCK, &old), 0);
+        assert_int_equal(put, -ENOMEM);
+        StepUntil(loop, [&] { return !buffer->Busy(); });
+    }
+
+    // The peer reset the connection: the error is thrown.
+    auto [client, server] = SmallWindowPair(loop, listener, address);
+    linger hard{1, 0};
+    assert_int_equal(setsockopt(server.Fd(), SOL_SOCKET, SO_LINGER, &hard, sizeof(hard)), 0);
+    std::optional<TSocket> dropped{std::move(server)};
+    dropped.reset();
+    for (int i = 0; i < 3; i++) {
+        loop.Step();
+    }
+    buffer = PatternBuffer(4096);
+    auto failed = WriteZeroCopy(client, buffer, 4096, &put);
+    StepUntilDone(loop, failed);
+    assert_true(put == -ECONNRESET || put == -EPIPE);
+    StepUntil(loop, [&] { return !buffer->Busy(); });
+}
 #endif
 
 void test_base64(void**) {
@@ -4327,6 +4550,10 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_only_its_operations);
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_after_finished_operations);
     ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
+    ADD_TEST(cmocka_unit_test, test_uring_zero_copy_buffer_busy_until_notification);
+    ADD_TEST(cmocka_unit_test, test_uring_zero_copy_poller_holds_buffer);
+    ADD_TEST(cmocka_unit_test, test_uring_zero_copy_cancelled);
+    ADD_TEST(cmocka_unit_test, test_uring_zero_copy_errors);
 #endif
 #endif
 #ifdef _WIN32

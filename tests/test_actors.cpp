@@ -6,6 +6,7 @@
 #include <setjmp.h>
 #ifndef _WIN32
 #include <netinet/tcp.h>
+#include <sys/ioctl.h>
 #endif
 #include <signal.h>
 #include <iostream>
@@ -1525,6 +1526,158 @@ void test_intrusive_list_stale_tag(void**) {
     assert_true(second.Size() == 2);
 }
 
+#ifdef HAVE_URING
+namespace {
+
+// A message whose number gives its payload bytes.
+void PutNumbered(IOutputStream& stream, uint32_t number, uint32_t size) {
+    auto buf = stream.Acquire(sizeof(THeader) + size);
+    const THeader header{TActorId(1, 2, 3), TActorId(2, 5, 7), number, size};
+    std::memcpy(buf.data(), &header, sizeof(header));
+    for (uint32_t i = 0; i < size; i++) {
+        buf[sizeof(header) + i] = static_cast<char>(number * 31 + i);
+    }
+    stream.Commit(sizeof(THeader) + size);
+}
+
+// Reads the messages PutNumbered() wrote and checks their order and bytes.
+void CheckNumbered(const std::vector<char>& data, const std::vector<uint32_t>& sizes) {
+    size_t pos = 0;
+    for (uint32_t number = 0; number < sizes.size(); number++) {
+        THeader header;
+        assert_true(pos + sizeof(header) <= data.size());
+        std::memcpy(&header, data.data() + pos, sizeof(header));
+        pos += sizeof(header);
+        assert_int_equal(header.MessageId, number);
+        assert_int_equal(header.Size, sizes[number]);
+        for (uint32_t i = 0; i < header.Size; i++) {
+            assert_int_equal(data[pos + i], static_cast<char>(number * 31 + i));
+        }
+        pos += header.Size;
+    }
+    assert_int_equal(pos, data.size());
+}
+
+// Bytes that left the node: in the client's queue or unread by the server.
+size_t InKernel(int client, int server) {
+    int queued = 0;
+    int unread = 0;
+    assert_int_equal(ioctl(client, TIOCOUTQ, &queued), 0);
+    assert_int_equal(ioctl(server, FIONREAD, &unread), 0);
+    return queued + unread;
+}
+
+struct TZeroCopyNodeFixture {
+    using TPoller = TUring;
+    static constexpr size_t Threshold = 16 << 10;
+
+    TZeroCopyNodeFixture()
+        : Resolver(TAddress{"127.0.0.1", 53}, Loop.Poller())
+        , Port(GetFreePort())
+        , Address("127.0.0.1", Port)
+        , Listener(Loop.Poller(), Address.Domain())
+    {
+        Loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+        // A window of a few KiB: the batches wait in the client's queue, read from the node's buffers.
+        int rcvbuf = 4096;
+        assert_int_equal(setsockopt(Listener.Fd(), SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)), 0);
+        Listener.Bind(Address);
+        Listener.Listen();
+        Node.emplace(Loop.Poller(), Factory, Resolver,
+            [this](const TAddress& addr) {
+                TPoller::TSocket socket(Loop.Poller(), addr.Domain());
+                int sndbuf = 1 << 20;
+                setsockopt(socket.Fd(), SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+                ClientFd = socket.Fd();
+                return socket;
+            },
+            THostPort("127.0.0.1", Port));
+        Node->SetZeroCopyThreshold(Threshold);
+        Accept = [](TPoller::TSocket& listener, std::optional<TPoller::TSocket>& server) -> TFuture<void> {
+            server.emplace((co_await listener.Accept()).value());
+        }(Listener, Server);
+    }
+
+    // Puts messages of these sizes as one batch and waits until it is in the kernel.
+    void Batch(std::initializer_list<uint32_t> sizes) {
+        for (auto size : sizes) {
+            PutNumbered(*Node, Sizes.size(), size);
+            Sizes.push_back(size);
+            Total += sizeof(THeader) + size;
+        }
+        const auto deadline = TClock::now() + std::chrono::seconds(5);
+        while (!(Server && InKernel(ClientFd, Server->Fd()) == Total) && TClock::now() < deadline) {
+            Loop.Step();
+            if (Node) {
+                Node->Drain();
+            }
+        }
+        assert_true(Server && InKernel(ClientFd, Server->Fd()) == Total);
+    }
+
+    std::vector<char> ReceiveAll() {
+        std::vector<char> data(Total);
+        size_t got = 0;
+        const auto deadline = TClock::now() + std::chrono::seconds(5);
+        while (got < Total && TClock::now() < deadline) {
+            auto n = recv(Server->Fd(), data.data() + got, Total - got, MSG_DONTWAIT);
+            if (n > 0) {
+                got += n;
+            } else {
+                Loop.Step();
+            }
+        }
+        assert_int_equal(got, Total);
+        return data;
+    }
+
+    TLoop<TPoller> Loop;
+    TResolver Resolver;
+    TMessagesFactory Factory;
+    int Port;
+    TAddress Address;
+    TPoller::TSocket Listener;
+    int ClientFd = -1;
+    std::optional<TPoller::TSocket> Server;
+    TFuture<void> Accept;
+    std::optional<TNode<TPoller>> Node;
+    std::vector<uint32_t> Sizes;
+    size_t Total = 0;
+};
+
+} // namespace
+
+// Batches from the threshold up go without copying, smaller ones by copy. The server reads
+// nothing until the end, so each zero-copy batch is still read from its buffer by the kernel
+// when the next ones are written: they must go to other buffers, and all keep their order.
+void test_node_zero_copy_batches_keep_order(void**) {
+    TZeroCopyNodeFixture f;
+    f.Batch({100});
+    f.Batch({8 << 10, 8 << 10, 8 << 10});
+    f.Batch({8 << 10, 8 << 10, 8 << 10});
+    f.Batch({100, 200});
+    f.Batch({20 << 10, 20 << 10});
+    f.Batch({300});
+    f.Batch({60 << 10});
+    CheckNumbered(f.ReceiveAll(), f.Sizes);
+}
+
+// The node goes while the kernel still reads its zero-copy batches: the poller keeps them.
+void test_node_zero_copy_outlives_node(void**) {
+    TZeroCopyNodeFixture f;
+    f.Batch({100});
+    f.Batch({32 << 10, 32 << 10});
+    f.Batch({64 << 10});
+    f.Node.reset();
+    // Freed memory would be reused by these.
+    std::vector<std::vector<char>> churn;
+    for (int i = 0; i < 64; i++) {
+        churn.emplace_back(64 << 10, static_cast<char>(0xee));
+    }
+    CheckNumbered(f.ReceiveAll(), f.Sizes);
+}
+#endif
+
 int main(int argc, char** argv) {
     TInitializer init;
 
@@ -1590,6 +1743,10 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
+#ifdef HAVE_URING
+    ADD_TEST(cmocka_unit_test, test_node_zero_copy_batches_keep_order);
+    ADD_TEST(cmocka_unit_test, test_node_zero_copy_outlives_node);
+#endif
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }
