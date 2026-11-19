@@ -1290,6 +1290,42 @@ void test_node_sets_tcp_nodelay(void**) {
     assert_true(value != 0);
 }
 
+// Destroying a node whose write is blocked must cancel the write before the send buffer
+// is freed (the kernel reads it on io_uring); run under ASan on every poller.
+void test_node_destroyed_during_blocked_write(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    std::optional<TPoller::TSocket> accepted;
+    auto server = [](TPoller::TSocket& listener, std::optional<TPoller::TSocket>& accepted) -> TFuture<void> {
+        // The peer accepts and never reads, so the node's write stays blocked.
+        accepted.emplace((co_await listener.Accept()).value());
+    }(listener, accepted);
+
+    {
+        TNode<TPoller> node(poller, factory, resolver,
+            [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+            THostPort("127.0.0.1", port));
+        node.Acquire(64 << 20);
+        node.Commit(64 << 20);
+        const auto deadline = TClock::now() + std::chrono::milliseconds(500);
+        while (TClock::now() < deadline) {
+            node.Drain();
+            loop.Step();
+        }
+        assert_true(accepted.has_value());
+    }
+    loop.Step();
+}
+
 // Its serializer fails after the node reserved room for it.
 struct TFailingMessage {
     static constexpr TMessageId MessageId = 45;
@@ -1587,6 +1623,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
     ADD_TEST(cmocka_unit_test, test_node_drops_failed_serialization);
     ADD_TEST(cmocka_unit_test, test_node_sets_tcp_nodelay);
+    ADD_TEST(cmocka_unit_test, test_node_destroyed_during_blocked_write);
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);

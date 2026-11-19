@@ -81,6 +81,15 @@ public:
         , HostPort(hostPort)
     { }
 
+    /// Destroys the coroutines first: a pending write reads `SendBuffer` and a pending
+    /// connect uses `Socket`, and on io_uring the kernel keeps reading them until the
+    /// coroutine's destructor has cancelled the operation. This must not depend on the
+    /// member declaration order.
+    ~TNode() {
+        Drainer = TFuture<void>();
+        Connector = TFuture<void>();
+    }
+
     // TODO: remove me, envelope needed only for local actors
     void Send(TEnvelope&& envelope) override {
         auto blob = std::move(envelope.Blob);
