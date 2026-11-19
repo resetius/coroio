@@ -132,6 +132,11 @@ public:
         return HostPort;
     }
 
+    /// Connect attempts that failed since the last successful connect.
+    size_t ConsecutiveConnectFailures() const {
+        return ConnectFailures;
+    }
+
 private:
     TFuture<void> DoDrain() {
         try {
@@ -169,9 +174,16 @@ private:
                 Socket.SetNoDelay();
                 co_await Socket.Connect(addr /*, deadline*/);
                 Connected = true;
+                ConnectFailures = 0;
                 std::cout << "Connected to " << HostPort.ToString() << "\n";
             } catch (const std::exception& ex) {
-                std::cerr << "Error connecting to " << HostPort.ToString() << ": " << ex.what() << "\n";
+                // The peer may be down for good (e.g. it failed to bind): log the first
+                // attempts, then every 10th, so a stuck cluster stays visible but quiet.
+                ++ConnectFailures;
+                if (ConnectFailures <= 3 || ConnectFailures % 10 == 0) {
+                    std::cerr << "Error connecting to " << HostPort.ToString() << ": " << ex.what()
+                        << " (" << ConnectFailures << " consecutive failures)\n";
+                }
                 Connected = false;
             }
             if (!Connected) {
@@ -182,6 +194,7 @@ private:
     }
 
     bool Connected = false;
+    size_t ConnectFailures = 0;
     TFuture<void> Drainer;
     TFuture<void> Connector;
     TSocket Socket;
