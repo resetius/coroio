@@ -1446,6 +1446,23 @@ void test_uring_create(void**) {
     TUring uring(256);
 }
 
+void test_uring_wait_signal(void**) {
+    struct sigaction sa = {}, old;
+    sa.sa_handler = [](int) {};
+    sigaction(SIGUSR1, &sa, &old); // no SA_RESTART: the wait is interrupted
+    TUring uring(256);
+    pthread_t self = pthread_self();
+    std::thread t([self] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        pthread_kill(self, SIGUSR1);
+    });
+    auto start = std::chrono::steady_clock::now();
+    assert_int_equal(uring.Wait({5, 0}), 0); // must not throw
+    t.join();
+    sigaction(SIGUSR1, &old, nullptr);
+    assert_true(std::chrono::steady_clock::now() - start < std::chrono::seconds(4));
+}
+
 void test_uring_write(void**) {
     TUring uring(256);
     char buf[1] = {'e'};
@@ -4306,6 +4323,7 @@ int main(int argc, char* argv[]) {
 #ifdef HAVE_URING
     ADD_TEST(my_unit_test, test_monitor_unsupported, TUring);
     ADD_TEST(cmocka_unit_test, test_uring_create);
+    ADD_TEST(cmocka_unit_test, test_uring_wait_signal);
     ADD_TEST(cmocka_unit_test, test_uring_write);
     ADD_TEST(cmocka_unit_test, test_uring_read);
     ADD_TEST(cmocka_unit_test, test_uring_read_more_than_write);
