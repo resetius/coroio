@@ -15,7 +15,7 @@ void ICoroActor::Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr c
 
 TActorContext::TAsync TActorContext::StartAsync()
 {
-    return TAsync{ActorSystem, Sender_.ActorId()};
+    return TAsync{ActorSystem, Self_.ActorId()};
 }
 
 void TActorContext::TAsync::Commit(TFuture<void>&& future)
