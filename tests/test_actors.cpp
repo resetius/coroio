@@ -1246,6 +1246,44 @@ void test_node_reconnects_to_dead_peer(void**) {
     assert_int_equal(received.Size, 0);
 }
 
+void test_node_counts_connect_failures(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    const int port = GetFreePort();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    node.StartConnect();
+
+    // Nobody listens: failures accumulate, one per retry.
+    auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (node.ConsecutiveConnectFailures() < 2 && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(node.ConsecutiveConnectFailures() >= 2);
+
+    // Once the peer listens, the next retry succeeds and resets the counter.
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    bool accepted = false;
+    auto server = [](TPoller::TSocket& listener, bool& accepted) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        accepted = true;
+    }(listener, accepted);
+    deadline = TClock::now() + std::chrono::seconds(10);
+    while (!accepted && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(accepted);
+    assert_int_equal(node.ConsecutiveConnectFailures(), 0);
+}
+
 void test_node_sets_tcp_nodelay(void**) {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
@@ -1586,6 +1624,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
     ADD_TEST(cmocka_unit_test, test_node_drops_failed_serialization);
+    ADD_TEST(cmocka_unit_test, test_node_counts_connect_failures);
     ADD_TEST(cmocka_unit_test, test_node_sets_tcp_nodelay);
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
