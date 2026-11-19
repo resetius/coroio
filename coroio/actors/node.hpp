@@ -123,9 +123,7 @@ public:
 
     void Drain() override {
         StartConnect();
-        if (Connected && (!Drainer.raw() || Drainer.done())) {
-            Drainer = DoDrain();
-        }
+        StartDrain();
     }
 
     THostPort GetHostPort() const override {
@@ -133,6 +131,12 @@ public:
     }
 
 private:
+    void StartDrain() {
+        if (Connected && (!Drainer.raw() || Drainer.done())) {
+            Drainer = DoDrain();
+        }
+    }
+
     TFuture<void> DoDrain() {
         try {
             while (CommittedBytes > 0) {
@@ -177,6 +181,10 @@ private:
             if (!Connected) {
                 co_await Poller.Sleep(std::chrono::milliseconds(1000));
             }
+        }
+        // Nothing calls Drain() again for bytes queued while connecting (or left after a send error).
+        if (CommittedBytes > 0) {
+            StartDrain();
         }
         co_return;
     }

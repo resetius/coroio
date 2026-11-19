@@ -1246,6 +1246,49 @@ void test_node_reconnects_to_dead_peer(void**) {
     assert_int_equal(received.Size, 0);
 }
 
+// Bytes queued while the node connects are flushed when the connection completes,
+// without another Drain() call.
+void test_node_flushes_bytes_queued_while_connecting(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    int port = GetFreePort();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+
+    const TActorId sender(1, 2, 3);
+    const TActorId recipient(2, 5, 7);
+    node.Send(TEnvelope{.Sender = sender, .Recipient = recipient, .MessageId = 42});
+    // The only Drain(): it starts connecting while nobody listens yet.
+    node.Drain();
+
+    THeader received;
+    bool done = false;
+    auto server = [](TPoller& poller, int port, THeader& received, bool& done) -> TFuture<void> {
+        co_await poller.Sleep(TClock::now() + std::chrono::milliseconds(300));
+        TAddress addr{"127.0.0.1", port};
+        TPoller::TSocket listener(poller, addr.Domain());
+        listener.Bind(addr);
+        listener.Listen();
+        auto client = (co_await listener.Accept()).value();
+        TByteReader reader(client);
+        co_await reader.Read(&received, sizeof(received));
+        done = true;
+    }(poller, port, received, done);
+
+    auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (!done && TClock::now() < deadline) {
+        loop.Step();
+    }
+
+    assert_true(done);
+    assert_int_equal(received.MessageId, 42);
+}
+
 void test_node_sets_tcp_nodelay(void**) {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
@@ -1586,6 +1629,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_intrusive_list);
     ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
     ADD_TEST(cmocka_unit_test, test_node_drops_failed_serialization);
+    ADD_TEST(cmocka_unit_test, test_node_flushes_bytes_queued_while_connecting);
     ADD_TEST(cmocka_unit_test, test_node_sets_tcp_nodelay);
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
