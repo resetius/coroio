@@ -303,6 +303,54 @@ void test_ask_respond(void**) {
     }
 }
 
+struct TAsyncWork { static constexpr TMessageId MessageId = 400; };
+struct TAsyncDone { static constexpr TMessageId MessageId = 401; };
+struct TAsyncGo { static constexpr TMessageId MessageId = 402; };
+
+struct TAsyncWorker : IBehaviorActor, TBehavior<TAsyncWorker, TAsyncWork> {
+    TAsyncWorker() { Become(this); }
+    TFuture<void> Receive(TAsyncWork&&, TBlob, TActorContext::TPtr ctx) {
+        co_await ctx->Sleep(std::chrono::milliseconds(5));
+        ctx->Send<TAsyncDone>(ctx->Sender());
+    }
+    void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) {}
+};
+
+struct TAsyncBoss : IBehaviorActor, TBehavior<TAsyncBoss, TAsyncGo, TAsyncDone> {
+    TAsyncBoss(std::vector<TActorId> workers, int& done) : Workers(std::move(workers)), Done(done) { Become(this); }
+    void Receive(TAsyncGo&&, TBlob, TActorContext::TPtr ctx) {
+        for (auto w : Workers) {
+            ctx->Send<TAsyncWork>(w);
+        }
+    }
+    void Receive(TAsyncDone&&, TBlob, TActorContext::TPtr) { ++Done; }
+    void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) {}
+    std::vector<TActorId> Workers;
+    int& Done;
+};
+
+// Async handlers of several actors serving one sender must all complete:
+// the pending future belongs to the receiving actor, not to the sender.
+void test_async_handler_scatter_gather(void**) {
+    TLoop<TDefaultPoller> loop;
+    TActorSystem actorSystem(&loop.Poller());
+
+    std::vector<TActorId> workers;
+    for (int i = 0; i < 4; ++i) {
+        workers.push_back(actorSystem.Register(std::make_unique<TAsyncWorker>()));
+    }
+    int done = 0;
+    auto boss = actorSystem.Register(std::make_unique<TAsyncBoss>(workers, done));
+    actorSystem.Send<TAsyncGo>(boss, boss);
+    actorSystem.Serve();
+
+    const auto until = TClock::now() + std::chrono::milliseconds(200);
+    while (TClock::now() < until && done < 4) {
+        loop.Step();
+    }
+    assert_int_equal(done, 4);
+}
+
 class TSingleShotActor : public IActor {
 public:
     void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
@@ -1643,6 +1691,7 @@ int main(int argc, char** argv) {
 #endif
     ADD_TEST(cmocka_unit_test, test_ping_pong);
     ADD_TEST(cmocka_unit_test, test_ask_respond);
+    ADD_TEST(cmocka_unit_test, test_async_handler_scatter_gather);
     ADD_TEST(cmocka_unit_test, test_schedule);
     ADD_TEST(cmocka_unit_test, test_schedule_cancel);
     ADD_TEST(cmocka_unit_test, test_serialize_zero_size);
