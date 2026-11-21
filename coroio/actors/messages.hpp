@@ -355,9 +355,10 @@ auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() =
  * then leaves the blob empty (`Size` 0), so it can no longer be forwarded.
  * Otherwise the caller frees the blob. The default `TZeroCopyEnvelopeReader`
  * allocates every payload with `operator new` (16-byte aligned);
- * `TZeroCopyEnvelopeReaderV2` hands out unaligned bytes inside its chunks,
- * which must not outlive the reader. The unspecialized template triggers a
- * `static_assert` when called without a specialization.
+ * `TZeroCopyEnvelopeReaderV2` hands out unaligned bytes inside its chunks;
+ * such a blob may outlive the reader and be released on any thread. The
+ * unspecialized template triggers a `static_assert` when called without a
+ * specialization.
  *
  * @code
  * template<>
