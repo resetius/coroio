@@ -2111,7 +2111,8 @@ void test_node_aligns_payloads(void**) {
     CheckAlignedFrames(envelopes, frames);
 }
 
-// Frames queued during a write that fails are re-padded for the next connection
+// Frames queued during a write that fails are re-padded for the next connection.
+// Not on Windows: its loopback takes the whole 64 MiB without a reading peer, so no write stays blocked.
 void test_node_realigns_queue_on_reconnect(void**) {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
@@ -2289,7 +2290,9 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_payload_alignment_v1_and_plain_reader);
     ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
     ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
+#ifndef _WIN32
     ADD_TEST(cmocka_unit_test, test_node_realigns_queue_on_reconnect);
+#endif
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }
