@@ -189,9 +189,12 @@ private:
 
     TFuture<void> DoConnect() {
         Connected = false;
-        // The next connection starts a new stream with the bytes still queued. Frames queued
-        // before keep their padding, so their payloads may be unaligned, but they still parse.
+        // The next connection starts a new stream with the bytes still queued
+        const bool shifted = SentBytes % MaxPayloadAlignment != 0;
         SentBytes = 0;
+        if (shifted) {
+            RealignQueued();
+        }
         std::cout << "Connecting to " << HostPort.ToString() << "\n";
         while (!Connected) {
             try {
@@ -216,6 +219,38 @@ private:
             StartDrain();
         }
         co_return;
+    }
+
+    // Recomputes the padding of the queued frames of aligned types for a stream that starts
+    // at OutputBuffer; only on reconnect. The alignment comes from the factory, as in Send.
+    void RealignQueued() {
+        std::vector<char> frames;
+        frames.reserve(CommittedBytes + CommittedBytes / 4);
+        size_t pos = 0;
+        while (CommittedBytes - pos >= sizeof(THeader)) {
+            THeader header;
+            std::memcpy(&header, OutputBuffer.data() + pos, sizeof(header));
+            const size_t oldPadding = HeaderPadding(header);
+            if (CommittedBytes - pos - sizeof(header) < oldPadding + size_t(header.Size)) {
+                break;
+            }
+            const TMessageId messageId = HeaderMessageId(header);
+            const size_t alignment = Factory.PayloadAlignment(messageId);
+            uint32_t padding = static_cast<uint32_t>(oldPadding);
+            if (alignment > 1) {
+                padding = PayloadPadding(frames.size(), alignment);
+                header.MessageId = messageId | (padding << HeaderPaddingShift);
+            }
+            const char* payload = OutputBuffer.data() + pos + sizeof(header) + oldPadding;
+            const char* p = reinterpret_cast<const char*>(&header);
+            frames.insert(frames.end(), p, p + sizeof(header));
+            frames.insert(frames.end(), size_t(padding), char(0));
+            frames.insert(frames.end(), payload, payload + header.Size);
+            pos += sizeof(header) + oldPadding + header.Size;
+        }
+        frames.insert(frames.end(), OutputBuffer.data() + pos, OutputBuffer.data() + CommittedBytes);
+        CommittedBytes = frames.size();
+        OutputBuffer.swap(frames);
     }
 
     bool Connected = false;

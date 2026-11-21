@@ -2111,6 +2111,81 @@ void test_node_aligns_payloads(void**) {
     CheckAlignedFrames(envelopes, frames);
 }
 
+// Frames queued during a write that fails are re-padded for the next connection
+void test_node_realigns_queue_on_reconnect(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    factory.RegisterSerializer<TAlignedPod>();
+    factory.RegisterSerializer<TAlignedBytes>();
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    std::optional<TPoller::TSocket> first;
+    auto stall = [](TPoller::TSocket& listener, std::optional<TPoller::TSocket>& first) -> TFuture<void> {
+        // Never reads, so the node's write stays blocked
+        first.emplace((co_await listener.Accept()).value());
+    }(listener, first);
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    INode& stream = node;
+
+    // A frame too large for the socket buffers; its size is not a multiple of 16
+    const uint32_t large = (64 << 20) + 3;
+    auto buf = node.Acquire(sizeof(THeader) + large);
+    const THeader header{TActorId(1, 1, 1), TActorId(1, 2, 2), TWrappedString::MessageId, large};
+    std::memcpy(buf.data(), &header, sizeof(header));
+    node.Commit(sizeof(THeader) + large);
+    node.Drain();
+    const auto blocked = TClock::now() + std::chrono::milliseconds(500);
+    while (TClock::now() < blocked) {
+        loop.Step();
+    }
+    assert_true(first.has_value());
+    assert_int_equal(node.Offset() % 16, (sizeof(THeader) + large) % 16);
+
+    // Queued behind the blocked write, padded for the old stream
+    std::mt19937 rng(14);
+    std::vector<TExpectedFrame> frames;
+    WriteAlignedFrames(stream, 20, rng, frames);
+
+    // Reading resumes on the second connection
+    TZeroCopyEnvelopeReaderV2 reader(256, 8);
+    std::vector<TEnvelope> envelopes;
+    auto server = [](TPoller::TSocket& listener, TZeroCopyEnvelopeReaderV2& reader, std::vector<TEnvelope>& envelopes, size_t count) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        while (envelopes.size() < count) {
+            auto buf = reader.Acquire(64);
+            auto size = co_await client.ReadSome(buf.data(), buf.size());
+            if (size < 0) {
+                continue;
+            }
+            if (size == 0) {
+                break;
+            }
+            reader.Commit(size);
+            while (auto e = reader.Pop()) {
+                envelopes.push_back(std::move(*e));
+            }
+        }
+    }(listener, reader, envelopes, frames.size());
+
+    // Unread bytes make the close reset the connection, the blocked write fails
+    first->Close();
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (envelopes.size() < frames.size() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    CheckAlignedFrames(envelopes, frames);
+}
+
 void test_intrusive_list_stale_tag(void**) {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
@@ -2210,6 +2285,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_payload_alignment_v1_and_plain_reader);
     ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
     ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
+    ADD_TEST(cmocka_unit_test, test_node_realigns_queue_on_reconnect);
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }
