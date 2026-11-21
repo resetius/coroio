@@ -1224,6 +1224,52 @@ void test_envelope_reader_v2_copyout_live_blob(void**) {
     }
 }
 
+void test_envelope_reader_v2_blob_outlives_reader(void**) {
+    constexpr size_t H = sizeof(THeader);
+    constexpr size_t P = 32;
+
+    auto makeMessage = [](int id, char fill) {
+        std::vector<char> m(H + P, fill);
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(id),
+            .Size = P,
+        };
+        std::memcpy(m.data(), &header, H);
+        return m;
+    };
+    auto check = [](const TEnvelope& e, char fill) {
+        assert_true(e.Blob.Size == P);
+        const char* d = static_cast<const char*>(e.Blob.Data.get());
+        for (size_t i = 0; i < P; ++i) {
+            assert_true(d[i] == fill);
+        }
+    };
+
+    // One chunk per message: blobs live in the used, sealed and current chunks
+    std::optional<TEnvelope> e1, e2, e3;
+    {
+        TZeroCopyEnvelopeReaderV2 r(H + P, 4);
+        auto m1 = makeMessage(1, 'A');
+        auto m2 = makeMessage(2, 'B');
+        auto m3 = makeMessage(3, 'C');
+        r.Push(m1.data(), m1.size());
+        e1 = r.Pop();
+        r.Push(m2.data(), m2.size());
+        e2 = r.Pop();
+        r.Push(m3.data(), m3.size());
+        e3 = r.Pop();
+        assert_true(e1 && e2 && e3);
+    }
+    check(*e3, 'C');
+    check(*e1, 'A');
+    e1.reset();
+    check(*e2, 'B');
+    e2.reset();
+    e3.reset();
+}
+
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
     int Value;
 
@@ -1705,6 +1751,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_copyout_live_blob);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blob_outlives_reader);
     ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
     ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);

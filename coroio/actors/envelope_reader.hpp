@@ -66,11 +66,15 @@ private:
 
 /**
  * Envelope reader that hands out payloads as blobs pointing into its chunks.
- * A blob must not outlive the reader: the blob deleter uses the chunk's Parent.
+ * A blob may outlive the reader: on destruction the chunks with live blobs are
+ * detached (Parent = nullptr) and the deleter of the last blob frees them.
+ * Not thread-safe: blobs must be released on the reader's thread, or after the
+ * reader is destroyed.
  */
 class TZeroCopyEnvelopeReaderV2 {
 public:
     TZeroCopyEnvelopeReaderV2(size_t chunkSize = 1024 * 1024, size_t lowWatermark = 64 * 1024);
+    ~TZeroCopyEnvelopeReaderV2();
 
     std::span<char> Acquire(size_t size);
     void Commit(size_t size);
@@ -94,6 +98,7 @@ private:
 
     void Rotate();
     void ReleaseDrained(std::unique_ptr<TChunk> chunk);
+    static void Detach(std::unique_ptr<TChunk> chunk);
     template<size_t size>
     bool CopyOut(char* buf);
     void CopyOut(char* buf, size_t size);
