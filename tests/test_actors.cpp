@@ -2177,7 +2177,11 @@ void test_node_realigns_queue_on_reconnect(void**) {
         }
     }(listener, reader, envelopes, frames.size());
 
-    // Unread bytes make the close reset the connection, the blocked write fails
+    // An abortive close resets the connection on every platform, the blocked write fails
+    linger reset{};
+    reset.l_onoff = 1;
+    reset.l_linger = 0;
+    assert_int_equal(setsockopt(first->Fd(), SOL_SOCKET, SO_LINGER, (const char*) &reset, sizeof(reset)), 0);
     first->Close();
     const auto deadline = TClock::now() + std::chrono::seconds(10);
     while (envelopes.size() < frames.size() && TClock::now() < deadline) {
