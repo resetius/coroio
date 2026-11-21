@@ -42,6 +42,7 @@ public:
     void Commit(size_t size);
     std::optional<TEnvelope> Pop();
     size_t Size() const;
+    // False once the current frame is complete; Pop() still returns nothing if it is a filler
     bool NeedMoreData() const {
         return !HasHeader || Size() < HeaderPadding(Header) + Header.Size;
     }
@@ -86,6 +87,7 @@ public:
     size_t Size() const {
         return CurrentSize;
     }
+    // False once the current frame is complete; Pop() still returns nothing if it is a filler
     bool NeedMoreData() const {
         return !HasHeader || Size() < HeaderPadding(Header) + Header.Size;
     }

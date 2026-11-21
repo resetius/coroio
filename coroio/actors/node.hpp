@@ -239,8 +239,8 @@ private:
     THostPort HostPort;
     std::vector<char> OutputBuffer;
     size_t CommittedBytes = 0;
-    // Bytes handed to sockets; congruent to the stream offset of OutputBuffer mod
-    // MaxPayloadAlignment, also after a reconnect (see the filler in DoConnect)
+    // Frame bytes handed to sockets, without the filler; congruent to the stream offset of
+    // OutputBuffer mod MaxPayloadAlignment, also after a reconnect (see the filler in DoConnect)
     uint64_t SentBytes = 0;
     std::vector<char> SendBuffer;
 };
