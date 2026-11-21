@@ -19,6 +19,11 @@ void TEnvelopeReader::Process() {
         const size_t padding = HeaderPadding(Header);
         if (HasHeader && Buffer.size() >= padding + Header.Size) {
             Buffer.erase(Buffer.begin(), Buffer.begin() + padding);
+            if (padding > 0 && HeaderMessageId(Header) == FillerMessageId) [[unlikely]] {
+                Buffer.erase(Buffer.begin(), Buffer.begin() + Header.Size);
+                HasHeader = false;
+                continue;
+            }
             TEnvelope envelope;
             envelope.Sender = Header.Sender;
             envelope.Recipient = Header.Recipient;
@@ -113,6 +118,12 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReader::Pop()
         // A branch keeps the Head update off the path of unpadded frames
         if (padding > 0) {
             Head = (Head + padding) & LastIndex;
+            // The filler always has padding, so unpadded frames skip this check
+            if (HeaderMessageId(Header) == FillerMessageId) [[unlikely]] {
+                Head = (Head + Header.Size) & LastIndex;
+                HasHeader = false;
+                return Pop();
+            }
         }
         TEnvelope envelope;
         envelope.Sender = Header.Sender;
@@ -409,6 +420,16 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
     if (HasHeader && CurrentSize >= padding + Header.Size) {
         if (padding > 0) {
             CopyOut(Skipped, padding);
+            // The filler always has padding, so unpadded frames skip this check
+            if (HeaderMessageId(Header) == FillerMessageId) [[unlikely]] {
+                for (size_t left = Header.Size; left > 0; ) {
+                    const size_t size = std::min(left, sizeof(Skipped));
+                    CopyOut(Skipped, size);
+                    left -= size;
+                }
+                HasHeader = false;
+                return Pop();
+            }
         }
         TEnvelope envelope;
         envelope.Sender = Header.Sender;

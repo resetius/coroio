@@ -2042,6 +2042,48 @@ void test_payload_alignment_wire_format() {
     ASSERT_EQ(0, memcmp(stream.Data.data() + start + sizeof(THeader) + padding, "xyz", 3));
 }
 
+// A new stream starts with a filler and then frames padded for the old stream offset:
+// every reader drops the filler, and V2 still gets the aligned payloads aligned
+void test_filler_frame() {
+    std::mt19937 rng(15);
+    for (uint64_t old = 0; old < 32; ++old) {
+        char filler[MaxFillerSize];
+        const size_t fillerSize = WriteFiller(filler, old);
+        if (old % 16 == 0) {
+            ASSERT_EQ(fillerSize, 0);
+        } else {
+            ASSERT_EQ(fillerSize % 16, old % 16);
+            THeader header;
+            std::memcpy(&header, filler, sizeof(header));
+            ASSERT_EQ(HeaderMessageId(header), FillerMessageId);
+            ASSERT_TRUE(HeaderPadding(header) > 0);
+            ASSERT_EQ(sizeof(header) + HeaderPadding(header) + header.Size, fillerSize);
+        }
+
+        TVectorStream queued;
+        queued.Acquire(old);
+        queued.Commit(old);
+        std::vector<TExpectedFrame> frames;
+        ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(queued, 20, rng, frames));
+        std::string wire(filler, fillerSize);
+        wire.append(queued.Data.data() + old, queued.Committed - old);
+
+        for (size_t chunkSize : {64, 100, 256}) {
+            TZeroCopyEnvelopeReaderV2 v2(chunkSize, 8);
+            ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(ReadInPieces(v2, wire.data(), wire.size(), chunkSize, rng), frames));
+        }
+        TZeroCopyEnvelopeReader v1(64);
+        ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(ReadInPieces(v1, wire.data(), wire.size(), 300, rng), frames));
+        TEnvelopeReader plain;
+        plain.Push(wire.data(), wire.size());
+        std::vector<TEnvelope> envelopes;
+        while (auto e = plain.Pop()) {
+            envelopes.push_back(std::move(*e));
+        }
+        ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
+    }
+}
+
 // TNode pads relative to its own stream offset, across several drains and both send paths
 void test_node_aligns_payloads() {
     using TPoller = TDefaultPoller;
@@ -2132,9 +2174,8 @@ void test_node_rejects_message_id_with_padding_bits() {
     ASSERT_EQ(node.Offset(), sizeof(THeader));
 }
 
-// Frames queued during a write that fails are re-padded for the next connection.
-// Not on Windows: its loopback takes the whole 64 MiB without a reading peer, so no write stays blocked.
-void test_node_realigns_queue_on_reconnect() {
+// Frames queued during a write that fails keep their alignment on the next connection.
+void test_node_filler_keeps_queue_aligned_on_reconnect() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -2327,9 +2368,10 @@ int main(int argc, char** argv) {
     ADD_TEST(unit_test, test_payload_alignment_v2);
     ADD_TEST(unit_test, test_payload_alignment_v1_and_plain_reader);
     ADD_TEST(unit_test, test_payload_alignment_wire_format);
+    ADD_TEST(unit_test, test_filler_frame);
     ADD_TEST(unit_test, test_node_aligns_payloads);
     ADD_TEST(unit_test, test_node_rejects_message_id_with_padding_bits);
-    ADD_TEST(unit_test, test_node_realigns_queue_on_reconnect);
+    ADD_TEST(unit_test, test_node_filler_keeps_queue_aligned_on_reconnect);
 
     return RUN_ALL_TESTS();
 }

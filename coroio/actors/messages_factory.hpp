@@ -15,6 +15,7 @@ public:
         if constexpr (!is_local_message_v<T>) {
             constexpr auto messageId = T::MessageId;
             static_assert(messageId <= MaxMessageId, "the top bits of THeader::MessageId hold the payload padding");
+            static_assert(messageId != FillerMessageId, "the id of the filler frame is reserved");
             if (Handlers_.size() <= messageId) {
                 Handlers_.resize(messageId + 1);
             }

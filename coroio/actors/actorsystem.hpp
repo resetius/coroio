@@ -20,7 +20,9 @@ namespace NNet {
 namespace NActors {
 
 enum class ESystemMessages : TMessageId {
-    PoisonPill = 1
+    PoisonPill = 1,
+    // Never delivered: the envelope readers drop it
+    Filler = FillerMessageId
 };
 
 /**
