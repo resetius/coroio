@@ -284,6 +284,32 @@ TBlob SerializeFar(TBlob blob)
 }
 
 /**
+ * @brief Wire alignment of the payload of `T`: `T::PayloadAlignment` if declared, else 1.
+ *
+ * A type declares `static constexpr size_t PayloadAlignment = N;` (a power of two up
+ * to `MaxPayloadAlignment`) to get its payload at a stream offset that is a multiple
+ * of N: the writer puts zero padding after the header and stores its length in the
+ * top bits of `THeader::MessageId`. `TZeroCopyEnvelopeReaderV2` keeps chunk addresses
+ * congruent to stream offsets modulo `MaxPayloadAlignment`, so the payload is N-aligned
+ * in memory; the other readers copy payloads into `operator new` memory. Frames of
+ * types without it are written exactly as before.
+ */
+template<typename T, typename = void>
+struct payload_alignment : std::integral_constant<size_t, 1> {};
+
+template<typename T>
+struct payload_alignment<T, std::void_t<decltype(T::PayloadAlignment)>>
+    : std::integral_constant<size_t, T::PayloadAlignment> {};
+
+template<typename T>
+constexpr size_t payload_alignment_v = payload_alignment<T>::value;
+
+/// Padding after a header written at stream offset `offset` that aligns the payload to `alignment`.
+inline uint32_t PayloadPadding(uint64_t offset, size_t alignment) {
+    return static_cast<uint32_t>((0 - (offset + sizeof(THeader))) & (alignment - 1));
+}
+
+/**
  * @brief Serializes a message directly into a stream buffer with a `THeader` prefix.
  *
  * Used by `TActorSystem::Send` when routing to a remote node. Writes
@@ -291,10 +317,13 @@ TBlob SerializeFar(TBlob blob)
  * region — no intermediate allocation.
  *
  * POD: copies raw bytes. Non-POD: reserves `SerializedSize<T>` bytes after the
- * header and lets `SerializeTo<T>` write them in place.
+ * header and lets `SerializeTo<T>` write them in place. A type with
+ * `PayloadAlignment` gets zero padding between the header and the payload.
  *
  * @tparam T       Message type.
- * @tparam TStream Stream with `Acquire(size_t) → span<char>` / `Commit(size_t)`.
+ * @tparam TStream Stream with `Acquire(size_t) → span<char>` / `Commit(size_t)`,
+ *                 and `Offset()` (the stream offset of the next `Acquire`) for
+ *                 types with `PayloadAlignment`.
  * @param stream    Output stream (e.g. `TNode`'s outbound buffer).
  * @param sender    Actor ID written into the `THeader`.
  * @param recipient Actor ID written into the `THeader`.
@@ -303,26 +332,38 @@ TBlob SerializeFar(TBlob blob)
 template<typename T, typename TStream, typename... Args>
 void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, Args&&... args)
 {
+    static_assert(T::MessageId <= MaxMessageId, "the top bits of THeader::MessageId hold the payload padding");
+    constexpr size_t alignment = payload_alignment_v<T>;
+    static_assert(alignment > 0 && (alignment & (alignment - 1)) == 0 && alignment <= MaxPayloadAlignment,
+        "PayloadAlignment must be a power of two up to MaxPayloadAlignment");
+    uint32_t padding = 0;
+    if constexpr (alignment > 1) {
+        padding = PayloadPadding(stream.Offset(), alignment);
+    }
+    const TMessageId messageId = T::MessageId | (padding << HeaderPaddingShift);
     if constexpr (is_pod_v<T>) {
-        constexpr auto size = sizeof_data<T>() + sizeof(THeader);
+        const size_t size = sizeof(THeader) + padding + sizeof_data<T>();
         auto buf = stream.Acquire(size);
         char* p = static_cast<char*>(buf.data());
         // The buffer position follows the previous payload, so it may be unaligned for THeader.
-        const THeader header{sender, recipient, T::MessageId, sizeof_data<T>()};
+        const THeader header{sender, recipient, messageId, sizeof_data<T>()};
         std::memcpy(p, &header, sizeof(header));
         p += sizeof(THeader);
-        // TODO: this position may be unaligned for T too (UB by the standard, works on
-        // x86-64/arm64); construct T aside and memcpy it, as the header above.
-        new (p) T(std::forward<Args>(args)...);
+        std::memset(p, 0, padding);
+        p += padding;
+        // The buffer may be unaligned for T too: T is built aside and copied, like the header.
+        const T obj(std::forward<Args>(args)...);
+        std::memcpy(p, &obj, sizeof_data<T>());
         stream.Commit(size);
     } else {
         const T obj(std::forward<Args>(args)...);
         const uint32_t payload = FarPayloadSize(obj);
-        const size_t size = sizeof(THeader) + payload;
+        const size_t size = sizeof(THeader) + padding + payload;
         auto buf = stream.Acquire(size);
-        const THeader header{sender, recipient, T::MessageId, payload};
+        const THeader header{sender, recipient, messageId, payload};
         std::memcpy(buf.data(), &header, sizeof(header));
-        SerializeTo(obj, std::span<char>(buf.data() + sizeof(THeader), payload));
+        std::memset(buf.data() + sizeof(THeader), 0, padding);
+        SerializeTo(obj, std::span<char>(buf.data() + sizeof(THeader) + padding, payload));
         stream.Commit(size);
     }
 }
@@ -355,10 +396,10 @@ auto DeserializeNear(const TBlob& blob) -> std::conditional_t<sizeof_data<T>() =
  * then leaves the blob empty (`Size` 0), so it can no longer be forwarded.
  * Otherwise the caller frees the blob. The default `TZeroCopyEnvelopeReader`
  * allocates every payload with `operator new` (16-byte aligned);
- * `TZeroCopyEnvelopeReaderV2` hands out unaligned bytes inside its chunks;
- * such a blob may outlive the reader and be released on any thread. The
- * unspecialized template triggers a `static_assert` when called without a
- * specialization.
+ * `TZeroCopyEnvelopeReaderV2` hands out bytes inside its chunks, aligned only
+ * for a type with `PayloadAlignment`; such a blob may outlive the reader and be
+ * released on any thread. The unspecialized template triggers a `static_assert`
+ * when called without a specialization.
  *
  * @code
  * template<>
