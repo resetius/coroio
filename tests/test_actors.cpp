@@ -1,6 +1,11 @@
 #include <chrono>
 #include <array>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <exception>
+#include <mutex>
+#include <random>
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
@@ -1270,6 +1275,201 @@ void test_envelope_reader_v2_blob_outlives_reader(void**) {
     e3.reset();
 }
 
+void test_envelope_reader_v2_sealed_blob_outlives_reader(void**) {
+    constexpr size_t H = sizeof(THeader);
+    constexpr size_t P = 32;
+
+    auto makeMessage = [](int id, char fill) {
+        std::vector<char> m(H + P, fill);
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(id),
+            .Size = P,
+        };
+        std::memcpy(m.data(), &header, H);
+        return m;
+    };
+
+    // Two messages per chunk: the third one seals the chunk with the unread second message
+    std::optional<TEnvelope> e1;
+    {
+        TZeroCopyEnvelopeReaderV2 r(2 * (H + P), 4);
+        auto m1 = makeMessage(1, 'A');
+        auto m2 = makeMessage(2, 'B');
+        auto m3 = makeMessage(3, 'C');
+        r.Push(m1.data(), m1.size());
+        r.Push(m2.data(), m2.size());
+        e1 = r.Pop();
+        assert_true(e1.has_value());
+        r.Push(m3.data(), m3.size());
+    }
+    assert_true(e1->Blob.Size == P);
+    const char* d = static_cast<const char*>(e1->Blob.Data.get());
+    for (size_t i = 0; i < P; ++i) {
+        assert_true(d[i] == 'A');
+    }
+    e1.reset();
+}
+
+// Payload of message `id`: V2PayloadSize(id) bytes equal to char(id)
+static size_t V2PayloadSize(uint32_t id) {
+    return (id * 37) % 301;
+}
+
+static void AppendV2Message(std::vector<char>& stream, uint32_t id) {
+    THeader header {
+        .Sender = TActorId(1, 1, 1),
+        .Recipient = TActorId(1, 2, 2),
+        .MessageId = TMessageId(id),
+        .Size = static_cast<uint32_t>(V2PayloadSize(id)),
+    };
+    const char* p = reinterpret_cast<const char*>(&header);
+    stream.insert(stream.end(), p, p + sizeof(header));
+    stream.insert(stream.end(), header.Size, static_cast<char>(id));
+}
+
+static bool V2PayloadIsValid(const TEnvelope& e) {
+    if (e.Blob.Size != V2PayloadSize(e.MessageId)) {
+        return false;
+    }
+    const char* d = static_cast<const char*>(e.Blob.Data.get());
+    for (size_t i = 0; i < e.Blob.Size; ++i) {
+        if (d[i] != static_cast<char>(e.MessageId)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Commits bytes in pieces of random size, like socket reads
+static size_t FeedV2(TZeroCopyEnvelopeReaderV2& reader, const std::vector<char>& stream, size_t pos, std::mt19937& rng) {
+    size_t piece = std::min<size_t>(1 + rng() % 1500, stream.size() - pos);
+    auto buf = reader.Acquire(piece);
+    size_t size = std::min(piece, buf.size());
+    std::memcpy(buf.data(), stream.data() + pos, size);
+    reader.Commit(size);
+    return pos + size;
+}
+
+void test_envelope_reader_v2_blobs_released_on_other_threads(void**) {
+    constexpr int messages = 100000;
+    constexpr int workers = 3;
+    // Blobs held by each worker, so they outlive chunk rotations
+    constexpr size_t held = 64;
+
+    std::vector<char> stream;
+    for (int i = 0; i < messages; ++i) {
+        AppendV2Message(stream, i);
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<TEnvelope> queue;
+    bool done = false;
+    std::atomic<int> received = 0;
+    std::atomic<int> invalid = 0;
+
+    std::vector<std::thread> threads;
+    for (int w = 0; w < workers; ++w) {
+        threads.emplace_back([&] {
+            std::deque<TEnvelope> blobs;
+            while (true) {
+                std::unique_lock lock(mutex);
+                cv.wait(lock, [&] { return done || !queue.empty(); });
+                if (queue.empty()) {
+                    break;
+                }
+                blobs.push_back(std::move(queue.front()));
+                queue.pop_front();
+                lock.unlock();
+                cv.notify_all();
+                if (!V2PayloadIsValid(blobs.back())) {
+                    ++invalid;
+                }
+                ++received;
+                if (blobs.size() > held) {
+                    blobs.pop_front();
+                }
+            }
+        });
+    }
+
+    TZeroCopyEnvelopeReaderV2 reader(4096, 64);
+    std::mt19937 rng(42);
+    size_t pos = 0;
+    while (pos < stream.size()) {
+        pos = FeedV2(reader, stream, pos, rng);
+        while (auto e = reader.Pop()) {
+            std::unique_lock lock(mutex);
+            cv.wait(lock, [&] { return queue.size() < 1024; });
+            queue.push_back(std::move(*e));
+            lock.unlock();
+            cv.notify_all();
+        }
+    }
+    {
+        std::lock_guard lock(mutex);
+        done = true;
+    }
+    cv.notify_all();
+    for (auto& t : threads) {
+        t.join();
+    }
+    assert_int_equal(received.load(), messages);
+    assert_int_equal(invalid.load(), 0);
+    assert_int_equal(reader.UsedChunksCount(), 0);
+}
+
+void test_envelope_reader_v2_reader_dies_while_blobs_released(void**) {
+    constexpr int rounds = 200;
+    constexpr int workers = 3;
+
+    std::vector<char> stream;
+    for (int i = 0; i < 400; ++i) {
+        AppendV2Message(stream, i);
+    }
+
+    std::mt19937 rng(7);
+    std::atomic<int> invalid = 0;
+    for (int round = 0; round < rounds; ++round) {
+        auto reader = std::make_unique<TZeroCopyEnvelopeReaderV2>(2048, 64);
+        // Cut the stream inside a message, so a sealed chunk may keep unread bytes
+        std::vector<char> prefix(stream.begin(), stream.begin() + stream.size() / 2 + rng() % (stream.size() / 2));
+        std::vector<std::vector<TEnvelope>> batches(workers);
+        size_t pos = 0;
+        int count = 0;
+        while (pos < prefix.size()) {
+            pos = FeedV2(*reader, prefix, pos, rng);
+            while (auto e = reader->Pop()) {
+                batches[count++ % workers].push_back(std::move(*e));
+            }
+        }
+
+        std::atomic<bool> start = false;
+        std::vector<std::thread> threads;
+        for (auto& batch : batches) {
+            threads.emplace_back([&] {
+                while (!start.load()) {
+                    std::this_thread::yield();
+                }
+                for (auto& e : batch) {
+                    if (!V2PayloadIsValid(e)) {
+                        ++invalid;
+                    }
+                    e = {};
+                }
+            });
+        }
+        start = true;
+        reader.reset();
+        for (auto& t : threads) {
+            t.join();
+        }
+    }
+    assert_int_equal(invalid.load(), 0);
+}
+
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
     int Value;
 
@@ -1752,6 +1952,9 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_copyout_live_blob);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blob_outlives_reader);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_sealed_blob_outlives_reader);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blobs_released_on_other_threads);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_reader_dies_while_blobs_released);
     ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
     ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
