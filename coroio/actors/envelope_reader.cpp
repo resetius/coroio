@@ -168,20 +168,20 @@ void TZeroCopyEnvelopeReader::Push(const char* p, size_t len)
 TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lowWatermark)
     : ChunkSize(chunkSize)
     , LowWatermark(lowWatermark)
-    , Returned(std::make_shared<TReturnQueue>())
+    , Returned(std::make_shared<TReturnStack>())
     , CurrentChunk(std::make_unique<TChunk>(ChunkSize, Returned))
     , SealedChunks(1)
 { }
 
+TZeroCopyEnvelopeReaderV2::TChunk* const TZeroCopyEnvelopeReaderV2::Closed =
+    reinterpret_cast<TZeroCopyEnvelopeReaderV2::TChunk*>(uintptr_t{1});
+
 TZeroCopyEnvelopeReaderV2::~TZeroCopyEnvelopeReaderV2() {
-    std::vector<TChunk*> returned;
-    {
-        std::lock_guard guard(Returned->Mutex);
-        Returned->ReaderAlive = false;
-        returned.swap(Returned->Chunks);
-    }
-    for (auto* chunk : returned) {
+    auto* chunk = Returned->Head.exchange(Closed, std::memory_order_acq_rel);
+    while (chunk) {
+        auto* next = chunk->NextReturned;
         delete chunk;
+        chunk = next;
     }
     // From now on the last blob of a retired chunk frees it
     Retire(std::move(CurrentChunk));
@@ -200,30 +200,37 @@ void TZeroCopyEnvelopeReaderV2::Retire(std::unique_ptr<TChunk> chunk) {
     }
 }
 
+// Pushes onto the return stack. No ABA: nothing pops single chunks, the reader takes the
+// whole stack with exchange, and a push only needs the current head to be its next.
 void TZeroCopyEnvelopeReaderV2::Return(TChunk* chunk) {
-    {
-        auto& returned = *chunk->Returned;
-        std::lock_guard guard(returned.Mutex);
-        if (returned.ReaderAlive) {
-            returned.Chunks.push_back(chunk);
+    auto& head = chunk->Returned->Head;
+    auto* next = head.load(std::memory_order_relaxed);
+    do {
+        if (next == Closed) {
+            delete chunk;
             return;
         }
-    }
-    delete chunk;
+        chunk->NextReturned = next;
+    } while (!head.compare_exchange_weak(next, chunk, std::memory_order_release, std::memory_order_relaxed));
 }
 
 void TZeroCopyEnvelopeReaderV2::Reclaim() {
-    std::lock_guard guard(Returned->Mutex);
-    for (auto* chunk : Returned->Chunks) {
+    auto* chunk = Returned->Head.exchange(nullptr, std::memory_order_acquire);
+    while (chunk) {
+        auto* next = chunk->NextReturned;
         FreeChunks.emplace_back(chunk);
+        --RetiredChunks;
+        chunk = next;
     }
-    RetiredChunks -= static_cast<int>(Returned->Chunks.size());
-    Returned->Chunks.clear();
 }
 
 int TZeroCopyEnvelopeReaderV2::UsedChunksCount() const {
-    std::lock_guard guard(Returned->Mutex);
-    return RetiredChunks - static_cast<int>(Returned->Chunks.size());
+    // Only the reader takes chunks off the stack, so walking it here is safe
+    int returned = 0;
+    for (auto* chunk = Returned->Head.load(std::memory_order_acquire); chunk; chunk = chunk->NextReturned) {
+        ++returned;
+    }
+    return RetiredChunks - returned;
 }
 
 void TZeroCopyEnvelopeReaderV2::Rotate() {
@@ -279,7 +286,7 @@ void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
     Head = Tail = 0;
 }
 
-TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, std::shared_ptr<TReturnQueue> returned)
+TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, std::shared_ptr<TReturnStack> returned)
     : Data(size)
     , Returned(std::move(returned))
 { }

@@ -6,7 +6,6 @@
 
 #include <atomic>
 #include <deque>
-#include <mutex>
 #include <span>
 #include <list>
 
@@ -69,8 +68,9 @@ private:
 /**
  * Envelope reader that hands out payloads as blobs pointing into its chunks.
  * Blobs may be released on any thread and may outlive the reader. The last
- * blob of a drained chunk puts it into a return queue, which the reader drains
- * on its own thread. After the reader is destroyed the last blob frees the chunk.
+ * blob of a drained chunk pushes it onto a lock-free return stack, which the
+ * reader takes whole on its own thread. After the reader is destroyed the last
+ * blob frees the chunk.
  * The reader itself is single-threaded.
  */
 class TZeroCopyEnvelopeReaderV2 {
@@ -98,11 +98,11 @@ private:
     struct TChunk;
 
     // Shared with the chunks, so it outlives the reader while blobs are alive
-    struct TReturnQueue {
-        std::mutex Mutex;
-        std::vector<TChunk*> Chunks;
-        bool ReaderAlive = true;
+    struct TReturnStack {
+        // Returned chunks linked by NextReturned, or Closed once the reader is destroyed
+        std::atomic<TChunk*> Head = nullptr;
     };
+    static TChunk* const Closed;
 
     void Rotate();
     void Retire(std::unique_ptr<TChunk> chunk);
@@ -114,7 +114,7 @@ private:
     TBlob ExtractBlob(TChunk& chunk, size_t size);
 
     struct TChunk : TIntrusiveListNode<TChunk> {
-        TChunk(size_t size, std::shared_ptr<TReturnQueue> returned);
+        TChunk(size_t size, std::shared_ptr<TReturnStack> returned);
 
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
         std::span<char> Acquire(size_t size);
@@ -130,8 +130,9 @@ private:
         size_t Tail = 0;
         // Live blobs, plus one reference of the reader until the chunk is drained
         std::atomic<int> UseCount = 1;
+        TChunk* NextReturned = nullptr;
 
-        std::shared_ptr<TReturnQueue> Returned;
+        std::shared_ptr<TReturnStack> Returned;
     };
 
     const size_t ChunkSize;
@@ -139,7 +140,7 @@ private:
     size_t CurrentSize = 0;
     THeader Header;
     bool HasHeader = false;
-    std::shared_ptr<TReturnQueue> Returned;
+    std::shared_ptr<TReturnStack> Returned;
     std::unique_ptr<TChunk> CurrentChunk;
     TIntrusiveList<TChunk> SealedChunks;
     std::vector<std::unique_ptr<TChunk>> FreeChunks;
