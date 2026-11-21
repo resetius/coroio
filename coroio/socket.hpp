@@ -26,6 +26,34 @@ namespace NNet {
 
 template<typename T> class TSocketBase;
 
+namespace NDetail {
+
+// makeRead is called before the first suspension, and its awaitable keeps the descriptor, so the handle may move.
+template<typename TMakeRead>
+TFuture<TReadBuffer> ReadIntoBuffer(TBufferPool& pool, TReadBuffer lease, TMakeRead makeRead) {
+    auto read = makeRead();
+    for (;;) {
+        auto size = co_await read;
+        if (size >= 0) {
+            pool.Commit(lease, size);
+            co_return std::move(lease);
+        }
+        // A retry hint, e.g. EAGAIN after a spurious wake-up: wait again.
+    }
+}
+
+/// ReadBuffer() of a handle that reads into the caller's memory: its ReadSome() into an acquired buffer.
+template<typename THandle>
+TFuture<TReadBuffer> ReadIntoBuffer(THandle& handle, TBufferPool& pool) {
+    TReadBuffer lease;
+    std::span<char> buf = pool.Acquire(lease);
+    return ReadIntoBuffer(pool, std::move(lease), [&handle, buf] {
+        return handle.ReadSome(buf.data(), buf.size());
+    });
+}
+
+} // namespace NDetail
+
 /**
  * @class TSocketBase<void>
  * @brief Internal base class encapsulating a socket (or file) descriptor and its poller.
@@ -178,6 +206,21 @@ public:
             }
         };
         return TAwaitableRead{Poller_,Fd_,buf,size};
+    }
+    /**
+     * @brief Reads into a buffer of the poller.
+     *
+     * Reads as ReadSome() does, into a buffer of TPollerBase::ReadBuffers(), and
+     * waits again after a spurious wake-up. ReadSome() and ReadBuffer() of one
+     * descriptor return its bytes in order; use one reader at a time.
+     *
+     * @return An awaitable that yields the lease of the bytes read, or an empty lease
+     *         at the end of the stream.
+     * @throws std::system_error on read errors, and with std::errc::no_buffer_space
+     *         if all buffers of the poller are leased.
+     */
+    TFuture<TReadBuffer> ReadBuffer() {
+        return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
     }
     /**
      * @brief Asynchronously writes data from the provided buffer to the socket.
@@ -848,6 +891,11 @@ public:
         return TAwaitable{Poller_, Fd_, buf, size};
     }
 
+    /// Reads into a buffer of the poller, see TSocketBase::ReadBuffer().
+    TFuture<TReadBuffer> ReadBuffer() {
+        return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
+    }
+
     /**
      * @brief Asynchronously writes data to the socket.
      *
@@ -1008,6 +1056,11 @@ public:
         };
 
         return TAwaitable{Poller_, Fd_, buf, size};
+    }
+
+    /// Reads into a buffer of the poller, see TSocketBase::ReadBuffer().
+    TFuture<TReadBuffer> ReadBuffer() {
+        return NDetail::ReadIntoBuffer(*this, Poller_->ReadBuffers());
     }
 
     /**
