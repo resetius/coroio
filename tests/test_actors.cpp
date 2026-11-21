@@ -2300,6 +2300,71 @@ void test_node_filler_keeps_queue_aligned_on_reconnect() {
     ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
+// A node that has written no aligned frames starts the reconnected stream at 0 without a
+// filler, byte for byte as a writer from before PayloadAlignment
+void test_node_reconnects_without_filler_when_unaligned() {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    INode& stream = node;
+
+    // A 27-byte frame, then 32-byte ones: the old stream offset stays 11 mod 16
+    const TActorId sender(1, 1, 1);
+    const TActorId recipient(1, 2, 2);
+    TVectorStream head;
+    SerializeFarInplace<TWrappedString>(head, sender, recipient, std::string("abc"));
+    TVectorStream frame;
+    SerializeFarInplace<TWrappedString>(frame, sender, recipient, std::string("12345678"));
+    ASSERT_EQ(frame.Committed, 32);
+
+    std::vector<char> first(head.Committed);
+    std::vector<char> second(frame.Committed);
+    int stage = 0;
+    auto server = [](TPoller::TSocket& listener, std::vector<char>& first, std::vector<char>& second, int& stage) -> TFuture<void> {
+        auto old = (co_await listener.Accept()).value();
+        co_await TByteReader(old).Read(first.data(), first.size());
+        // An abortive close, so the next writes of the node fail
+        linger reset{};
+        reset.l_onoff = 1;
+        reset.l_linger = 0;
+        setsockopt(old.Fd(), SOL_SOCKET, SO_LINGER, (const char*) &reset, sizeof(reset));
+        old.Close();
+        stage = 1;
+        auto client = (co_await listener.Accept()).value();
+        co_await TByteReader(client).Read(second.data(), second.size());
+        stage = 2;
+    }(listener, first, second, stage);
+
+    SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string("abc"));
+    node.Drain();
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (stage < 2 && TClock::now() < deadline) {
+        if (stage == 1) {
+            SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string("12345678"));
+            node.Drain();
+        }
+        const auto until = TClock::now() + std::chrono::milliseconds(10);
+        while (TClock::now() < until) {
+            loop.Step();
+        }
+    }
+    ASSERT_EQ(stage, 2);
+    ASSERT_EQ(0, memcmp(first.data(), head.Data.data(), first.size()));
+    // A filler would come first on the new connection
+    ASSERT_EQ(0, memcmp(second.data(), frame.Data.data(), second.size()));
+}
+
 void test_intrusive_list_stale_tag() {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
@@ -2402,6 +2467,7 @@ int main(int argc, char** argv) {
     ADD_TEST(unit_test, test_node_aligns_payloads);
     ADD_TEST(unit_test, test_node_rejects_message_id_with_padding_bits);
     ADD_TEST(unit_test, test_node_filler_keeps_queue_aligned_on_reconnect);
+    ADD_TEST(unit_test, test_node_reconnects_without_filler_when_unaligned);
 
     return RUN_ALL_TESTS();
 }

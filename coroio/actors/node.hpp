@@ -28,8 +28,8 @@ public:
     /// Marks `size` previously acquired bytes as ready to send.
     virtual void Commit(size_t size) = 0;
     /// Stream offset of the next `Acquire`, or a value congruent to it mod `MaxPayloadAlignment`:
-    /// payloads with `PayloadAlignment` are padded relative to it. The default suits a stream
-    /// that keeps each frame in its own buffer.
+    /// payloads with `PayloadAlignment` are padded relative to it, and only their writers call it.
+    /// The default suits a stream that keeps each frame in its own buffer.
     virtual uint64_t Offset() const {
         return 0;
     }
@@ -142,6 +142,8 @@ public:
     }
 
     uint64_t Offset() const override {
+        // Only writers of aligned frames ask for the offset, so the unaligned path stays as is
+        WroteAligned = true;
         return SentBytes + CommittedBytes;
     }
 
@@ -195,6 +197,10 @@ private:
 
     TFuture<void> DoConnect() {
         Connected = false;
+        // Without aligned frames the new stream starts at 0 with no filler, as before PayloadAlignment
+        if (!WroteAligned) {
+            SentBytes = 0;
+        }
         std::cout << "Connecting to " << HostPort.ToString() << "\n";
         while (!Connected) {
             try {
@@ -242,6 +248,8 @@ private:
     // Frame bytes handed to sockets, without the filler; congruent to the stream offset of
     // OutputBuffer mod MaxPayloadAlignment, also after a reconnect (see the filler in DoConnect)
     uint64_t SentBytes = 0;
+    // Set by Offset(): from then on a reconnect keeps SentBytes and writes a filler
+    mutable bool WroteAligned = false;
     std::vector<char> SendBuffer;
 };
 
