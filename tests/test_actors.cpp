@@ -2180,11 +2180,14 @@ void test_node_realigns_queue_on_reconnect(void**) {
     std::vector<TExpectedFrame> frames;
     WriteAlignedFrames(stream, 20, rng, frames);
 
-    // Reading resumes on the second connection
+    // Reading resumes on the second connection; 10 more rounds come after the reconnect
+    const size_t total = frames.size() + 30;
     TZeroCopyEnvelopeReaderV2 reader(256, 8);
     std::vector<TEnvelope> envelopes;
-    auto server = [](TPoller::TSocket& listener, TZeroCopyEnvelopeReaderV2& reader, std::vector<TEnvelope>& envelopes, size_t count) -> TFuture<void> {
+    bool reconnected = false;
+    auto server = [](TPoller::TSocket& listener, TZeroCopyEnvelopeReaderV2& reader, std::vector<TEnvelope>& envelopes, size_t count, bool& reconnected) -> TFuture<void> {
         auto client = (co_await listener.Accept()).value();
+        reconnected = true;
         while (envelopes.size() < count) {
             auto buf = reader.Acquire(64);
             auto size = co_await client.ReadSome(buf.data(), buf.size());
@@ -2199,7 +2202,7 @@ void test_node_realigns_queue_on_reconnect(void**) {
                 envelopes.push_back(std::move(*e));
             }
         }
-    }(listener, reader, envelopes, frames.size());
+    }(listener, reader, envelopes, total, reconnected);
 
     // An abortive close resets the connection on every platform, the blocked write fails
     linger reset{};
@@ -2208,7 +2211,14 @@ void test_node_realigns_queue_on_reconnect(void**) {
     assert_int_equal(setsockopt(first->Fd(), SOL_SOCKET, SO_LINGER, (const char*) &reset, sizeof(reset)), 0);
     first->Close();
     const auto deadline = TClock::now() + std::chrono::seconds(10);
-    while (envelopes.size() < frames.size() && TClock::now() < deadline) {
+    while (!reconnected && TClock::now() < deadline) {
+        loop.Step();
+    }
+    assert_true(reconnected);
+    // Padded relative to the new stream
+    WriteAlignedFrames(stream, 10, rng, frames);
+    node.Drain();
+    while (envelopes.size() < total && TClock::now() < deadline) {
         loop.Step();
     }
     CheckAlignedFrames(envelopes, frames);
