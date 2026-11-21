@@ -95,14 +95,32 @@ private:
  * @brief Wire header prepended to every remote actor message
  *
  * Written as a fixed-size prefix before the serialized payload.
- * `Size` is the byte length of the payload that follows.
+ * `Size` is the byte length of the payload. The top 4 bits of `MessageId`
+ * are the number of zero bytes between the header and the payload, which
+ * aligns the payload of a type with `PayloadAlignment`; they are 0 for
+ * other types, so message ids must be at most `MaxMessageId`.
  */
 struct THeader {
     TActorId Sender;       ///< Originating actor
     TActorId Recipient;    ///< Destination actor
-    TMessageId MessageId = 0; ///< Message type discriminator
-    uint32_t Size = 0;        ///< Payload size in bytes
+    TMessageId MessageId = 0; ///< Message type discriminator, padding in the top 4 bits
+    uint32_t Size = 0;        ///< Payload size in bytes, without the padding
 };
+
+constexpr uint32_t HeaderPaddingShift = 28;
+constexpr TMessageId MaxMessageId = (TMessageId(1) << HeaderPaddingShift) - 1;
+/// Largest `PayloadAlignment` a message type may declare.
+constexpr size_t MaxPayloadAlignment = 16;
+
+/// Zero bytes between the header and the payload.
+inline uint32_t HeaderPadding(const THeader& header) {
+    return header.MessageId >> HeaderPaddingShift;
+}
+
+/// Message id without the padding bits.
+inline TMessageId HeaderMessageId(const THeader& header) {
+    return header.MessageId & MaxMessageId;
+}
 
 } // namespace NActors
 } // namespace NNet

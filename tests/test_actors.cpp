@@ -1,6 +1,11 @@
 #include <chrono>
 #include <array>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <exception>
+#include <mutex>
+#include <random>
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
@@ -576,6 +581,10 @@ struct TVectorStream {
 
     void Commit(size_t size) {
         Committed += size;
+    }
+
+    uint64_t Offset() const {
+        return Committed;
     }
 };
 
@@ -1270,6 +1279,201 @@ void test_envelope_reader_v2_blob_outlives_reader(void**) {
     e3.reset();
 }
 
+void test_envelope_reader_v2_sealed_blob_outlives_reader(void**) {
+    constexpr size_t H = sizeof(THeader);
+    constexpr size_t P = 32;
+
+    auto makeMessage = [](int id, char fill) {
+        std::vector<char> m(H + P, fill);
+        THeader header {
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TMessageId(id),
+            .Size = P,
+        };
+        std::memcpy(m.data(), &header, H);
+        return m;
+    };
+
+    // Two messages per chunk: the third one seals the chunk with the unread second message
+    std::optional<TEnvelope> e1;
+    {
+        TZeroCopyEnvelopeReaderV2 r(2 * (H + P), 4);
+        auto m1 = makeMessage(1, 'A');
+        auto m2 = makeMessage(2, 'B');
+        auto m3 = makeMessage(3, 'C');
+        r.Push(m1.data(), m1.size());
+        r.Push(m2.data(), m2.size());
+        e1 = r.Pop();
+        assert_true(e1.has_value());
+        r.Push(m3.data(), m3.size());
+    }
+    assert_true(e1->Blob.Size == P);
+    const char* d = static_cast<const char*>(e1->Blob.Data.get());
+    for (size_t i = 0; i < P; ++i) {
+        assert_true(d[i] == 'A');
+    }
+    e1.reset();
+}
+
+// Payload of message `id`: V2PayloadSize(id) bytes equal to char(id)
+static size_t V2PayloadSize(uint32_t id) {
+    return (id * 37) % 301;
+}
+
+static void AppendV2Message(std::vector<char>& stream, uint32_t id) {
+    THeader header {
+        .Sender = TActorId(1, 1, 1),
+        .Recipient = TActorId(1, 2, 2),
+        .MessageId = TMessageId(id),
+        .Size = static_cast<uint32_t>(V2PayloadSize(id)),
+    };
+    const char* p = reinterpret_cast<const char*>(&header);
+    stream.insert(stream.end(), p, p + sizeof(header));
+    stream.insert(stream.end(), header.Size, static_cast<char>(id));
+}
+
+static bool V2PayloadIsValid(const TEnvelope& e) {
+    if (e.Blob.Size != V2PayloadSize(e.MessageId)) {
+        return false;
+    }
+    const char* d = static_cast<const char*>(e.Blob.Data.get());
+    for (size_t i = 0; i < e.Blob.Size; ++i) {
+        if (d[i] != static_cast<char>(e.MessageId)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Commits bytes in pieces of random size, like socket reads
+static size_t FeedV2(TZeroCopyEnvelopeReaderV2& reader, const std::vector<char>& stream, size_t pos, std::mt19937& rng) {
+    size_t piece = std::min<size_t>(1 + rng() % 1500, stream.size() - pos);
+    auto buf = reader.Acquire(piece);
+    size_t size = std::min(piece, buf.size());
+    std::memcpy(buf.data(), stream.data() + pos, size);
+    reader.Commit(size);
+    return pos + size;
+}
+
+void test_envelope_reader_v2_blobs_released_on_other_threads(void**) {
+    constexpr int messages = 100000;
+    constexpr int workers = 3;
+    // Blobs held by each worker, so they outlive chunk rotations
+    constexpr size_t held = 64;
+
+    std::vector<char> stream;
+    for (int i = 0; i < messages; ++i) {
+        AppendV2Message(stream, i);
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<TEnvelope> queue;
+    bool done = false;
+    std::atomic<int> received = 0;
+    std::atomic<int> invalid = 0;
+
+    std::vector<std::thread> threads;
+    for (int w = 0; w < workers; ++w) {
+        threads.emplace_back([&] {
+            std::deque<TEnvelope> blobs;
+            while (true) {
+                std::unique_lock lock(mutex);
+                cv.wait(lock, [&] { return done || !queue.empty(); });
+                if (queue.empty()) {
+                    break;
+                }
+                blobs.push_back(std::move(queue.front()));
+                queue.pop_front();
+                lock.unlock();
+                cv.notify_all();
+                if (!V2PayloadIsValid(blobs.back())) {
+                    ++invalid;
+                }
+                ++received;
+                if (blobs.size() > held) {
+                    blobs.pop_front();
+                }
+            }
+        });
+    }
+
+    TZeroCopyEnvelopeReaderV2 reader(4096, 64);
+    std::mt19937 rng(42);
+    size_t pos = 0;
+    while (pos < stream.size()) {
+        pos = FeedV2(reader, stream, pos, rng);
+        while (auto e = reader.Pop()) {
+            std::unique_lock lock(mutex);
+            cv.wait(lock, [&] { return queue.size() < 1024; });
+            queue.push_back(std::move(*e));
+            lock.unlock();
+            cv.notify_all();
+        }
+    }
+    {
+        std::lock_guard lock(mutex);
+        done = true;
+    }
+    cv.notify_all();
+    for (auto& t : threads) {
+        t.join();
+    }
+    assert_int_equal(received.load(), messages);
+    assert_int_equal(invalid.load(), 0);
+    assert_int_equal(reader.UsedChunksCount(), 0);
+}
+
+void test_envelope_reader_v2_reader_dies_while_blobs_released(void**) {
+    constexpr int rounds = 200;
+    constexpr int workers = 3;
+
+    std::vector<char> stream;
+    for (int i = 0; i < 400; ++i) {
+        AppendV2Message(stream, i);
+    }
+
+    std::mt19937 rng(7);
+    std::atomic<int> invalid = 0;
+    for (int round = 0; round < rounds; ++round) {
+        auto reader = std::make_unique<TZeroCopyEnvelopeReaderV2>(2048, 64);
+        // Cut the stream inside a message, so a sealed chunk may keep unread bytes
+        std::vector<char> prefix(stream.begin(), stream.begin() + stream.size() / 2 + rng() % (stream.size() / 2));
+        std::vector<std::vector<TEnvelope>> batches(workers);
+        size_t pos = 0;
+        int count = 0;
+        while (pos < prefix.size()) {
+            pos = FeedV2(*reader, prefix, pos, rng);
+            while (auto e = reader->Pop()) {
+                batches[count++ % workers].push_back(std::move(*e));
+            }
+        }
+
+        std::atomic<bool> start = false;
+        std::vector<std::thread> threads;
+        for (auto& batch : batches) {
+            threads.emplace_back([&] {
+                while (!start.load()) {
+                    std::this_thread::yield();
+                }
+                for (auto& e : batch) {
+                    if (!V2PayloadIsValid(e)) {
+                        ++invalid;
+                    }
+                    e = {};
+                }
+            });
+        }
+        start = true;
+        reader.reset();
+        for (auto& t : threads) {
+            t.join();
+        }
+    }
+    assert_int_equal(invalid.load(), 0);
+}
+
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
     int Value;
 
@@ -1675,6 +1879,317 @@ void test_far_message_across_yield(void**) {
     assert_string_equal(received[1].c_str(), "tail");
 }
 
+// Payloads that ask for 16-byte alignment on the wire
+struct TAlignedPod {
+    static constexpr TMessageId MessageId = 47;
+    static constexpr size_t PayloadAlignment = 16;
+    uint64_t Values[3];
+};
+
+struct TAlignedBytes {
+    static constexpr TMessageId MessageId = 48;
+    static constexpr size_t PayloadAlignment = 16;
+    std::string Value;
+};
+
+struct TPlainPod {
+    static constexpr TMessageId MessageId = 49;
+    uint64_t Values[2];
+};
+
+namespace NNet::NActors {
+
+template<>
+size_t SerializedSize<TAlignedBytes>(const TAlignedBytes& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TAlignedBytes>(const TAlignedBytes& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+} // namespace NNet::NActors
+
+struct TExpectedFrame {
+    TMessageId MessageId;
+    std::string Payload;
+    bool Aligned;
+};
+
+// Rounds of: a string of 0..40 bytes, an aligned POD, aligned bytes of 1..60 bytes
+template<typename TStream>
+static void WriteAlignedFrames(TStream& stream, int rounds, std::mt19937& rng, std::vector<TExpectedFrame>& frames) {
+    const TActorId sender(1, 1, 1);
+    const TActorId recipient(1, 2, 2);
+    for (int r = 0; r < rounds; ++r) {
+        std::string text(rng() % 41, static_cast<char>('a' + r % 26));
+        SerializeFarInplace<TWrappedString>(stream, sender, recipient, text);
+        frames.push_back({TWrappedString::MessageId, text, false});
+        const TAlignedPod pod{{uint64_t(r), uint64_t(r) * 3, uint64_t(r) * 7}};
+        SerializeFarInplace<TAlignedPod>(stream, sender, recipient, pod);
+        frames.push_back({TAlignedPod::MessageId, std::string(reinterpret_cast<const char*>(&pod), sizeof(pod)), true});
+        std::string bytes(1 + rng() % 60, static_cast<char>('A' + r % 26));
+        SerializeFarInplace<TAlignedBytes>(stream, sender, recipient, TAlignedBytes{bytes});
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+    }
+}
+
+static void CheckAlignedFrames(const std::vector<TEnvelope>& envelopes, const std::vector<TExpectedFrame>& frames) {
+    assert_int_equal(envelopes.size(), frames.size());
+    for (size_t i = 0; i < frames.size(); ++i) {
+        const auto& e = envelopes[i];
+        assert_int_equal(e.MessageId, frames[i].MessageId);
+        assert_int_equal(e.Blob.Size, frames[i].Payload.size());
+        if (e.Blob.Size > 0) {
+            assert_memory_equal(e.Blob.Data.get(), frames[i].Payload.data(), e.Blob.Size);
+            if (frames[i].Aligned) {
+                assert_int_equal(reinterpret_cast<uintptr_t>(e.Blob.Data.get()) % 16, 0);
+            }
+        }
+    }
+}
+
+// Commits the stream in pieces of 1..maxPiece bytes and pops all envelopes
+template<typename TReader>
+static std::vector<TEnvelope> ReadInPieces(TReader& reader, const char* data, size_t size, size_t maxPiece, std::mt19937& rng) {
+    std::vector<TEnvelope> envelopes;
+    size_t pos = 0;
+    while (pos < size) {
+        const size_t piece = std::min<size_t>(1 + rng() % maxPiece, size - pos);
+        auto buf = reader.Acquire(piece);
+        const size_t n = std::min(piece, buf.size());
+        std::memcpy(buf.data(), data + pos, n);
+        reader.Commit(n);
+        pos += n;
+        while (auto e = reader.Pop()) {
+            envelopes.push_back(std::move(*e));
+        }
+    }
+    return envelopes;
+}
+
+void test_payload_alignment_v2(void**) {
+    std::mt19937 rng(11);
+    for (size_t chunkSize : {64, 100, 129, 256, 1000, 4096}) {
+        // A leading string of 0..15 bytes shifts every later frame
+        for (int shift = 0; shift < 16; ++shift) {
+            TVectorStream stream;
+            std::vector<TExpectedFrame> frames;
+            std::string lead(shift, 'z');
+            SerializeFarInplace<TWrappedString>(stream, TActorId(1, 1, 1), TActorId(1, 2, 2), lead);
+            frames.push_back({TWrappedString::MessageId, lead, false});
+            WriteAlignedFrames(stream, 50, rng, frames);
+
+            TZeroCopyEnvelopeReaderV2 reader(chunkSize, 8);
+            auto envelopes = ReadInPieces(reader, stream.Data.data(), stream.Committed, chunkSize, rng);
+            CheckAlignedFrames(envelopes, frames);
+        }
+    }
+}
+
+void test_payload_alignment_v1_and_plain_reader(void**) {
+    std::mt19937 rng(12);
+    TVectorStream stream;
+    std::vector<TExpectedFrame> frames;
+    WriteAlignedFrames(stream, 200, rng, frames);
+
+    TZeroCopyEnvelopeReader v1(64);
+    CheckAlignedFrames(ReadInPieces(v1, stream.Data.data(), stream.Committed, 300, rng), frames);
+
+    TEnvelopeReader plain;
+    plain.Push(stream.Data.data(), stream.Committed);
+    std::vector<TEnvelope> envelopes;
+    while (auto e = plain.Pop()) {
+        envelopes.push_back(std::move(*e));
+    }
+    CheckAlignedFrames(envelopes, frames);
+}
+
+void test_payload_alignment_wire_format(void**) {
+    const TActorId sender(1, 2, 3);
+    const TActorId recipient(2, 5, 7);
+    TVectorStream stream;
+    // The stream offset is not a multiple of 16
+    stream.Acquire(3);
+    stream.Commit(3);
+
+    // A type without PayloadAlignment: the header and the payload, as before
+    SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string("abc"));
+    const THeader plain{sender, recipient, TWrappedString::MessageId, 3};
+    assert_int_equal(stream.Committed, 3 + sizeof(THeader) + 3);
+    assert_memory_equal(stream.Data.data() + 3, &plain, sizeof(plain));
+    assert_memory_equal(stream.Data.data() + 3 + sizeof(THeader), "abc", 3);
+
+    const TPlainPod pod{{1, 2}};
+    const size_t podStart = stream.Committed;
+    SerializeFarInplace<TPlainPod>(stream, sender, recipient, pod);
+    const THeader podHeader{sender, recipient, TPlainPod::MessageId, sizeof(TPlainPod)};
+    assert_int_equal(stream.Committed, podStart + sizeof(THeader) + sizeof(TPlainPod));
+    assert_memory_equal(stream.Data.data() + podStart, &podHeader, sizeof(podHeader));
+    assert_memory_equal(stream.Data.data() + podStart + sizeof(THeader), &pod, sizeof(pod));
+
+    // An aligned type: zero padding up to the next multiple of 16, its length in the top bits of the id
+    const size_t start = stream.Committed;
+    SerializeFarInplace<TAlignedBytes>(stream, sender, recipient, TAlignedBytes{"xyz"});
+    const uint32_t padding = (16 - (start + sizeof(THeader)) % 16) % 16;
+    assert_true(padding > 0);
+    const THeader aligned{sender, recipient, TAlignedBytes::MessageId | (padding << 28), 3};
+    assert_int_equal(stream.Committed, start + sizeof(THeader) + padding + 3);
+    assert_memory_equal(stream.Data.data() + start, &aligned, sizeof(aligned));
+    for (uint32_t i = 0; i < padding; ++i) {
+        assert_int_equal(stream.Data[start + sizeof(THeader) + i], 0);
+    }
+    assert_int_equal((start + sizeof(THeader) + padding) % 16, 0);
+    assert_memory_equal(stream.Data.data() + start + sizeof(THeader) + padding, "xyz", 3);
+}
+
+// TNode pads relative to its own stream offset, across several drains and both send paths
+void test_node_aligns_payloads(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    factory.RegisterSerializer<TAlignedBytes>();
+    TAllocator alloc;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    INode& stream = node;
+
+    std::mt19937 rng(13);
+    std::vector<TExpectedFrame> frames;
+    for (int batch = 0; batch < 3; ++batch) {
+        WriteAlignedFrames(stream, 10, rng, frames);
+        std::string bytes(1 + rng() % 60, 'e');
+        node.Send(TEnvelope{
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TAlignedBytes::MessageId,
+            .Blob = SerializeNear<TAlignedBytes>(alloc, bytes),
+        });
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+        node.Drain();
+        const auto until = TClock::now() + std::chrono::milliseconds(100);
+        while (TClock::now() < until) {
+            loop.Step();
+        }
+    }
+
+    // Reads like InboundConnection, in small pieces
+    TZeroCopyEnvelopeReaderV2 reader(256, 8);
+    std::vector<TEnvelope> envelopes;
+    auto server = [](TPoller::TSocket& listener, TZeroCopyEnvelopeReaderV2& reader, std::vector<TEnvelope>& envelopes, size_t count) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        while (envelopes.size() < count) {
+            auto buf = reader.Acquire(64);
+            auto size = co_await client.ReadSome(buf.data(), buf.size());
+            if (size < 0) {
+                continue;
+            }
+            if (size == 0) {
+                break;
+            }
+            reader.Commit(size);
+            while (auto e = reader.Pop()) {
+                envelopes.push_back(std::move(*e));
+            }
+        }
+    }(listener, reader, envelopes, frames.size());
+
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (envelopes.size() < frames.size() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    CheckAlignedFrames(envelopes, frames);
+}
+
+// Frames queued during a write that fails are re-padded for the next connection
+void test_node_realigns_queue_on_reconnect(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    factory.RegisterSerializer<TAlignedPod>();
+    factory.RegisterSerializer<TAlignedBytes>();
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    std::optional<TPoller::TSocket> first;
+    auto stall = [](TPoller::TSocket& listener, std::optional<TPoller::TSocket>& first) -> TFuture<void> {
+        // Never reads, so the node's write stays blocked
+        first.emplace((co_await listener.Accept()).value());
+    }(listener, first);
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    INode& stream = node;
+
+    // A frame too large for the socket buffers; its size is not a multiple of 16
+    const uint32_t large = (64 << 20) + 3;
+    auto buf = node.Acquire(sizeof(THeader) + large);
+    const THeader header{TActorId(1, 1, 1), TActorId(1, 2, 2), TWrappedString::MessageId, large};
+    std::memcpy(buf.data(), &header, sizeof(header));
+    node.Commit(sizeof(THeader) + large);
+    node.Drain();
+    const auto blocked = TClock::now() + std::chrono::milliseconds(500);
+    while (TClock::now() < blocked) {
+        loop.Step();
+    }
+    assert_true(first.has_value());
+    assert_int_equal(node.Offset() % 16, (sizeof(THeader) + large) % 16);
+
+    // Queued behind the blocked write, padded for the old stream
+    std::mt19937 rng(14);
+    std::vector<TExpectedFrame> frames;
+    WriteAlignedFrames(stream, 20, rng, frames);
+
+    // Reading resumes on the second connection
+    TZeroCopyEnvelopeReaderV2 reader(256, 8);
+    std::vector<TEnvelope> envelopes;
+    auto server = [](TPoller::TSocket& listener, TZeroCopyEnvelopeReaderV2& reader, std::vector<TEnvelope>& envelopes, size_t count) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        while (envelopes.size() < count) {
+            auto buf = reader.Acquire(64);
+            auto size = co_await client.ReadSome(buf.data(), buf.size());
+            if (size < 0) {
+                continue;
+            }
+            if (size == 0) {
+                break;
+            }
+            reader.Commit(size);
+            while (auto e = reader.Pop()) {
+                envelopes.push_back(std::move(*e));
+            }
+        }
+    }(listener, reader, envelopes, frames.size());
+
+    // An abortive close resets the connection on every platform, the blocked write fails
+    linger reset{};
+    reset.l_onoff = 1;
+    reset.l_linger = 0;
+    assert_int_equal(setsockopt(first->Fd(), SOL_SOCKET, SO_LINGER, (const char*) &reset, sizeof(reset)), 0);
+    first->Close();
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (envelopes.size() < frames.size() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    CheckAlignedFrames(envelopes, frames);
+}
+
 void test_intrusive_list_stale_tag(void**) {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
@@ -1752,6 +2267,9 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_copyout_live_blob);
     ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blob_outlives_reader);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_sealed_blob_outlives_reader);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blobs_released_on_other_threads);
+    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_reader_dies_while_blobs_released);
     ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
     ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
     ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
@@ -1767,6 +2285,11 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
+    ADD_TEST(cmocka_unit_test, test_payload_alignment_v2);
+    ADD_TEST(cmocka_unit_test, test_payload_alignment_v1_and_plain_reader);
+    ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
+    ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
+    ADD_TEST(cmocka_unit_test, test_node_realigns_queue_on_reconnect);
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }

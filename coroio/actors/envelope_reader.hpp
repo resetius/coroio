@@ -4,6 +4,7 @@
 #include "queue.hpp"
 #include "intrusive_list.hpp"
 
+#include <atomic>
 #include <deque>
 #include <span>
 #include <list>
@@ -42,7 +43,7 @@ public:
     std::optional<TEnvelope> Pop();
     size_t Size() const;
     bool NeedMoreData() const {
-        return !HasHeader || Size() < Header.Size;
+        return !HasHeader || Size() < HeaderPadding(Header) + Header.Size;
     }
 
     // for testing purposes
@@ -66,10 +67,13 @@ private:
 
 /**
  * Envelope reader that hands out payloads as blobs pointing into its chunks.
- * A blob may outlive the reader: on destruction the chunks with live blobs are
- * detached (Parent = nullptr) and the deleter of the last blob frees them.
- * Not thread-safe: blobs must be released on the reader's thread, or after the
- * reader is destroyed.
+ * Blobs may be released on any thread and may outlive the reader. The last
+ * blob of a drained chunk pushes it onto a lock-free return stack, which the
+ * reader takes whole on its own thread. After the reader is destroyed the last
+ * blob frees the chunk.
+ * The reader itself is single-threaded.
+ * Chunk addresses are congruent to stream offsets modulo `MaxPayloadAlignment`,
+ * so a payload with `PayloadAlignment` is aligned in memory.
  */
 class TZeroCopyEnvelopeReaderV2 {
 public:
@@ -83,29 +87,36 @@ public:
         return CurrentSize;
     }
     bool NeedMoreData() const {
-        return !HasHeader || Size() < Header.Size;
+        return !HasHeader || Size() < HeaderPadding(Header) + Header.Size;
     }
 
     // for testing purposes
     void Push(const char* p, size_t len);
 
-    int UsedChunksCount() const {
-        return UsedChunks.Size();
-    }
+    // Drained chunks still held by live blobs
+    int UsedChunksCount() const;
 
 private:
     struct TChunk;
 
+    // Shared with the chunks, so it outlives the reader while blobs are alive
+    struct TReturnStack {
+        // Returned chunks linked by NextReturned, or Closed once the reader is destroyed
+        std::atomic<TChunk*> Head = nullptr;
+    };
+    static TChunk* const Closed;
+
     void Rotate();
-    void ReleaseDrained(std::unique_ptr<TChunk> chunk);
-    static void Detach(std::unique_ptr<TChunk> chunk);
+    void Retire(std::unique_ptr<TChunk> chunk);
+    void Reclaim();
+    static void Return(TChunk* chunk);
     template<size_t size>
     bool CopyOut(char* buf);
     void CopyOut(char* buf, size_t size);
     TBlob ExtractBlob(TChunk& chunk, size_t size);
 
     struct TChunk : TIntrusiveListNode<TChunk> {
-        TChunk(size_t size, TZeroCopyEnvelopeReaderV2* parent);
+        TChunk(size_t size, uint64_t streamOffset, std::shared_ptr<TReturnStack> returned);
 
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
         std::span<char> Acquire(size_t size);
@@ -114,25 +125,36 @@ private:
         bool CopyOut(char* buf);
         bool CopyOut(char* buf, size_t size);
         size_t Size() const;
-        void Clear();
+        // Empties the chunk; its next byte gets an address congruent to streamOffset
+        void Clear(uint64_t streamOffset);
 
+        // The chunk size plus room to shift the start
         std::vector<char> Data;
         size_t Head = 0;
         size_t Tail = 0;
-        int UseCount = 0;
+        size_t End = 0;
+        // Live blobs, plus one reference of the reader until the chunk is drained
+        std::atomic<int> UseCount = 1;
+        TChunk* NextReturned = nullptr;
 
-        TZeroCopyEnvelopeReaderV2* Parent = nullptr;
+        std::shared_ptr<TReturnStack> Returned;
     };
 
     const size_t ChunkSize;
     const size_t LowWatermark;
     size_t CurrentSize = 0;
+    // Bytes committed since the start of the stream
+    uint64_t StreamOffset = 0;
+    // Takes the padding; a buffer on the stack would add a stack protector check to Pop
+    char Skipped[MaxPayloadAlignment];
     THeader Header;
     bool HasHeader = false;
+    std::shared_ptr<TReturnStack> Returned;
     std::unique_ptr<TChunk> CurrentChunk;
     TIntrusiveList<TChunk> SealedChunks;
     std::vector<std::unique_ptr<TChunk>> FreeChunks;
-    TIntrusiveList<TChunk> UsedChunks;
+    // Drained chunks given to their blobs and not reclaimed yet
+    int RetiredChunks = 0;
 };
 
 } // namespace NActors

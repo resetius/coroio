@@ -27,6 +27,11 @@ public:
     virtual std::span<char> Acquire(size_t size) = 0;
     /// Marks `size` previously acquired bytes as ready to send.
     virtual void Commit(size_t size) = 0;
+    /// Stream offset of the next `Acquire`: payloads with `PayloadAlignment` are padded
+    /// relative to it. The default suits a stream that keeps each frame in its own buffer.
+    virtual uint64_t Offset() const {
+        return 0;
+    }
 };
 
 /**
@@ -93,23 +98,30 @@ public:
     // TODO: remove me, envelope needed only for local actors
     void Send(TEnvelope&& envelope) override {
         auto blob = std::move(envelope.Blob);
+        uint32_t padding = 0;
         // TODO: a blob already in Far form (a received non-POD message Forward-ed to another
         // node) is serialized again as if it held a T object; pass such blobs through as bytes.
         if (blob.Size > 0) {
             blob = Factory.SerializeFar(envelope.MessageId, std::move(blob));
+            const size_t alignment = Factory.PayloadAlignment(envelope.MessageId);
+            if (alignment > 1) {
+                padding = PayloadPadding(Offset(), alignment);
+            }
         }
         THeader data{
             .Sender = envelope.Sender,
             .Recipient = envelope.Recipient,
-            .MessageId = envelope.MessageId,
+            .MessageId = envelope.MessageId | (padding << HeaderPaddingShift),
             .Size = blob.Size
         };
-        auto buf = Acquire(sizeof(data) + blob.Size);
+        const size_t size = sizeof(data) + padding + blob.Size;
+        auto buf = Acquire(size);
         std::memcpy(buf.data(), &data, sizeof(data));
+        std::memset(buf.data() + sizeof(data), 0, padding);
         if (blob.Size > 0) {
-            std::memcpy(buf.data() + sizeof(data), blob.Data.get(), blob.Size);
+            std::memcpy(buf.data() + sizeof(data) + padding, blob.Data.get(), blob.Size);
         }
-        Commit(sizeof(data) + blob.Size);
+        Commit(size);
     }
 
     std::span<char> Acquire(size_t size) override {
@@ -121,6 +133,10 @@ public:
 
     void Commit(size_t size) override {
         CommittedBytes += size;
+    }
+
+    uint64_t Offset() const override {
+        return SentBytes + CommittedBytes;
     }
 
     void StartConnect() override {
@@ -152,6 +168,7 @@ private:
                 SendBuffer.swap(OutputBuffer);
                 auto readSize = CommittedBytes;
                 CommittedBytes = 0;
+                SentBytes += readSize;
                 co_await TByteWriter(Socket).Write(SendBuffer.data(), readSize);
             }
             co_return;
@@ -172,6 +189,12 @@ private:
 
     TFuture<void> DoConnect() {
         Connected = false;
+        // The next connection starts a new stream with the bytes still queued
+        const bool shifted = SentBytes % MaxPayloadAlignment != 0;
+        SentBytes = 0;
+        if (shifted) {
+            RealignQueued();
+        }
         std::cout << "Connecting to " << HostPort.ToString() << "\n";
         while (!Connected) {
             try {
@@ -198,6 +221,38 @@ private:
         co_return;
     }
 
+    // Recomputes the padding of the queued frames of aligned types for a stream that starts
+    // at OutputBuffer; only on reconnect. The alignment comes from the factory, as in Send.
+    void RealignQueued() {
+        std::vector<char> frames;
+        frames.reserve(CommittedBytes + CommittedBytes / 4);
+        size_t pos = 0;
+        while (CommittedBytes - pos >= sizeof(THeader)) {
+            THeader header;
+            std::memcpy(&header, OutputBuffer.data() + pos, sizeof(header));
+            const size_t oldPadding = HeaderPadding(header);
+            if (CommittedBytes - pos - sizeof(header) < oldPadding + size_t(header.Size)) {
+                break;
+            }
+            const TMessageId messageId = HeaderMessageId(header);
+            const size_t alignment = Factory.PayloadAlignment(messageId);
+            uint32_t padding = static_cast<uint32_t>(oldPadding);
+            if (alignment > 1) {
+                padding = PayloadPadding(frames.size(), alignment);
+                header.MessageId = messageId | (padding << HeaderPaddingShift);
+            }
+            const char* payload = OutputBuffer.data() + pos + sizeof(header) + oldPadding;
+            const char* p = reinterpret_cast<const char*>(&header);
+            frames.insert(frames.end(), p, p + sizeof(header));
+            frames.insert(frames.end(), size_t(padding), char(0));
+            frames.insert(frames.end(), payload, payload + header.Size);
+            pos += sizeof(header) + oldPadding + header.Size;
+        }
+        frames.insert(frames.end(), OutputBuffer.data() + pos, OutputBuffer.data() + CommittedBytes);
+        CommittedBytes = frames.size();
+        OutputBuffer.swap(frames);
+    }
+
     bool Connected = false;
     TFuture<void> Drainer;
     TFuture<void> Connector;
@@ -210,6 +265,8 @@ private:
     THostPort HostPort;
     std::vector<char> OutputBuffer;
     size_t CommittedBytes = 0;
+    // Bytes of the current connection's stream before OutputBuffer
+    uint64_t SentBytes = 0;
     std::vector<char> SendBuffer;
 };
 
