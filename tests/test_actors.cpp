@@ -1451,6 +1451,7 @@ void test_envelope_reader_v2_reader_dies_while_blobs_released(void**) {
         }
 
         std::atomic<bool> start = false;
+        std::atomic<int> released = 0;
         std::vector<std::thread> threads;
         for (auto& batch : batches) {
             threads.emplace_back([&] {
@@ -1462,10 +1463,14 @@ void test_envelope_reader_v2_reader_dies_while_blobs_released(void**) {
                         ++invalid;
                     }
                     e = {};
+                    released.fetch_add(1, std::memory_order_relaxed);
                 }
             });
         }
         start = true;
+        // Relaxed on purpose: no happens-before from the workers to the destructor
+        while (released.load(std::memory_order_relaxed) < count / 2) {
+        }
         reader.reset();
         for (auto& t : threads) {
             t.join();
@@ -2157,7 +2162,15 @@ void test_node_realigns_queue_on_reconnect(void**) {
     }(listener, first);
 
     TNode<TPoller> node(poller, factory, resolver,
-        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        [&poller](const TAddress& addr) {
+            TPoller::TSocket s(poller, addr.Domain());
+#ifdef _WIN32
+            // Otherwise Winsock takes the whole send into its buffer and the write does not stay blocked
+            int zero = 0;
+            setsockopt(s.Fd(), SOL_SOCKET, SO_SNDBUF, (const char*) &zero, sizeof(zero));
+#endif
+            return s;
+        },
         THostPort("127.0.0.1", port));
     INode& stream = node;
 
@@ -2324,9 +2337,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
     ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
     ADD_TEST(cmocka_unit_test, test_node_rejects_message_id_with_padding_bits);
-#ifndef _WIN32
     ADD_TEST(cmocka_unit_test, test_node_realigns_queue_on_reconnect);
-#endif
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }
