@@ -2111,6 +2111,29 @@ void test_node_aligns_payloads(void**) {
     CheckAlignedFrames(envelopes, frames);
 }
 
+// An id in the padding bits would break the stream, even with an empty blob
+void test_node_rejects_message_id_with_padding_bits(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", GetFreePort()));
+
+    bool thrown = false;
+    try {
+        node.Send(TEnvelope{.Sender = TActorId(1, 1, 1), .Recipient = TActorId(2, 2, 2), .MessageId = MaxMessageId + 1});
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    assert_true(thrown);
+    assert_int_equal(node.Offset(), 0);
+    node.Send(TEnvelope{.Sender = TActorId(1, 1, 1), .Recipient = TActorId(2, 2, 2), .MessageId = MaxMessageId});
+    assert_int_equal(node.Offset(), sizeof(THeader));
+}
+
 // Frames queued during a write that fails are re-padded for the next connection.
 // Not on Windows: its loopback takes the whole 64 MiB without a reading peer, so no write stays blocked.
 void test_node_realigns_queue_on_reconnect(void**) {
@@ -2290,6 +2313,7 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_payload_alignment_v1_and_plain_reader);
     ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
     ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
+    ADD_TEST(cmocka_unit_test, test_node_rejects_message_id_with_padding_bits);
 #ifndef _WIN32
     ADD_TEST(cmocka_unit_test, test_node_realigns_queue_on_reconnect);
 #endif

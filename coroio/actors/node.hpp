@@ -97,6 +97,11 @@ public:
 
     // TODO: remove me, envelope needed only for local actors
     void Send(TEnvelope&& envelope) override {
+        // Empty blobs skip the factory and its compile-time check of the id
+        if (envelope.MessageId > MaxMessageId) [[unlikely]] {
+            throw std::invalid_argument("message id " + std::to_string(envelope.MessageId)
+                + " overlaps the padding bits of THeader::MessageId");
+        }
         auto blob = std::move(envelope.Blob);
         uint32_t padding = 0;
         // TODO: a blob already in Far form (a received non-POD message Forward-ed to another
