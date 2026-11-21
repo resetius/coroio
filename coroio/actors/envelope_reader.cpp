@@ -173,6 +173,23 @@ TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lo
     , UsedChunks(2)
 { }
 
+TZeroCopyEnvelopeReaderV2::~TZeroCopyEnvelopeReaderV2() {
+    Detach(std::move(CurrentChunk));
+    while (!SealedChunks.Empty()) {
+        Detach(SealedChunks.PopFront());
+    }
+    while (!UsedChunks.Empty()) {
+        Detach(UsedChunks.PopFront());
+    }
+}
+
+void TZeroCopyEnvelopeReaderV2::Detach(std::unique_ptr<TChunk> chunk) {
+    // Live blobs still point into the chunk, the last blob deleter frees it
+    if (chunk->UseCount > 0) {
+        chunk.release()->Parent = nullptr;
+    }
+}
+
 void TZeroCopyEnvelopeReaderV2::Rotate() {
     if (CurrentChunk->Size() == 0 && CurrentChunk->UseCount == 0) {
         CurrentChunk->Clear();
@@ -320,6 +337,10 @@ TBlob TZeroCopyEnvelopeReaderV2::ExtractBlob(TChunk& chunk, size_t size) {
     blob.Data = TBlob::TRawPtr(chunk.Data.data() + chunk.Head, TBlobDeleter{[&chunk](void* ptr) {
         if (--chunk.UseCount == 0) {
             auto* self = chunk.Parent;
+            if (!self) {
+                delete &chunk;
+                return;
+            }
             auto ref = self->UsedChunks.Erase(&chunk);
             if (ref) {
                 self->FreeChunks.emplace_back(std::move(ref));
