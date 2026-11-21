@@ -168,42 +168,90 @@ void TZeroCopyEnvelopeReader::Push(const char* p, size_t len)
 TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lowWatermark)
     : ChunkSize(chunkSize)
     , LowWatermark(lowWatermark)
-    , CurrentChunk(std::make_unique<TChunk>(ChunkSize, this))
+    , Returned(std::make_shared<TReturnStack>())
+    , CurrentChunk(std::make_unique<TChunk>(ChunkSize, Returned))
     , SealedChunks(1)
-    , UsedChunks(2)
 { }
 
+TZeroCopyEnvelopeReaderV2::TChunk* const TZeroCopyEnvelopeReaderV2::Closed =
+    reinterpret_cast<TZeroCopyEnvelopeReaderV2::TChunk*>(uintptr_t{1});
+
 TZeroCopyEnvelopeReaderV2::~TZeroCopyEnvelopeReaderV2() {
-    Detach(std::move(CurrentChunk));
-    while (!SealedChunks.Empty()) {
-        Detach(SealedChunks.PopFront());
+    auto* chunk = Returned->Head.exchange(Closed, std::memory_order_acq_rel);
+    while (chunk) {
+        auto* next = chunk->NextReturned;
+        delete chunk;
+        chunk = next;
     }
-    while (!UsedChunks.Empty()) {
-        Detach(UsedChunks.PopFront());
+    // From now on the last blob of a retired chunk frees it
+    Retire(std::move(CurrentChunk));
+    while (!SealedChunks.Empty()) {
+        Retire(SealedChunks.PopFront());
     }
 }
 
-void TZeroCopyEnvelopeReaderV2::Detach(std::unique_ptr<TChunk> chunk) {
-    // Live blobs still point into the chunk, the last blob deleter frees it
-    if (chunk->UseCount > 0) {
-        chunk.release()->Parent = nullptr;
+void TZeroCopyEnvelopeReaderV2::Retire(std::unique_ptr<TChunk> chunk) {
+    // Drops the reader reference, the chunk then belongs to its live blobs
+    if (chunk->UseCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        FreeChunks.emplace_back(std::move(chunk));
+    } else {
+        chunk.release();
+        ++RetiredChunks;
     }
+}
+
+// Pushes onto the return stack. No ABA: nothing pops single chunks, the reader takes the
+// whole stack with exchange, and a push only needs the current head to be its next.
+void TZeroCopyEnvelopeReaderV2::Return(TChunk* chunk) {
+    auto& head = chunk->Returned->Head;
+    auto* next = head.load(std::memory_order_relaxed);
+    do {
+        if (next == Closed) {
+            delete chunk;
+            return;
+        }
+        chunk->NextReturned = next;
+    } while (!head.compare_exchange_weak(next, chunk, std::memory_order_release, std::memory_order_relaxed));
+}
+
+void TZeroCopyEnvelopeReaderV2::Reclaim() {
+    auto* chunk = Returned->Head.exchange(nullptr, std::memory_order_acquire);
+    while (chunk) {
+        auto* next = chunk->NextReturned;
+        FreeChunks.emplace_back(chunk);
+        --RetiredChunks;
+        chunk = next;
+    }
+}
+
+int TZeroCopyEnvelopeReaderV2::UsedChunksCount() const {
+    // Only the reader takes chunks off the stack, so walking it here is safe
+    int returned = 0;
+    for (auto* chunk = Returned->Head.load(std::memory_order_acquire); chunk; chunk = chunk->NextReturned) {
+        ++returned;
+    }
+    return RetiredChunks - returned;
 }
 
 void TZeroCopyEnvelopeReaderV2::Rotate() {
-    if (CurrentChunk->Size() == 0 && CurrentChunk->UseCount == 0) {
+    // Only the reader adds blobs, so a count of 1 cannot grow concurrently
+    if (CurrentChunk->Size() == 0 && CurrentChunk->UseCount.load(std::memory_order_acquire) == 1) {
         CurrentChunk->Clear();
     } else {
         if (CurrentChunk->Size() == 0) {
-            UsedChunks.PushBack(std::move(CurrentChunk));
+            Retire(std::move(CurrentChunk));
         } else {
             SealedChunks.PushBack(std::move(CurrentChunk));
         }
         if (FreeChunks.empty()) {
-            CurrentChunk = std::make_unique<TChunk>(ChunkSize, this);
+            Reclaim();
+        }
+        if (FreeChunks.empty()) {
+            CurrentChunk = std::make_unique<TChunk>(ChunkSize, Returned);
         } else {
             CurrentChunk = std::move(FreeChunks.back());
             CurrentChunk->Clear();
+            CurrentChunk->UseCount.store(1, std::memory_order_relaxed);
             FreeChunks.pop_back();
         }
     }
@@ -238,9 +286,9 @@ void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
     Head = Tail = 0;
 }
 
-TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, TZeroCopyEnvelopeReaderV2* parent)
+TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, std::shared_ptr<TReturnStack> returned)
     : Data(size)
-    , Parent(parent)
+    , Returned(std::move(returned))
 { }
 
 std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::Acquire(size_t size) {
@@ -281,15 +329,6 @@ size_t TZeroCopyEnvelopeReaderV2::TChunk::Size() const {
     return Tail - Head;
 }
 
-void TZeroCopyEnvelopeReaderV2::ReleaseDrained(std::unique_ptr<TChunk> chunk) {
-    // Live blobs still point into the chunk, the blob deleter recycles it later
-    if (chunk->UseCount == 0) {
-        FreeChunks.emplace_back(std::move(chunk));
-    } else {
-        UsedChunks.PushBack(std::move(chunk));
-    }
-}
-
 template<size_t size>
 bool TZeroCopyEnvelopeReaderV2::CopyOut(char* buf) {
     if (!SealedChunks.Empty()) {
@@ -298,7 +337,7 @@ bool TZeroCopyEnvelopeReaderV2::CopyOut(char* buf) {
             return false;
         }
         if (chunk->CopyOut<size>(buf)) {
-            ReleaseDrained(SealedChunks.PopFront());
+            Retire(SealedChunks.PopFront());
         }
     } else {
         if (CurrentChunk->Size() < size) [[unlikely]] {
@@ -318,7 +357,7 @@ void TZeroCopyEnvelopeReaderV2::CopyOut(char* buf, size_t size) {
         auto sizeToCopy = std::min(size, chunk->Size());
         assert(sizeToCopy > 0);
         if (chunk->CopyOut(buf, sizeToCopy)) {
-            ReleaseDrained(SealedChunks.PopFront());
+            Retire(SealedChunks.PopFront());
         }
         buf += sizeToCopy;
         size -= sizeToCopy;
@@ -333,18 +372,11 @@ TBlob TZeroCopyEnvelopeReaderV2::ExtractBlob(TChunk& chunk, size_t size) {
     TBlob blob;
     blob.Size = size;
     blob.Type = TBlob::PointerType::Far;
-    ++chunk.UseCount;
+    // The reader holds a reference, so the count cannot drop to zero here
+    chunk.UseCount.fetch_add(1, std::memory_order_relaxed);
     blob.Data = TBlob::TRawPtr(chunk.Data.data() + chunk.Head, TBlobDeleter{[&chunk](void* ptr) {
-        if (--chunk.UseCount == 0) {
-            auto* self = chunk.Parent;
-            if (!self) {
-                delete &chunk;
-                return;
-            }
-            auto ref = self->UsedChunks.Erase(&chunk);
-            if (ref) {
-                self->FreeChunks.emplace_back(std::move(ref));
-            }
+        if (chunk.UseCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            Return(&chunk);
         }
     }});
     chunk.Head += size;
@@ -373,7 +405,7 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
                 auto* front = SealedChunks.Front();
                 blob = ExtractBlob(*front, Header.Size);
                 if (front->Size() == 0) {
-                    UsedChunks.PushBack(std::move(SealedChunks.PopFront()));
+                    Retire(SealedChunks.PopFront());
                 }
             } else if (SealedChunks.Empty() && CurrentChunk->Size() >= Header.Size) {
                 blob = ExtractBlob(*CurrentChunk, Header.Size);
