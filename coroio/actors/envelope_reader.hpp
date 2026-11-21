@@ -43,7 +43,7 @@ public:
     std::optional<TEnvelope> Pop();
     size_t Size() const;
     bool NeedMoreData() const {
-        return !HasHeader || Size() < Header.Size;
+        return !HasHeader || Size() < HeaderPadding(Header) + Header.Size;
     }
 
     // for testing purposes
@@ -72,6 +72,8 @@ private:
  * reader takes whole on its own thread. After the reader is destroyed the last
  * blob frees the chunk.
  * The reader itself is single-threaded.
+ * Chunk addresses are congruent to stream offsets modulo `MaxPayloadAlignment`,
+ * so a payload with `PayloadAlignment` is aligned in memory.
  */
 class TZeroCopyEnvelopeReaderV2 {
 public:
@@ -85,7 +87,7 @@ public:
         return CurrentSize;
     }
     bool NeedMoreData() const {
-        return !HasHeader || Size() < Header.Size;
+        return !HasHeader || Size() < HeaderPadding(Header) + Header.Size;
     }
 
     // for testing purposes
@@ -114,7 +116,7 @@ private:
     TBlob ExtractBlob(TChunk& chunk, size_t size);
 
     struct TChunk : TIntrusiveListNode<TChunk> {
-        TChunk(size_t size, std::shared_ptr<TReturnStack> returned);
+        TChunk(size_t size, uint64_t streamOffset, std::shared_ptr<TReturnStack> returned);
 
         std::span<char> TryAcquire(size_t size, size_t lowWatermark);
         std::span<char> Acquire(size_t size);
@@ -123,11 +125,14 @@ private:
         bool CopyOut(char* buf);
         bool CopyOut(char* buf, size_t size);
         size_t Size() const;
-        void Clear();
+        // Empties the chunk; its next byte gets an address congruent to streamOffset
+        void Clear(uint64_t streamOffset);
 
+        // The chunk size plus room to shift the start
         std::vector<char> Data;
         size_t Head = 0;
         size_t Tail = 0;
+        size_t End = 0;
         // Live blobs, plus one reference of the reader until the chunk is drained
         std::atomic<int> UseCount = 1;
         TChunk* NextReturned = nullptr;
@@ -138,6 +143,10 @@ private:
     const size_t ChunkSize;
     const size_t LowWatermark;
     size_t CurrentSize = 0;
+    // Bytes committed since the start of the stream
+    uint64_t StreamOffset = 0;
+    // Takes the padding; a buffer on the stack would add a stack protector check to Pop
+    char Skipped[MaxPayloadAlignment];
     THeader Header;
     bool HasHeader = false;
     std::shared_ptr<TReturnStack> Returned;
