@@ -16,11 +16,13 @@ void TEnvelopeReader::Process() {
             HasHeader = true;
         }
 
-        if (HasHeader && Buffer.size() >= Header.Size) {
+        const size_t padding = HeaderPadding(Header);
+        if (HasHeader && Buffer.size() >= padding + Header.Size) {
+            Buffer.erase(Buffer.begin(), Buffer.begin() + padding);
             TEnvelope envelope;
             envelope.Sender = Header.Sender;
             envelope.Recipient = Header.Recipient;
-            envelope.MessageId = Header.MessageId;
+            envelope.MessageId = HeaderMessageId(Header);
 
             if (Header.Size > 0) {
                 auto& blob = envelope.Blob;
@@ -106,11 +108,16 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReader::Pop()
 {
     TryReadHeader();
 
-    if (HasHeader && Size() >= Header.Size) {
+    const size_t padding = HeaderPadding(Header);
+    if (HasHeader && Size() >= padding + Header.Size) {
+        // A branch keeps the Head update off the path of unpadded frames
+        if (padding > 0) {
+            Head = (Head + padding) & LastIndex;
+        }
         TEnvelope envelope;
         envelope.Sender = Header.Sender;
         envelope.Recipient = Header.Recipient;
-        envelope.MessageId = Header.MessageId;
+        envelope.MessageId = HeaderMessageId(Header);
 
         if (Header.Size > 0) {
             auto& blob = envelope.Blob;
@@ -169,7 +176,7 @@ TZeroCopyEnvelopeReaderV2::TZeroCopyEnvelopeReaderV2(size_t chunkSize, size_t lo
     : ChunkSize(chunkSize)
     , LowWatermark(lowWatermark)
     , Returned(std::make_shared<TReturnStack>())
-    , CurrentChunk(std::make_unique<TChunk>(ChunkSize, Returned))
+    , CurrentChunk(std::make_unique<TChunk>(ChunkSize, StreamOffset, Returned))
     , SealedChunks(1)
 { }
 
@@ -236,7 +243,7 @@ int TZeroCopyEnvelopeReaderV2::UsedChunksCount() const {
 void TZeroCopyEnvelopeReaderV2::Rotate() {
     // Only the reader adds blobs, so a count of 1 cannot grow concurrently
     if (CurrentChunk->Size() == 0 && CurrentChunk->UseCount.load(std::memory_order_acquire) == 1) {
-        CurrentChunk->Clear();
+        CurrentChunk->Clear(StreamOffset);
     } else {
         if (CurrentChunk->Size() == 0) {
             Retire(std::move(CurrentChunk));
@@ -247,10 +254,10 @@ void TZeroCopyEnvelopeReaderV2::Rotate() {
             Reclaim();
         }
         if (FreeChunks.empty()) {
-            CurrentChunk = std::make_unique<TChunk>(ChunkSize, Returned);
+            CurrentChunk = std::make_unique<TChunk>(ChunkSize, StreamOffset, Returned);
         } else {
             CurrentChunk = std::move(FreeChunks.back());
-            CurrentChunk->Clear();
+            CurrentChunk->Clear(StreamOffset);
             CurrentChunk->UseCount.store(1, std::memory_order_relaxed);
             FreeChunks.pop_back();
         }
@@ -269,6 +276,7 @@ std::span<char> TZeroCopyEnvelopeReaderV2::Acquire(size_t size) {
 void TZeroCopyEnvelopeReaderV2::Commit(size_t size) {
     CurrentChunk->Commit(size);
     CurrentSize += size;
+    StreamOffset += size;
 }
 
 void TZeroCopyEnvelopeReaderV2::Push(const char* p, size_t len)
@@ -282,22 +290,26 @@ void TZeroCopyEnvelopeReaderV2::Push(const char* p, size_t len)
     }
 }
 
-void TZeroCopyEnvelopeReaderV2::TChunk::Clear() {
-    Head = Tail = 0;
+void TZeroCopyEnvelopeReaderV2::TChunk::Clear(uint64_t streamOffset) {
+    constexpr size_t mask = MaxPayloadAlignment - 1;
+    Head = Tail = (streamOffset - reinterpret_cast<uintptr_t>(Data.data())) & mask;
+    End = Head + Data.size() - mask;
 }
 
-TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, std::shared_ptr<TReturnStack> returned)
-    : Data(size)
+TZeroCopyEnvelopeReaderV2::TChunk::TChunk(size_t size, uint64_t streamOffset, std::shared_ptr<TReturnStack> returned)
+    : Data(size + MaxPayloadAlignment - 1)
     , Returned(std::move(returned))
-{ }
+{
+    Clear(streamOffset);
+}
 
 std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::Acquire(size_t size) {
-    size = std::min(size, Data.size() - Tail);
+    size = std::min(size, End - Tail);
     return {&Data[Tail], size};
 }
 
 std::span<char> TZeroCopyEnvelopeReaderV2::TChunk::TryAcquire(size_t size, size_t lowWatermark) {
-    auto resultSize = std::min(size, Data.size() - Tail);
+    auto resultSize = std::min(size, End - Tail);
     if (resultSize == size) {
         return Acquire(size);
     }
@@ -310,7 +322,7 @@ void TZeroCopyEnvelopeReaderV2::TChunk::Commit(size_t size) {
 
 template<size_t size>
 bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf) {
-    assert (Data.size() - Head >= size);
+    assert (End - Head >= size);
     std::memcpy(buf, &Data[Head], size);
     Head = Head + size;
     assert (Head <= Tail);
@@ -318,7 +330,7 @@ bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf) {
 }
 
 bool TZeroCopyEnvelopeReaderV2::TChunk::CopyOut(char* buf, size_t size) {
-    assert (Data.size() - Head >= size);
+    assert (End - Head >= size);
     std::memcpy(buf, &Data[Head], size);
     Head = Head + size;
     assert (Head <= Tail);
@@ -393,11 +405,15 @@ std::optional<TEnvelope> TZeroCopyEnvelopeReaderV2::Pop() {
         HasHeader = true;
     }
 
-    if (HasHeader && CurrentSize >= Header.Size) {
+    const size_t padding = HeaderPadding(Header);
+    if (HasHeader && CurrentSize >= padding + Header.Size) {
+        if (padding > 0) {
+            CopyOut(Skipped, padding);
+        }
         TEnvelope envelope;
         envelope.Sender = Header.Sender;
         envelope.Recipient = Header.Recipient;
-        envelope.MessageId = Header.MessageId;
+        envelope.MessageId = HeaderMessageId(Header);
 
         if (Header.Size > 0) {
             auto& blob = envelope.Blob;

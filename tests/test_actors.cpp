@@ -582,6 +582,10 @@ struct TVectorStream {
     void Commit(size_t size) {
         Committed += size;
     }
+
+    uint64_t Offset() const {
+        return Committed;
+    }
 };
 
 void test_serialize_far_inplace_round_trip(void**) {
@@ -1875,6 +1879,238 @@ void test_far_message_across_yield(void**) {
     assert_string_equal(received[1].c_str(), "tail");
 }
 
+// Payloads that ask for 16-byte alignment on the wire
+struct TAlignedPod {
+    static constexpr TMessageId MessageId = 47;
+    static constexpr size_t PayloadAlignment = 16;
+    uint64_t Values[3];
+};
+
+struct TAlignedBytes {
+    static constexpr TMessageId MessageId = 48;
+    static constexpr size_t PayloadAlignment = 16;
+    std::string Value;
+};
+
+struct TPlainPod {
+    static constexpr TMessageId MessageId = 49;
+    uint64_t Values[2];
+};
+
+namespace NNet::NActors {
+
+template<>
+size_t SerializedSize<TAlignedBytes>(const TAlignedBytes& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TAlignedBytes>(const TAlignedBytes& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+} // namespace NNet::NActors
+
+struct TExpectedFrame {
+    TMessageId MessageId;
+    std::string Payload;
+    bool Aligned;
+};
+
+// Rounds of: a string of 0..40 bytes, an aligned POD, aligned bytes of 1..60 bytes
+template<typename TStream>
+static void WriteAlignedFrames(TStream& stream, int rounds, std::mt19937& rng, std::vector<TExpectedFrame>& frames) {
+    const TActorId sender(1, 1, 1);
+    const TActorId recipient(1, 2, 2);
+    for (int r = 0; r < rounds; ++r) {
+        std::string text(rng() % 41, static_cast<char>('a' + r % 26));
+        SerializeFarInplace<TWrappedString>(stream, sender, recipient, text);
+        frames.push_back({TWrappedString::MessageId, text, false});
+        const TAlignedPod pod{{uint64_t(r), uint64_t(r) * 3, uint64_t(r) * 7}};
+        SerializeFarInplace<TAlignedPod>(stream, sender, recipient, pod);
+        frames.push_back({TAlignedPod::MessageId, std::string(reinterpret_cast<const char*>(&pod), sizeof(pod)), true});
+        std::string bytes(1 + rng() % 60, static_cast<char>('A' + r % 26));
+        SerializeFarInplace<TAlignedBytes>(stream, sender, recipient, TAlignedBytes{bytes});
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+    }
+}
+
+static void CheckAlignedFrames(const std::vector<TEnvelope>& envelopes, const std::vector<TExpectedFrame>& frames) {
+    assert_int_equal(envelopes.size(), frames.size());
+    for (size_t i = 0; i < frames.size(); ++i) {
+        const auto& e = envelopes[i];
+        assert_int_equal(e.MessageId, frames[i].MessageId);
+        assert_int_equal(e.Blob.Size, frames[i].Payload.size());
+        if (e.Blob.Size > 0) {
+            assert_memory_equal(e.Blob.Data.get(), frames[i].Payload.data(), e.Blob.Size);
+            if (frames[i].Aligned) {
+                assert_int_equal(reinterpret_cast<uintptr_t>(e.Blob.Data.get()) % 16, 0);
+            }
+        }
+    }
+}
+
+// Commits the stream in pieces of 1..maxPiece bytes and pops all envelopes
+template<typename TReader>
+static std::vector<TEnvelope> ReadInPieces(TReader& reader, const char* data, size_t size, size_t maxPiece, std::mt19937& rng) {
+    std::vector<TEnvelope> envelopes;
+    size_t pos = 0;
+    while (pos < size) {
+        const size_t piece = std::min<size_t>(1 + rng() % maxPiece, size - pos);
+        auto buf = reader.Acquire(piece);
+        const size_t n = std::min(piece, buf.size());
+        std::memcpy(buf.data(), data + pos, n);
+        reader.Commit(n);
+        pos += n;
+        while (auto e = reader.Pop()) {
+            envelopes.push_back(std::move(*e));
+        }
+    }
+    return envelopes;
+}
+
+void test_payload_alignment_v2(void**) {
+    std::mt19937 rng(11);
+    for (size_t chunkSize : {64, 100, 129, 256, 1000, 4096}) {
+        // A leading string of 0..15 bytes shifts every later frame
+        for (int shift = 0; shift < 16; ++shift) {
+            TVectorStream stream;
+            std::vector<TExpectedFrame> frames;
+            std::string lead(shift, 'z');
+            SerializeFarInplace<TWrappedString>(stream, TActorId(1, 1, 1), TActorId(1, 2, 2), lead);
+            frames.push_back({TWrappedString::MessageId, lead, false});
+            WriteAlignedFrames(stream, 50, rng, frames);
+
+            TZeroCopyEnvelopeReaderV2 reader(chunkSize, 8);
+            auto envelopes = ReadInPieces(reader, stream.Data.data(), stream.Committed, chunkSize, rng);
+            CheckAlignedFrames(envelopes, frames);
+        }
+    }
+}
+
+void test_payload_alignment_v1_and_plain_reader(void**) {
+    std::mt19937 rng(12);
+    TVectorStream stream;
+    std::vector<TExpectedFrame> frames;
+    WriteAlignedFrames(stream, 200, rng, frames);
+
+    TZeroCopyEnvelopeReader v1(64);
+    CheckAlignedFrames(ReadInPieces(v1, stream.Data.data(), stream.Committed, 300, rng), frames);
+
+    TEnvelopeReader plain;
+    plain.Push(stream.Data.data(), stream.Committed);
+    std::vector<TEnvelope> envelopes;
+    while (auto e = plain.Pop()) {
+        envelopes.push_back(std::move(*e));
+    }
+    CheckAlignedFrames(envelopes, frames);
+}
+
+void test_payload_alignment_wire_format(void**) {
+    const TActorId sender(1, 2, 3);
+    const TActorId recipient(2, 5, 7);
+    TVectorStream stream;
+    // The stream offset is not a multiple of 16
+    stream.Acquire(3);
+    stream.Commit(3);
+
+    // A type without PayloadAlignment: the header and the payload, as before
+    SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string("abc"));
+    const THeader plain{sender, recipient, TWrappedString::MessageId, 3};
+    assert_int_equal(stream.Committed, 3 + sizeof(THeader) + 3);
+    assert_memory_equal(stream.Data.data() + 3, &plain, sizeof(plain));
+    assert_memory_equal(stream.Data.data() + 3 + sizeof(THeader), "abc", 3);
+
+    const TPlainPod pod{{1, 2}};
+    const size_t podStart = stream.Committed;
+    SerializeFarInplace<TPlainPod>(stream, sender, recipient, pod);
+    const THeader podHeader{sender, recipient, TPlainPod::MessageId, sizeof(TPlainPod)};
+    assert_int_equal(stream.Committed, podStart + sizeof(THeader) + sizeof(TPlainPod));
+    assert_memory_equal(stream.Data.data() + podStart, &podHeader, sizeof(podHeader));
+    assert_memory_equal(stream.Data.data() + podStart + sizeof(THeader), &pod, sizeof(pod));
+
+    // An aligned type: zero padding up to the next multiple of 16, its length in the top bits of the id
+    const size_t start = stream.Committed;
+    SerializeFarInplace<TAlignedBytes>(stream, sender, recipient, TAlignedBytes{"xyz"});
+    const uint32_t padding = (16 - (start + sizeof(THeader)) % 16) % 16;
+    assert_true(padding > 0);
+    const THeader aligned{sender, recipient, TAlignedBytes::MessageId | (padding << 28), 3};
+    assert_int_equal(stream.Committed, start + sizeof(THeader) + padding + 3);
+    assert_memory_equal(stream.Data.data() + start, &aligned, sizeof(aligned));
+    for (uint32_t i = 0; i < padding; ++i) {
+        assert_int_equal(stream.Data[start + sizeof(THeader) + i], 0);
+    }
+    assert_int_equal((start + sizeof(THeader) + padding) % 16, 0);
+    assert_memory_equal(stream.Data.data() + start + sizeof(THeader) + padding, "xyz", 3);
+}
+
+// TNode pads relative to its own stream offset, across several drains and both send paths
+void test_node_aligns_payloads(void**) {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    factory.RegisterSerializer<TAlignedBytes>();
+    TAllocator alloc;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    INode& stream = node;
+
+    std::mt19937 rng(13);
+    std::vector<TExpectedFrame> frames;
+    for (int batch = 0; batch < 3; ++batch) {
+        WriteAlignedFrames(stream, 10, rng, frames);
+        std::string bytes(1 + rng() % 60, 'e');
+        node.Send(TEnvelope{
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TAlignedBytes::MessageId,
+            .Blob = SerializeNear<TAlignedBytes>(alloc, bytes),
+        });
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+        node.Drain();
+        const auto until = TClock::now() + std::chrono::milliseconds(100);
+        while (TClock::now() < until) {
+            loop.Step();
+        }
+    }
+
+    // Reads like InboundConnection, in small pieces
+    TZeroCopyEnvelopeReaderV2 reader(256, 8);
+    std::vector<TEnvelope> envelopes;
+    auto server = [](TPoller::TSocket& listener, TZeroCopyEnvelopeReaderV2& reader, std::vector<TEnvelope>& envelopes, size_t count) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        while (envelopes.size() < count) {
+            auto buf = reader.Acquire(64);
+            auto size = co_await client.ReadSome(buf.data(), buf.size());
+            if (size < 0) {
+                continue;
+            }
+            if (size == 0) {
+                break;
+            }
+            reader.Commit(size);
+            while (auto e = reader.Pop()) {
+                envelopes.push_back(std::move(*e));
+            }
+        }
+    }(listener, reader, envelopes, frames.size());
+
+    const auto deadline = TClock::now() + std::chrono::seconds(10);
+    while (envelopes.size() < frames.size() && TClock::now() < deadline) {
+        loop.Step();
+    }
+    CheckAlignedFrames(envelopes, frames);
+}
+
 void test_intrusive_list_stale_tag(void**) {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
@@ -1970,6 +2206,10 @@ int main(int argc, char** argv) {
     ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
     ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
     ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
+    ADD_TEST(cmocka_unit_test, test_payload_alignment_v2);
+    ADD_TEST(cmocka_unit_test, test_payload_alignment_v1_and_plain_reader);
+    ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
+    ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
 
     return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
 }
