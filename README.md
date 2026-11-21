@@ -394,6 +394,7 @@ Methodology from [libevent](https://libevent.org). Two tests: (1) one active con
 
 Ring topology: N actors forwarding a message around the ring M times. Seed messages not counted.
 Numbers are the mean of 2-3 runs; Ydb/actors and Erlang were measured with benchmarks written from scratch.
+Ydb/actors: [ydb-platform/ydb](https://github.com/ydb-platform/ydb) at commit `9f0a267dfd4` (2026-11-21), 1 executor thread (`TBasicExecutorPool`), `TMailboxType::HTSwap` mailboxes; distributed runs use the interconnect over TCP on localhost.
 
 **i5-11400F · Ubuntu**
 
@@ -405,14 +406,14 @@ Local ring (100 actors, batch 1024):
 | **Coroio** | **442,151** |
 | Caf | 302,930 |
 | Erlang | 221,000 |
-| Ydb/actors | 92,500 |
+| Ydb/actors | 92,000 |
 
 Distributed ring (10 processes, batch 1024, payload 0 bytes):
 
 | Framework | msg/s |
 |---|---|
 | **Coroio** | **1,137,790** |
-| Ydb/actors | 365,000 |
+| Ydb/actors | 314,000 |
 | Erlang | 120,000 |
 | Caf | 55,540 |
 | Akka | 5,765 |
@@ -422,7 +423,7 @@ Distributed ring (10 processes, batch 1024, payload 1024 bytes):
 | Framework | msg/s |
 |---|---|
 | **Coroio** | **860,188** |
-| Ydb/actors | 372,000 |
+| Ydb/actors | 247,000 |
 | Erlang | 77,000 |
 
 ---
