@@ -21,6 +21,8 @@
 
 #ifndef _WIN32
 #include <sys/resource.h>
+#include <sys/mman.h>
+#include <dirent.h>
 #else
 #include <fcntl.h> // for _O_BINARY
 #endif
@@ -2824,30 +2826,198 @@ void test_uring_close_cancels_after_finished_operations(void**) {
 }
 
 // The two linked SQEs of a close are never split, even on the smallest queue.
+// With 256 entries the cancelled reads and the closes are more deferred task
+// work than one wait runs: the Wait() that cancels the reads runs the closes too.
 void test_uring_closes_on_small_queues(void**) {
-    for (int size : {1, 8}) {
+    for (int size : {1, 8, 256}) {
         TUring uring(size);
-        int fds[20][2];
+        constexpr int count = 40;
+        int fds[count][2];
         std::vector<std::unique_ptr<TUring::TFileHandle>> handles;
         for (auto& pair : fds) {
             assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
             handles.push_back(std::make_unique<TUring::TFileHandle>(pair[0], uring));
         }
-        char buf[1] = {0};
-        int result = 0;
-        auto read = IoResult(*handles[0], false, buf, 1, &result);
+        char bufs[count] = {};
+        int results[count] = {};
+        std::vector<TFuture<void>> reads;
+        for (int i = 0; i < count; i++) {
+            reads.push_back(IoResult(*handles[i], false, &bufs[i], 1, &results[i]));
+        }
         uring.Wait({0, 0});
         handles.clear();
-        for (int i = 0; i < 100 && !read.done(); i++) {
+        auto waiting = [&]() {
+            for (auto& read : reads) {
+                if (!read.done()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (int i = 0; i < 100 && waiting(); i++) {
             uring.Wait({0, 1000000});
             uring.WakeupReadyHandles();
         }
-        assert_int_equal(result, -ECANCELED);
-        for (auto& pair : fds) {
-            assert_true(IsClosed(pair[0]));
-            close(pair[1]);
+        for (int i = 0; i < count; i++) {
+            assert_int_equal(results[i], -ECANCELED);
+            assert_true(IsClosed(fds[i][0]));
+            close(fds[i][1]);
         }
     }
+}
+
+// The destructor runs the closes prepared by a Wait() that threw, here in
+// another thread (SINGLE_ISSUER), before the ring's exit would cancel them.
+void test_uring_destroyed_after_failed_wait(void**) {
+    constexpr int count = 30;
+    int fds[count][2];
+    char bufs[count] = {};
+    TUring::TOperation ops[count];
+    {
+        TUring uring(256);
+        for (int i = 0; i < count; i++) {
+            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds[i]), 0);
+            ops[i].Handle = std::noop_coroutine();
+            uring.Read(fds[i][0], &bufs[i], 1, ops[i]);
+        }
+        uring.Wait({0, 0});
+        for (auto& pair : fds) {
+            uring.Close(pair[0], TEvent::CLOSE_SOCKET);
+        }
+        int error = 0;
+        std::thread([&]() {
+            try {
+                uring.Wait({0, 0});
+            } catch (const std::system_error& ex) {
+                error = ex.code().value();
+            }
+        }).join();
+        assert_int_equal(error, EEXIST);
+    }
+    for (auto& pair : fds) {
+        assert_true(IsClosed(pair[0]));
+        close(pair[1]);
+    }
+}
+
+// A poller constructed in one thread runs in another: the ring is bound to the
+// thread of its first kernel entry. A ring never entered is destroyed as is.
+void test_uring_runs_in_another_thread(void**) {
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    {
+        TUring uring(256);
+        TUring::TFileHandle in(p[0], uring);
+        char buf[1] = {0};
+        int got = 0;
+        auto reader = IoResult(in, false, buf, 1, &got); // dropped before it is submitted
+    }
+    assert_true(IsClosed(p[0]));
+    close(p[1]);
+
+    TLoop<TUring> loop;
+    assert_int_equal(pipe(p), 0);
+    char buf[1] = {0};
+    char data[1] = {'x'};
+    int got = 0;
+    int put = 0;
+    int error = 0;
+    std::thread([&]() {
+        try {
+            {
+                TUring::TFileHandle in(p[0], loop.Poller());
+                TUring::TFileHandle out(p[1], loop.Poller());
+                auto reader = IoResult(in, false, buf, 1, &got);
+                auto writer = IoResult(out, true, data, 1, &put);
+                for (int i = 0; i < 100 && !(reader.done() && writer.done()); i++) {
+                    loop.Step();
+                }
+            }
+            loop.Step(); // the closes
+        } catch (const std::system_error& ex) {
+            error = ex.code().value();
+        }
+    }).join();
+    assert_int_equal(error, 0);
+    assert_int_equal(put, 1);
+    assert_int_equal(got, 1);
+    assert_int_equal(buf[0], 'x');
+    assert_true(IsClosed(p[0]));
+    assert_true(IsClosed(p[1]));
+}
+
+// IORING_SQ_TASKRUN may stay set after the work it announced ran: a producer
+// sets it after the waiter ran that work. Wait() must not spin on it. The flag
+// is set by hand here, through a second mapping of the ring.
+void test_uring_wait_with_stale_taskrun_flag(void**) {
+    using namespace std::chrono_literals;
+    TUring uring(256);
+    uring.Wait({0, 0});
+    int ringFd = -1; // the newest ring is this one
+    if (DIR* dir = opendir("/proc/self/fd")) {
+        while (dirent* entry = readdir(dir)) {
+            char link[64] = {};
+            std::string path = std::string("/proc/self/fd/") + entry->d_name;
+            if (readlink(path.c_str(), link, sizeof(link) - 1) > 0 && !strcmp(link, "anon_inode:[io_uring]")) {
+                ringFd = std::max(ringFd, atoi(entry->d_name));
+            }
+        }
+        closedir(dir);
+    }
+    assert_true(ringFd >= 0);
+    io_uring probe;
+    io_uring_params params = {};
+    assert_int_equal(io_uring_queue_init_params(2, &probe, &params), 0); // for the offset of the flags
+    io_uring_queue_exit(&probe);
+    void* rings = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, ringFd, IORING_OFF_SQ_RING);
+    assert_true(rings != MAP_FAILED);
+    static unsigned* flags;
+    flags = reinterpret_cast<unsigned*>(static_cast<char*>(rings) + params.sq_off.flags);
+    __atomic_fetch_or(flags, IORING_SQ_TASKRUN, __ATOMIC_SEQ_CST);
+    // A wait that spins on the flag ends only when the alarm clears it.
+    struct sigaction action = {}, saved;
+    action.sa_handler = [](int) {
+        __atomic_fetch_and(flags, ~IORING_SQ_TASKRUN, __ATOMIC_SEQ_CST);
+    };
+    sigaction(SIGALRM, &action, &saved);
+    alarm(3);
+    auto start = TClock::now();
+    uring.Wait({0, 0});
+    auto elapsed = TClock::now() - start;
+    alarm(0);
+    sigaction(SIGALRM, &saved, nullptr);
+    munmap(rings, 4096);
+    assert_true(elapsed < 1s);
+}
+
+// A wait with a timeout returns at the timeout when nothing completes, and
+// early when a write in another thread completes a read: its task work is
+// deferred to the wait, which runs it.
+void test_uring_wait_timeout_with_deferred_completion(void**) {
+    using namespace std::chrono_literals;
+    TUring uring(256);
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    char c = 0;
+    TUring::TOperation op;
+    op.Handle = std::noop_coroutine();
+    uring.Read(p[0], &c, 1, op);
+    auto start = TClock::now();
+    assert_int_equal(uring.Wait({0, 50000000}), 0);
+    assert_true(TClock::now() - start >= 40ms);
+    std::thread writer([&]() {
+        std::this_thread::sleep_for(100ms);
+        assert_int_equal(write(p[1], "x", 1), 1);
+    });
+    start = TClock::now();
+    assert_int_equal(uring.Wait({5, 0}), 1);
+    assert_true(TClock::now() - start < 4s);
+    writer.join();
+    uring.WakeupReadyHandles();
+    assert_int_equal(op.Result, 1);
+    assert_int_equal(c, 'x');
+    close(p[0]);
+    close(p[1]);
 }
 #endif
 
@@ -4345,6 +4515,10 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_only_its_operations);
     ADD_TEST(cmocka_unit_test, test_uring_close_cancels_after_finished_operations);
     ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
+    ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_failed_wait);
+    ADD_TEST(cmocka_unit_test, test_uring_runs_in_another_thread);
+    ADD_TEST(cmocka_unit_test, test_uring_wait_timeout_with_deferred_completion);
+    ADD_TEST(cmocka_unit_test, test_uring_wait_with_stale_taskrun_flag);
 #endif
 #endif
 #ifdef _WIN32
