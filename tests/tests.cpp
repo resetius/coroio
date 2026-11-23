@@ -2047,19 +2047,24 @@ namespace {
 std::string TempFile(const std::string& content) {
     char dir[MAX_PATH];
     char path[MAX_PATH];
-    ASSERT_TRUE(GetTempPathA(sizeof(dir), dir) > 0);
-    ASSERT_TRUE(GetTempFileNameA(dir, "cio", 0, path) != 0);
+    EXPECT_TRUE(GetTempPathA(sizeof(dir), dir) > 0);
+    EXPECT_TRUE(GetTempFileNameA(dir, "cio", 0, path) != 0);
     FILE* f = fopen(path, "wb");
-    ASSERT_NE(f, nullptr);
-    ASSERT_EQ(fwrite(content.data(), 1, content.size(), f), content.size());
-    fclose(f);
+    EXPECT_NE(f, nullptr);
+    if (f) {
+        EXPECT_EQ(fwrite(content.data(), 1, content.size(), f), content.size());
+        fclose(f);
+    }
     return path;
 }
 
 std::string FileContent(const std::string& path) {
     std::string content;
     FILE* f = fopen(path.c_str(), "rb");
-    ASSERT_NE(f, nullptr);
+    EXPECT_NE(f, nullptr);
+    if (!f) {
+        return content;
+    }
     char buf[256];
     while (size_t n = fread(buf, 1, sizeof(buf), f)) {
         content.append(buf, n);
@@ -2076,12 +2081,12 @@ int OpenFile(const std::string& path, bool overlapped, bool append = false) {
         // GENERIC_WRITE has FILE_WRITE_DATA, with which overlapped writes do not append.
         DWORD access = append ? FILE_APPEND_DATA : GENERIC_READ | GENERIC_WRITE;
         HANDLE h = CreateFileA(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
-        ASSERT_TRUE(h != INVALID_HANDLE_VALUE);
+        EXPECT_TRUE(h != INVALID_HANDLE_VALUE);
         fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), 0);
     } else {
         fd = _open(path.c_str(), (append ? _O_WRONLY | _O_APPEND : _O_RDWR) | _O_BINARY);
     }
-    ASSERT_TRUE(fd >= 0);
+    EXPECT_TRUE(fd >= 0);
     return fd;
 }
 
