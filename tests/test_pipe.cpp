@@ -2,9 +2,7 @@
 #include <array>
 #include <exception>
 #include <sstream>
-#include <stdarg.h>
 #include <stddef.h>
-#include <setjmp.h>
 #include <signal.h>
 #include <errno.h>
 #include <iostream>
@@ -16,14 +14,10 @@
 #include "testlib.h"
 #include "perf.h"
 
-extern "C" {
-#include <cmocka.h>
-}
-
 using namespace NNet;
 
 #ifndef _WIN32
-void test_pipe_basic_read_write(void**) {
+void test_pipe_basic_read_write() {
     TLoop<TDefaultPoller> loop;
     auto& poller = loop.Poller();
     std::string catPath = "/bin/cat";
@@ -53,11 +47,11 @@ void test_pipe_basic_read_write(void**) {
         loop.Step();
     }
 
-    assert_true(bytesRead == sizeof(testData));
-    assert_true(memcmp(buffer, testData, sizeof(testData)) == 0);
+    ASSERT_TRUE(bytesRead == sizeof(testData));
+    ASSERT_TRUE(memcmp(buffer, testData, sizeof(testData)) == 0);
 }
 
-void test_pipe_read_stderr(void**) {
+void test_pipe_read_stderr() {
     TLoop<TDefaultPoller> loop;
     auto& poller = loop.Poller();
     std::string bashPath = "/bin/bash";
@@ -78,11 +72,11 @@ void test_pipe_read_stderr(void**) {
     }
 
     const char expected[] = "error message\n";
-    assert_true(bytesRead == sizeof(expected)-1);
-    assert_true(memcmp(buffer, expected, sizeof(expected)-1) == 0);
+    ASSERT_TRUE(bytesRead == sizeof(expected)-1);
+    ASSERT_TRUE(memcmp(buffer, expected, sizeof(expected)-1) == 0);
 }
 
-void test_pipe_merge_stderr_into_stdout(void**) {
+void test_pipe_merge_stderr_into_stdout() {
     TLoop<TDefaultPoller> loop;
     auto& poller = loop.Poller();
     std::string bashPath = "/bin/bash";
@@ -104,11 +98,11 @@ void test_pipe_merge_stderr_into_stdout(void**) {
     }
 
     const char expected[] = "err to out\n";
-    assert_true(bytesRead == sizeof(expected)-1);
-    assert_true(memcmp(buffer, expected, sizeof(expected)-1) == 0);
+    ASSERT_TRUE(bytesRead == sizeof(expected)-1);
+    ASSERT_TRUE(memcmp(buffer, expected, sizeof(expected)-1) == 0);
 }
 
-void test_pipe_kill_then_read(void**) {
+void test_pipe_kill_then_read() {
     TLoop<TDefaultPoller> loop;
     auto& poller = loop.Poller();
     std::string sleepPath = "/bin/sleep";
@@ -116,10 +110,10 @@ void test_pipe_kill_then_read(void**) {
     TPipe pipe(poller, sleepPath, {"5"});
 
     int pid = pipe.Pid();
-    assert_true(pid > 0);
+    ASSERT_TRUE(pid > 0);
 
     int rc = kill(pid, SIGKILL);
-    assert_true(rc == 0 || errno == ESRCH);
+    ASSERT_TRUE(rc == 0 || errno == ESRCH);
 
     // Attempt to read from stdout; should observe EOF (0 bytes)
     char buffer[8] = {};
@@ -137,24 +131,24 @@ void test_pipe_kill_then_read(void**) {
         loop.Step();
     }
 
-    assert_true(bytesRead == 0);
+    ASSERT_TRUE(bytesRead == 0);
 }
 
-void test_pipe_wait_clears_pid(void**) {
+void test_pipe_wait_clears_pid() {
     TLoop<TDefaultPoller> loop;
     auto& poller = loop.Poller();
     std::string shPath = "/bin/sh";
     TPipe pipe(poller, shPath, {"-c", "exit 5"});
 
-    assert_true(pipe.Pid() > 0);
-    assert_int_equal(pipe.Wait(), 5);
-    assert_int_equal(pipe.Pid(), -1);
-    assert_int_equal(pipe.Wait(), -1);
+    ASSERT_TRUE(pipe.Pid() > 0);
+    ASSERT_EQ(pipe.Wait(), 5);
+    ASSERT_EQ(pipe.Pid(), -1);
+    ASSERT_EQ(pipe.Wait(), -1);
 }
 
 static void NoopSignalHandler(int) { }
 
-void test_pipe_wait_interrupted(void**) {
+void test_pipe_wait_interrupted() {
     TLoop<TDefaultPoller> loop;
     auto& poller = loop.Poller();
     std::string shPath = "/bin/sh";
@@ -163,19 +157,19 @@ void test_pipe_wait_interrupted(void**) {
     struct sigaction sa = {}, old = {};
     sa.sa_handler = NoopSignalHandler;
     sigemptyset(&sa.sa_mask);
-    assert_int_equal(sigaction(SIGALRM, &sa, &old), 0);
+    ASSERT_EQ(sigaction(SIGALRM, &sa, &old), 0);
 
     TPipe pipe(poller, shPath, {"-c", "sleep 1; exit 7"});
     ualarm(100000, 0);
     int rc = pipe.Wait();
     sigaction(SIGALRM, &old, nullptr);
 
-    assert_int_equal(rc, 7);
-    assert_int_equal(pipe.Pid(), -1);
+    ASSERT_EQ(rc, 7);
+    ASSERT_EQ(pipe.Pid(), -1);
 }
 
 template<typename TPoller>
-void test_pipe_async_wait(void**) {
+void test_pipe_async_wait() {
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
     std::string shPath = "/bin/sh";
@@ -201,31 +195,29 @@ void test_pipe_async_wait(void**) {
         loop.Step();
     }
 
-    assert_int_equal(exitCode, 3);
-    assert_true(ticks > 5);
-    assert_int_equal(pipe.Pid(), -1);
+    ASSERT_EQ(exitCode, 3);
+    ASSERT_TRUE(ticks > 5);
+    ASSERT_EQ(pipe.Pid(), -1);
 }
 
-#define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
+#define my_unit_test(f, a) RegisterTest(#f, #a, f<a>)
 
 #endif // _WIN32
+
+#define TEST_SUITE_NAME "test_pipe"
 
 int main(int argc, char** argv) {
     TInitializer init;
 
-    std::vector<CMUnitTest> tests;
-    std::unordered_set<std::string> filters;
-    tests.reserve(500);
-
-    parse_filters(argc, argv, filters);
+    testing::InitGoogleTest(&argc, argv);
 
 #ifndef _WIN32
-    ADD_TEST(cmocka_unit_test, test_pipe_basic_read_write);
-    ADD_TEST(cmocka_unit_test, test_pipe_read_stderr);
-    ADD_TEST(cmocka_unit_test, test_pipe_merge_stderr_into_stdout);
-    ADD_TEST(cmocka_unit_test, test_pipe_kill_then_read);
-    ADD_TEST(cmocka_unit_test, test_pipe_wait_clears_pid);
-    ADD_TEST(cmocka_unit_test, test_pipe_wait_interrupted);
+    ADD_TEST(unit_test, test_pipe_basic_read_write);
+    ADD_TEST(unit_test, test_pipe_read_stderr);
+    ADD_TEST(unit_test, test_pipe_merge_stderr_into_stdout);
+    ADD_TEST(unit_test, test_pipe_kill_then_read);
+    ADD_TEST(unit_test, test_pipe_wait_clears_pid);
+    ADD_TEST(unit_test, test_pipe_wait_interrupted);
     ADD_TEST(my_unit_test, test_pipe_async_wait, TSelect);
     ADD_TEST(my_unit_test, test_pipe_async_wait, TPoll);
 #ifdef __linux__
@@ -239,5 +231,5 @@ int main(int argc, char** argv) {
 #endif
 #endif
 
-    return _cmocka_run_group_tests("test_pipe", tests.data(), tests.size(), NULL, NULL);
+    return RUN_ALL_TESTS();
 }

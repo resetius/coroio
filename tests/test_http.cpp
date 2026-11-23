@@ -3,9 +3,7 @@
 #include <array>
 #include <exception>
 #include <sstream>
-#include <stdarg.h>
 #include <stddef.h>
-#include <setjmp.h>
 #include <signal.h>
 #include <iostream>
 #include <unordered_set>
@@ -20,48 +18,44 @@
 #include "testlib.h"
 #include "perf.h"
 
-extern "C" {
-#include <cmocka.h>
-}
-
 using namespace NNet;
 
-void test_http_uri_parsing(void**) {
+void test_http_uri_parsing() {
     {
         NNet::TUri uri("/path/to/resource?param1=value1&param2=value2#fragment");
-        assert_string_equal(uri.Path().c_str(), "/path/to/resource");
+        ASSERT_STREQ(uri.Path().c_str(), "/path/to/resource");
         auto params = uri.QueryParameters();
-        assert_true(params.size() == 2);
-        assert_string_equal(params["param1"].c_str(), "value1");
-        assert_string_equal(params["param2"].c_str(), "value2");
-        assert_string_equal(uri.Fragment().c_str(), "fragment");
+        ASSERT_TRUE(params.size() == 2);
+        ASSERT_STREQ(params["param1"].c_str(), "value1");
+        ASSERT_STREQ(params["param2"].c_str(), "value2");
+        ASSERT_STREQ(uri.Fragment().c_str(), "fragment");
     }
     {
         NNet::TUri uri("/simple/path");
-        assert_string_equal(uri.Path().c_str(), "/simple/path");
+        ASSERT_STREQ(uri.Path().c_str(), "/simple/path");
         auto params = uri.QueryParameters();
-        assert_true(params.empty());
-        assert_string_equal(uri.Fragment().c_str(), "");
+        ASSERT_TRUE(params.empty());
+        ASSERT_STREQ(uri.Fragment().c_str(), "");
     }
     {
         NNet::TUri uri("/path/with/fragment#onlyfragment");
-        assert_string_equal(uri.Path().c_str(), "/path/with/fragment");
+        ASSERT_STREQ(uri.Path().c_str(), "/path/with/fragment");
         auto params = uri.QueryParameters();
-        assert_true(params.empty());
-        assert_string_equal(uri.Fragment().c_str(), "onlyfragment");
+        ASSERT_TRUE(params.empty());
+        ASSERT_STREQ(uri.Fragment().c_str(), "onlyfragment");
     }
     // encoded variants
     {
         NNet::TUri uri("/path%20with%20spaces?param%201=value%201#frag%20ment");
-        assert_string_equal(uri.Path().c_str(), "/path with spaces");
+        ASSERT_STREQ(uri.Path().c_str(), "/path with spaces");
         auto params = uri.QueryParameters();
-        assert_true(params.size() == 1);
-        assert_string_equal(params["param 1"].c_str(), "value 1");
-        assert_string_equal(uri.Fragment().c_str(), "frag ment");
+        ASSERT_TRUE(params.size() == 1);
+        ASSERT_STREQ(params["param 1"].c_str(), "value 1");
+        ASSERT_STREQ(uri.Fragment().c_str(), "frag ment");
     }
 }
 
-void test_http_request_handling_basic(void**) {
+void test_http_request_handling_basic() {
     // Basic request parsing test
     std::string rawRequest =
         "GET /test/path?arg=value#frag HTTP/1.1\r\n"
@@ -85,20 +79,20 @@ void test_http_request_handling_basic(void**) {
 
     TRequest request(std::move(headerPart), bodyReader);
 
-    assert_true(request.Method() == "GET");
-    assert_string_equal(request.Uri().Path().c_str(), "/test/path");
+    ASSERT_TRUE(request.Method() == "GET");
+    ASSERT_STREQ(request.Uri().Path().c_str(), "/test/path");
     auto params = request.Uri().QueryParameters();
-    assert_true(params.size() == 1);
-    assert_string_equal(params["arg"].c_str(), "value");
+    ASSERT_TRUE(params.size() == 1);
+    ASSERT_STREQ(params["arg"].c_str(), "value");
 
     std::string body;
     [](TRequest& request, std::string& body) -> TVoidTask {
         body = co_await request.ReadBodyFull();
     } (request, body);
-    assert_string_equal(body.c_str(), "Hello World");
+    ASSERT_STREQ(body.c_str(), "Hello World");
 }
 
-void test_http_request_handling_advanced(void**) {
+void test_http_request_handling_advanced() {
     // part of body in raw data, rest via body reader
     std::string rawRequestPart =
         "POST /submit/data HTTP/1.1\r\n"
@@ -122,10 +116,10 @@ void test_http_request_handling_advanced(void**) {
 
     TRequest request(std::move(headerPart), bodyReader);
 
-    assert_true(request.Method() == "POST");
-    assert_string_equal(request.Uri().Path().c_str(), "/submit/data");
+    ASSERT_TRUE(request.Method() == "POST");
+    ASSERT_STREQ(request.Uri().Path().c_str(), "/submit/data");
     auto params = request.Uri().QueryParameters();
-    assert_true(params.empty());
+    ASSERT_TRUE(params.empty());
 
     std::string body;
     [](TRequest& request, std::string& body) -> TVoidTask {
@@ -135,10 +129,10 @@ void test_http_request_handling_advanced(void**) {
             std::cerr << "Error reading body: " << e.what() << "\n";
         }
     } (request, body);
-    assert_string_equal(body.c_str(), "PartialBodyMoreBodyData");
+    ASSERT_STREQ(body.c_str(), "PartialBodyMoreBodyData");
 }
 
-void test_http_request_handling_2requests_in_1buffer(void**) {
+void test_http_request_handling_2requests_in_1buffer() {
     // Two requests in one buffer
     std::string rawRequests =
         "GET /first HTTP/1.1\r\n"
@@ -165,16 +159,16 @@ void test_http_request_handling_2requests_in_1buffer(void**) {
         co_return toRead;
     };
     TRequest firstRequest(std::move(firstHeaderPart), firstBodyReader);
-    assert_true(firstRequest.Method() == "GET");
-    assert_string_equal(firstRequest.Uri().Path().c_str(), "/first");
+    ASSERT_TRUE(firstRequest.Method() == "GET");
+    ASSERT_STREQ(firstRequest.Uri().Path().c_str(), "/first");
     std::string firstBody;
     [](TRequest& request, std::string& body) -> TVoidTask {
         body = co_await request.ReadBodyFull();
     } (firstRequest, firstBody);
-    assert_string_equal(firstBody.c_str(), "Hello");
+    ASSERT_STREQ(firstBody.c_str(), "Hello");
 }
 
-void test_http_request_handling_chunked_body(void**) {
+void test_http_request_handling_chunked_body() {
     // Chunked transfer encoding request
     std::string rawRequest =
         "POST /chunked HTTP/1.1\r\n"
@@ -217,8 +211,8 @@ void test_http_request_handling_chunked_body(void**) {
     };
 
     TRequest request(std::move(headerPart), bodyReader, chunkHeaderReader);
-    assert_true(request.Method() == "POST");
-    assert_string_equal(request.Uri().Path().c_str(), "/chunked");
+    ASSERT_TRUE(request.Method() == "POST");
+    ASSERT_STREQ(request.Uri().Path().c_str(), "/chunked");
 
     std::string body;
     [](TRequest& request, std::string& body) -> TVoidTask {
@@ -228,10 +222,10 @@ void test_http_request_handling_chunked_body(void**) {
             std::cerr << "Error reading request body: " << e.what() << std::endl;
         }
     } (request, body);
-    assert_string_equal(body.c_str(), "Hello World");
+    ASSERT_STREQ(body.c_str(), "Hello World");
 }
 
-void test_http_response_handling_basic(void**) {
+void test_http_response_handling_basic() {
     std::string responseData;
     auto writer = [&](const void* data, size_t size) -> TFuture<ssize_t> {
         std::string str(static_cast<const char*>(data), size);
@@ -255,10 +249,10 @@ void test_http_response_handling_basic(void**) {
         "Content-Type: text/plain\r\n"
         "\r\n"
         "Hello, World!";
-    assert_string_equal(responseData.c_str(), expectedResponse.c_str());
+    ASSERT_STREQ(responseData.c_str(), expectedResponse.c_str());
 }
 
-void test_http_response_handling_chunked(void**) {
+void test_http_response_handling_chunked() {
     std::string responseData;
     auto writer = [&](const void* data, size_t size) -> TFuture<ssize_t> {
         std::string str(static_cast<const char*>(data), size);
@@ -289,10 +283,10 @@ void test_http_response_handling_chunked(void**) {
         "World!\r\n"
         "0\r\n"
         "\r\n";
-    assert_string_equal(responseData.c_str(), expectedResponse.c_str());
+    ASSERT_STREQ(responseData.c_str(), expectedResponse.c_str());
 }
 
-void test_http_headers_case_insensitive(void**) {
+void test_http_headers_case_insensitive() {
     std::string headerPart =
         "POST /x HTTP/1.1\r\n"
         "host: localhost\r\n"
@@ -308,22 +302,22 @@ void test_http_headers_case_insensitive(void**) {
     TRequest request(std::move(headerPart), bodyReader);
 
     const auto& headers = request.Headers();
-    assert_true(headers.find("Host") != headers.end());
-    assert_true(headers.find("HOST") != headers.end());
-    assert_true(headers.find("content-length")->second == "5");
-    assert_true(headers.find("Transfer-Encoding")->second == "identity");
-    assert_true(headers.find("Connection")->second == "close");
-    assert_true(request.RequireConnectionClose());
-    assert_true(headers.size() == 4);
+    ASSERT_TRUE(headers.find("Host") != headers.end());
+    ASSERT_TRUE(headers.find("HOST") != headers.end());
+    ASSERT_TRUE(headers.find("content-length")->second == "5");
+    ASSERT_TRUE(headers.find("Transfer-Encoding")->second == "identity");
+    ASSERT_TRUE(headers.find("Connection")->second == "close");
+    ASSERT_TRUE(request.RequireConnectionClose());
+    ASSERT_TRUE(headers.size() == 4);
 
     std::string body;
     [](TRequest& request, std::string& body) -> TVoidTask {
         body = co_await request.ReadBodyFull();
     } (request, body);
-    assert_string_equal(body.c_str(), "Hello");
+    ASSERT_STREQ(body.c_str(), "Hello");
 }
 
-void test_http_response_headers_case_insensitive(void**) {
+void test_http_response_headers_case_insensitive() {
     std::string responseData;
     auto writer = [&](const void* data, size_t size) -> TFuture<ssize_t> {
         responseData.append(static_cast<const char*>(data), size);
@@ -348,8 +342,8 @@ void test_http_response_headers_case_insensitive(void**) {
         "Content-Type: text/html\r\n"
         "\r\n"
         "Hi";
-    assert_string_equal(responseData.c_str(), expectedResponse.c_str());
-    assert_true(response.IsClosed());
+    ASSERT_STREQ(responseData.c_str(), expectedResponse.c_str());
+    ASSERT_TRUE(response.IsClosed());
 }
 
 namespace {
@@ -393,15 +387,15 @@ void CheckReadUntil(std::deque<std::string> chunks, const std::string& delimiter
             failed = true;
         }
     }(socket, delimiter, got, gotRest, rest.size(), failed);
-    assert_true(task.done());
-    assert_false(failed);
-    assert_true(got == expected);
-    assert_true(gotRest == rest);
+    ASSERT_TRUE(task.done());
+    ASSERT_FALSE(failed);
+    ASSERT_TRUE(got == expected);
+    ASSERT_TRUE(gotRest == rest);
 }
 
 } // namespace
 
-void test_byte_reader_read_until_split_two_chunks(void**) {
+void test_byte_reader_read_until_split_two_chunks() {
     const std::string delimiter = "\r\n\r\n";
     const std::string head = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     const std::string rest = "BODY";
@@ -411,7 +405,7 @@ void test_byte_reader_read_until_split_two_chunks(void**) {
     }
 }
 
-void test_byte_reader_read_until_byte_by_byte(void**) {
+void test_byte_reader_read_until_byte_by_byte() {
     const std::string head = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     const std::string rest = "BODY";
     std::deque<std::string> chunks;
@@ -421,7 +415,7 @@ void test_byte_reader_read_until_byte_by_byte(void**) {
     CheckReadUntil(std::move(chunks), "\r\n\r\n", head, rest);
 }
 
-void test_byte_reader_read_until_1024_boundary(void**) {
+void test_byte_reader_read_until_1024_boundary() {
     const std::string delimiter = "\r\n\r\n";
     const std::string rest = "BODY";
     // The delimiter starts at offset 1010..1030, covering every split around the
@@ -432,7 +426,7 @@ void test_byte_reader_read_until_1024_boundary(void**) {
     }
 }
 
-void test_byte_reader_read_until_two_delimiters(void**) {
+void test_byte_reader_read_until_two_delimiters() {
     TChunkedSocket socket{{"line1\r", "\nline2\r\n", "tail"}};
     std::string line1, line2;
     auto task = [](TChunkedSocket& socket, std::string& line1, std::string& line2) -> TFuture<void> {
@@ -440,12 +434,12 @@ void test_byte_reader_read_until_two_delimiters(void**) {
         line1 = co_await reader.ReadUntil("\r\n");
         line2 = co_await reader.ReadUntil("\r\n");
     }(socket, line1, line2);
-    assert_true(task.done());
-    assert_true(line1 == "line1\r\n");
-    assert_true(line2 == "line2\r\n");
+    ASSERT_TRUE(task.done());
+    ASSERT_TRUE(line1 == "line1\r\n");
+    ASSERT_TRUE(line2 == "line2\r\n");
 }
 
-void test_byte_reader_read_until_empty_delimiter(void**) {
+void test_byte_reader_read_until_empty_delimiter() {
     TChunkedSocket socket{{"abc"}};
     std::string empty1, empty2, rest;
     bool failed = false;
@@ -467,14 +461,14 @@ void test_byte_reader_read_until_empty_delimiter(void**) {
             failed = true;
         }
     }(socket, empty1, empty2, rest, failed);
-    assert_true(task.done());
-    assert_false(failed);
-    assert_true(empty1.empty());
-    assert_true(empty2.empty());
-    assert_true(rest == "abc");
+    ASSERT_TRUE(task.done());
+    ASSERT_FALSE(failed);
+    ASSERT_TRUE(empty1.empty());
+    ASSERT_TRUE(empty2.empty());
+    ASSERT_TRUE(rest == "abc");
 }
 
-void test_http_server_header_split_between_writes(void**) {
+void test_http_server_header_split_between_writes() {
     using TSocket = TDefaultPoller::TSocket;
 
     struct TRouter : IRouter {
@@ -526,9 +520,9 @@ void test_http_server_header_split_between_writes(void**) {
     while (!task.done() && std::chrono::steady_clock::now() < deadline) {
         loop.Step();
     }
-    assert_true(task.done());
-    assert_true(response.find("HTTP/1.1 200") == 0);
-    assert_true(response.find("ok") != std::string::npos);
+    ASSERT_TRUE(task.done());
+    ASSERT_TRUE(response.find("HTTP/1.1 200") == 0);
+    ASSERT_TRUE(response.find("ok") != std::string::npos);
 }
 
 namespace {
@@ -548,7 +542,7 @@ struct TWriteBodyFullRouter : IRouter {
 
 } // namespace
 
-void test_http_write_body_full(void**) {
+void test_http_write_body_full() {
     using TSocket = TDefaultPoller::TSocket;
 
     TWriteBodyFullRouter router;
@@ -594,7 +588,7 @@ void test_http_write_body_full(void**) {
         while (!task.done() && std::chrono::steady_clock::now() < deadline) {
             loop.Step();
         }
-        assert_true(task.done());
+        EXPECT_TRUE(task.done());
         return raw;
     };
 
@@ -604,37 +598,35 @@ void test_http_write_body_full(void**) {
         "\r\n"
         "hello";
     // WriteBodyFull sends the headers itself
-    assert_string_equal(fetch("/").c_str(), expected.c_str());
+    ASSERT_STREQ(fetch("/").c_str(), expected.c_str());
     // SendHeaders first, then WriteBodyFull: the same bytes, headers not duplicated
     router.SendHeadersFirst = true;
-    assert_string_equal(fetch("/").c_str(), expected.c_str());
+    ASSERT_STREQ(fetch("/").c_str(), expected.c_str());
 }
+
+#define TEST_SUITE_NAME "test_http"
 
 int main(int argc, char** argv) {
     TInitializer init;
 
-    std::vector<CMUnitTest> tests;
-    std::unordered_set<std::string> filters;
-    tests.reserve(500);
+    testing::InitGoogleTest(&argc, argv);
 
-    parse_filters(argc, argv, filters);
+    ADD_TEST(unit_test, test_http_uri_parsing);
+    ADD_TEST(unit_test, test_http_request_handling_basic);
+    ADD_TEST(unit_test, test_http_request_handling_advanced);
+    ADD_TEST(unit_test, test_http_request_handling_2requests_in_1buffer);
+    ADD_TEST(unit_test, test_http_request_handling_chunked_body);
+    ADD_TEST(unit_test, test_http_headers_case_insensitive);
+    ADD_TEST(unit_test, test_http_response_headers_case_insensitive);
+    ADD_TEST(unit_test, test_http_response_handling_basic);
+    ADD_TEST(unit_test, test_http_response_handling_chunked);
+    ADD_TEST(unit_test, test_byte_reader_read_until_split_two_chunks);
+    ADD_TEST(unit_test, test_byte_reader_read_until_byte_by_byte);
+    ADD_TEST(unit_test, test_byte_reader_read_until_1024_boundary);
+    ADD_TEST(unit_test, test_byte_reader_read_until_two_delimiters);
+    ADD_TEST(unit_test, test_byte_reader_read_until_empty_delimiter);
+    ADD_TEST(unit_test, test_http_write_body_full);
+    ADD_TEST(unit_test, test_http_server_header_split_between_writes);
 
-    ADD_TEST(cmocka_unit_test, test_http_uri_parsing);
-    ADD_TEST(cmocka_unit_test, test_http_request_handling_basic);
-    ADD_TEST(cmocka_unit_test, test_http_request_handling_advanced);
-    ADD_TEST(cmocka_unit_test, test_http_request_handling_2requests_in_1buffer);
-    ADD_TEST(cmocka_unit_test, test_http_request_handling_chunked_body);
-    ADD_TEST(cmocka_unit_test, test_http_headers_case_insensitive);
-    ADD_TEST(cmocka_unit_test, test_http_response_headers_case_insensitive);
-    ADD_TEST(cmocka_unit_test, test_http_response_handling_basic);
-    ADD_TEST(cmocka_unit_test, test_http_response_handling_chunked);
-    ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_split_two_chunks);
-    ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_byte_by_byte);
-    ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_1024_boundary);
-    ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_two_delimiters);
-    ADD_TEST(cmocka_unit_test, test_byte_reader_read_until_empty_delimiter);
-    ADD_TEST(cmocka_unit_test, test_http_write_body_full);
-    ADD_TEST(cmocka_unit_test, test_http_server_header_split_between_writes);
-
-    return _cmocka_run_group_tests("test_http", tests.data(), tests.size(), NULL, NULL);
+    return RUN_ALL_TESTS();
 }

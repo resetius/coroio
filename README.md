@@ -374,6 +374,10 @@ template<> void DeserializeFrom<T>(T&, TBlob& blob);          // may take blob.D
 
 ---
 
+## Tests
+
+Tests use GoogleTest (found through pkg-config) and are built with `-DCOROIO_BUILD_TESTS=ON`; run them with `ctest`, or pass `--gtest_filter` to a `ut_*` binary.
+
 ## Benchmark
 
 Methodology from [libevent](https://libevent.org). Two tests: (1) one active connection, (2) 100 chained connections doing 1000 writes each.

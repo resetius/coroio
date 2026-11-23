@@ -21,13 +21,13 @@ jobs:
     - name: apt-get update
       run: sudo apt-get update
     - name: Install packages
-      run: sudo apt-get install libcmocka-dev liburing-dev cmake ninja-build
+      run: sudo apt-get install libgtest-dev pkg-config liburing-dev cmake ninja-build
     - name: configure
       run: |
         mkdir build
         echo 'add_compile_options(-fsanitize=address)' > build/local.cmake
         echo 'add_link_options(-fsanitize=address)' >> build/local.cmake
-        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCOROIO_BUILD_TESTS=ON
     - name: make
       run: cmake --build build
     - name: test
@@ -68,7 +68,7 @@ jobs:
     - name: Install Additional Packages
       run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-cmocka mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
+          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gtest mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
           ls -l C:\tools\msys64\mingw64\bin
     - name: Verify Installation
       run: |
@@ -79,7 +79,7 @@ jobs:
       run: |
           mkdir build
           cd build
-          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
+          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug -DCOROIO_BUILD_TESTS=ON
           ninja
     - name: Run Tests
       run: |
@@ -109,12 +109,12 @@ jobs:
     - name: Checkout submodules
       run: git submodule update --init --recursive
     - name: Install packages
-      run: brew install ninja cmocka
+      run: brew install ninja googletest
     - name: Configure with CMake and Build with Ninja
       run: |
           mkdir build
           cd build
-          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
+          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug -DCOROIO_BUILD_TESTS=ON
           ninja
     - name: Run Tests
       run: |
