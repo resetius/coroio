@@ -401,7 +401,7 @@ void test_byte_reader_read_until_split_two_chunks() {
     const std::string rest = "BODY";
     const std::string data = head + rest;
     for (size_t i = 1; i < data.size(); ++i) {
-        CheckReadUntil({data.substr(0, i), data.substr(i)}, delimiter, head, rest);
+        ASSERT_NO_FATAL_FAILURE(CheckReadUntil({data.substr(0, i), data.substr(i)}, delimiter, head, rest));
     }
 }
 
@@ -412,7 +412,7 @@ void test_byte_reader_read_until_byte_by_byte() {
     for (char c : head + rest) {
         chunks.emplace_back(1, c);
     }
-    CheckReadUntil(std::move(chunks), "\r\n\r\n", head, rest);
+    ASSERT_NO_FATAL_FAILURE(CheckReadUntil(std::move(chunks), "\r\n\r\n", head, rest));
 }
 
 void test_byte_reader_read_until_1024_boundary() {
@@ -422,7 +422,7 @@ void test_byte_reader_read_until_1024_boundary() {
     // 1024-byte read of ReadUntil
     for (size_t size = 1010; size <= 1030; ++size) {
         std::string head = std::string(size, 'x') + delimiter;
-        CheckReadUntil({head + rest}, delimiter, head, rest);
+        ASSERT_NO_FATAL_FAILURE(CheckReadUntil({head + rest}, delimiter, head, rest));
     }
 }
 

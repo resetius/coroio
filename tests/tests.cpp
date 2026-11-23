@@ -1712,6 +1712,9 @@ ConnectedPair(TLoop<TPoller>& loop, typename TPoller::TSocket& listener, const T
     auto connect = client.Connect(address);
     StepUntilDone(loop, connect);
     StepUntilDone(loop, accept);
+    if (testing::Test::HasFatalFailure()) {
+        return {std::move(client), TSocket()};
+    }
     return {std::move(client), std::move(*server)};
 }
 
@@ -1730,6 +1733,7 @@ void test_destroyed_driven_reader_not_resumed() {
     pairs.reserve(4);
     for (int i = 0; i < 4; i++) {
         pairs.emplace_back(ConnectedPair(loop, listener, address));
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
     }
 
     for (bool submitted : {false, true}) {
@@ -1748,7 +1752,7 @@ void test_destroyed_driven_reader_not_resumed() {
         ASSERT_EQ(got, -1);
         ASSERT_EQ(buf[0], 0);
         auto next = ReadInto(pairs[0].second, buf, sizeof(buf), &got);
-        StepUntilDone(loop, next);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
         ASSERT_EQ(got, 1);
         ASSERT_EQ(buf[0], 'x');
     }
@@ -1774,7 +1778,7 @@ void test_destroyed_driven_reader_not_resumed() {
         if (collected) {
             loop.Poller().WakeupReadyHandles();
         }
-        StepUntilDone(loop, *readers[2]);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, *readers[2]));
         ASSERT_EQ(got[0], -1);
         ASSERT_EQ(got[1], -1);
         ASSERT_EQ(got[2], 3);
@@ -1795,8 +1799,8 @@ void test_destroyed_driven_reader_not_resumed() {
         ASSERT_EQ(send(pairs[1].first.Fd(), "b", 1, 0), 1);
         ASSERT_EQ(send(pairs[2].first.Fd(), "cc", 2, 0), 2);
         ASSERT_EQ(send(pairs[3].first.Fd(), "dddd", 4, 0), 4);
-        StepUntilDone(loop, destroyer);
-        StepUntilDone(loop, last);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, destroyer));
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, last));
         ASSERT_FALSE(again.has_value());
         ASSERT_FALSE(after.has_value());
         ASSERT_EQ(got[0], 1);
@@ -1822,13 +1826,13 @@ void test_destroyed_driven_accept_and_connect_not_resumed() {
         accept.reset();
         TSocket client(loop.Poller(), address.Domain());
         auto connect = client.Connect(address);
-        StepUntilDone(loop, connect);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, connect));
         for (int i = 0; i < 3; i++) {
             loop.Step();
         }
         ASSERT_FALSE(accepted.has_value());
         auto next = AcceptInto(listener, &accepted);
-        StepUntilDone(loop, next);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
         ASSERT_TRUE(accepted.has_value());
     }
 
@@ -1847,7 +1851,7 @@ void test_destroyed_driven_accept_and_connect_not_resumed() {
         char buf[1];
         int got = -1;
         auto eof = ReadInto(client, buf, sizeof(buf), &got);
-        StepUntilDone(loop, eof);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, eof));
         ASSERT_EQ(got, 0);
     }
 
@@ -1893,6 +1897,7 @@ void test_destroyed_driven_reader_among_many() {
     pairs.reserve(count);
     for (int i = 0; i < count; i++) {
         pairs.emplace_back(ConnectedPair(loop, listener, address));
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
     }
 
     char bufs[count][4] = {};
@@ -1914,7 +1919,7 @@ void test_destroyed_driven_reader_among_many() {
     readers[count - 1].reset();
     for (int i = 0; i < count; i++) {
         if (readers[i]) {
-            StepUntilDone(loop, *readers[i]);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, *readers[i]));
         }
     }
     for (int i = 0; i < count; i++) {
@@ -1927,7 +1932,7 @@ void test_destroyed_driven_reader_among_many() {
     }
     // Destroyed before its byte came: the byte is left for the next reader.
     auto next = ReadInto(pairs[count / 2].second, bufs[0], sizeof(bufs[0]), &got[0]);
-    StepUntilDone(loop, next);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
     ASSERT_EQ(got[0], 1);
     ASSERT_EQ(bufs[0][0], 'a' + (count / 2) % 26);
 }
@@ -1950,7 +1955,7 @@ void test_driven_accept_not_listening() {
             *failed = true;
         }
     }(socket, &accepted, &failed);
-    StepUntilDone(loop, accept);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
     ASSERT_TRUE(failed);
     ASSERT_FALSE(accepted.has_value());
 }
@@ -1972,6 +1977,7 @@ void test_iocp_failed_read_write() {
     const int errors[] = {WSAECONNRESET, WSAECONNABORTED, WSA_OPERATION_ABORTED};
     for (int i = 0; i < 3; i++) {
         auto [client, server] = ConnectedPair(loop, listener, address);
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
         char buf[1];
         int result = 0;
         auto read = IoResult(server, false, buf, sizeof(buf), &result);
@@ -1984,12 +1990,13 @@ void test_iocp_failed_read_write() {
         } else {
             loop.Poller().Cancel(server.Fd());
         }
-        StepUntilDone(loop, read);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
         ASSERT_EQ(result, -errors[i]);
     }
 
     // A write waits for the peer, which does not read, and the peer resets.
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
     std::vector<char> data(1 << 20);
     int result = 0;
     std::optional<TFuture<void>> write;
@@ -2002,7 +2009,7 @@ void test_iocp_failed_read_write() {
     ASSERT_FALSE(write->done());
     ASSERT_EQ(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
     client.Close();
-    StepUntilDone(loop, *write);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, *write));
     ASSERT_EQ(result, -WSAECONNRESET);
 }
 
@@ -2031,7 +2038,7 @@ void test_iocp_aborted_accept() {
             loop.Poller().Cancel(listener.Fd());
         }
         try {
-            StepUntilDone(loop, accept);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
         } catch (const std::exception& ex) {
             FAIL() << ex.what();
         }
@@ -2119,28 +2126,28 @@ void test_iocp_file_read_write() {
             TIOCp::TFileHandle file(fd, loop.Poller());
             std::vector<int> written;
             auto write = WriteChunks(file, {"AAAA", "BBBB", "CCCC", "DDDD"}, &written);
-            StepUntilDone(loop, write);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
             ASSERT_TRUE(written == std::vector<int>({4, 4, 4, 4}));
             ASSERT_STREQ(FileContent(path).c_str(), "AAAABBBBCCCCDDDD");
 
             ASSERT_EQ(_lseeki64(fd, 0, SEEK_SET), 0);
             std::vector<std::string> chunks;
             auto read = ReadChunks(file, 4, &chunks);
-            StepUntilDone(loop, read);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
             ASSERT_TRUE(chunks == std::vector<std::string>({"AAAA", "BBBB", "CCCC", "DDDD"}));
 
             // Reads at and across the end of the file leave the pointer at the end, so the
             // next write leaves no hole.
             auto atEnd = ReadChunks(file, 4, &chunks);
-            StepUntilDone(loop, atEnd);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, atEnd));
             auto next = WriteChunks(file, {"EE"}, &written);
-            StepUntilDone(loop, next);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
             ASSERT_EQ(_lseeki64(fd, -2, SEEK_CUR), 16);
             auto across = ReadChunks(file, 4, &chunks);
-            StepUntilDone(loop, across);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, across));
             ASSERT_TRUE(chunks.back() == "EE");
             auto last = WriteChunks(file, {"FF"}, &written);
-            StepUntilDone(loop, last);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, last));
             ASSERT_STREQ(FileContent(path).c_str(), "AAAABBBBCCCCDDDDEEFF");
         }
         ASSERT_TRUE(DeleteFileA(path.c_str())); // fails while a handle is open
@@ -2156,7 +2163,7 @@ void test_iocp_file_append() {
             TIOCp::TFileHandle file(OpenFile(path, overlapped, true), loop.Poller());
             std::vector<int> written;
             auto write = WriteChunks(file, {"AAAA", "BBBB"}, &written);
-            StepUntilDone(loop, write);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
             ASSERT_TRUE(written == std::vector<int>({4, 4}));
         }
         ASSERT_STREQ(FileContent(path).c_str(), "XXXXAAAABBBB");
@@ -2172,7 +2179,7 @@ void test_iocp_file_close() {
         TIOCp::TFileHandle file(OpenFile(path, overlapped), loop.Poller());
         std::vector<int> written;
         auto write = WriteChunks(file, {"AAAA"}, &written);
-        StepUntilDone(loop, write);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
         ASSERT_TRUE(written == std::vector<int>({4}));
         file.Close();
         loop.Step();
@@ -2183,7 +2190,7 @@ void test_iocp_file_close() {
         char buf[4];
         int result = 0;
         auto read = IoResult(file, false, buf, sizeof(buf), &result);
-        StepUntilDone(loop, read);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
         ASSERT_EQ(result, -EBADF);
         ASSERT_TRUE(DeleteFileA(path.c_str()));
     }
@@ -2202,8 +2209,8 @@ void test_iocp_file_concurrent() {
             std::vector<int> written;
             auto first = WriteChunks(file, {"AAAA", "CCCC"}, &written);
             auto second = WriteChunks(file, {"BBBB", "DDDD"}, &written);
-            StepUntilDone(loop, first);
-            StepUntilDone(loop, second);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, first));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, second));
             ASSERT_TRUE(written == std::vector<int>({4, 4, 4, 4}));
             std::string content = FileContent(path);
             ASSERT_EQ(content.size(), 16);
@@ -2218,8 +2225,8 @@ void test_iocp_file_concurrent() {
             std::vector<std::string> read[2];
             auto reader1 = ReadChunks(file, 4, &read[0]);
             auto reader2 = ReadChunks(file, 4, &read[1]);
-            StepUntilDone(loop, reader1);
-            StepUntilDone(loop, reader2);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader1));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader2));
             chunks = read[0];
             chunks.insert(chunks.end(), read[1].begin(), read[1].end());
             std::sort(chunks.begin(), chunks.end());
@@ -2254,7 +2261,7 @@ void test_iocp_pipe() {
 
         std::vector<int> written;
         auto write = WriteChunks(writing, {"pingpong"}, &written);
-        StepUntilDone(loop, write);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
         ASSERT_TRUE(written == std::vector<int>({8}));
         std::vector<std::string> chunks;
         auto read = ReadChunks(reading, 4, &chunks);
@@ -2262,7 +2269,7 @@ void test_iocp_pipe() {
             loop.Step();
         }
         writing.Close();
-        StepUntilDone(loop, read);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
         ASSERT_EQ(got, -1);
         ASSERT_EQ(buf[0], 0);
         ASSERT_TRUE(chunks == std::vector<std::string>({"ping", "pong"}));
@@ -2275,12 +2282,12 @@ void test_iocp_pipe() {
     TIOCp::TFileHandle writing(p[1], loop.Poller());
     std::vector<int> written;
     auto write = WriteChunks(writing, {"ping"}, &written);
-    StepUntilDone(loop, write);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
     writing.Close();
     loop.Step();
     std::vector<std::string> chunks;
     auto read = ReadChunks(reading, 4, &chunks);
-    StepUntilDone(loop, read);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
     ASSERT_TRUE(chunks == std::vector<std::string>({"ping"}));
 }
 
@@ -2305,6 +2312,7 @@ void test_iocp_accepted_socket() {
         listener.Bind(address);
         listener.Listen();
         auto [client, server] = ConnectedPair(loop, listener, address);
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
         ASSERT_STREQ(SocketName(server.Fd(), true).c_str(), SocketName(client.Fd(), false).c_str());
         ASSERT_STREQ(SocketName(server.Fd(), true).c_str(), server.RemoteAddr()->ToString().c_str());
         ASSERT_STREQ(SocketName(server.Fd(), false).c_str(), address.ToString().c_str());
@@ -2312,7 +2320,7 @@ void test_iocp_accepted_socket() {
         char buf[1];
         int got = -1;
         auto eof = ReadInto(client, buf, sizeof(buf), &got);
-        StepUntilDone(loop, eof);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, eof));
         ASSERT_EQ(got, 0);
     }
 }
@@ -2327,7 +2335,7 @@ void test_accept_closed_listener() {
     std::optional<std::expected<TSocket, int>> result;
     auto accept = AcceptResult(listener, &result);
     try {
-        StepUntilDone(loop, accept);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
         FAIL() << "no exception";
     } catch (const std::system_error& ex) {
         ASSERT_EQ(ex.code().value(), EBADF);
@@ -2338,7 +2346,11 @@ void test_accept_closed_listener() {
 int ConnectTo(const TAddress& address) {
     int fd = socket(address.Domain(), SOCK_STREAM, 0);
     auto [addr, len] = address.RawAddr();
-    EXPECT_EQ(connect(fd, addr, len), 0);
+    if (connect(fd, addr, len) != 0) {
+        ADD_FAILURE() << "connect failed";
+        close(fd);
+        return -1;
+    }
     return fd;
 }
 
@@ -2354,15 +2366,17 @@ void test_accept_after_spurious_readiness() {
     std::optional<std::expected<TSocket, int>> result;
     auto accept = AcceptResult(listener, &result);
     int first = ConnectTo(address);
+    ASSERT_GE(first, 0);
     loop.Poller().Poll();
     int stolen = ::accept(listener.Fd(), nullptr, nullptr);
     loop.Poller().WakeupReadyHandles();
-    StepUntilDone(loop, accept);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
     if (stolen >= 0) { // a completion-based poller accepts before the steal
         ASSERT_EQ(result->error_or(0), EAGAIN);
         int second = ConnectTo(address);
+        ASSERT_GE(second, 0);
         auto next = AcceptResult(listener, &result);
-        StepUntilDone(loop, next);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
         close(second);
         close(stolen);
     }
@@ -2420,6 +2434,8 @@ void test_accept_after_descriptor_shortage() {
     ASSERT_EQ(connected, 0);
 
     int client = ConnectTo(address);
+    ASSERT_GE(client, 0);
+
     const char request[] = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
     ASSERT_EQ(send(client, request, sizeof(request) - 1, 0), sizeof(request) - 1);
     char response[16] = {};
@@ -2509,6 +2525,7 @@ void test_uring_destroyed_before_submit() {
     listener.Bind(address);
     listener.Listen();
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
 
     ASSERT_EQ(send(client.Fd(), "x", 1, 0), 1);
     char buf[4] = {0};
@@ -2516,22 +2533,22 @@ void test_uring_destroyed_before_submit() {
     std::optional<TFuture<void>> reader{ReadInto(server, buf, sizeof(buf), &got)};
     reader.reset();
     auto next = ReadInto(server, buf, sizeof(buf), &got);
-    StepUntilDone(loop, next);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
     ASSERT_EQ(got, 1);
     ASSERT_EQ(buf[0], 'x');
 
     TSocket other(loop.Poller(), address.Domain());
     auto connect = other.Connect(address);
-    StepUntilDone(loop, connect);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, connect));
     std::optional<TSocket> accepted;
     std::optional<TFuture<void>> accept{AcceptInto(listener, &accepted)};
     accept.reset();
     auto nextAccept = AcceptInto(listener, &accepted);
-    StepUntilDone(loop, nextAccept);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, nextAccept));
     ASSERT_TRUE(accepted.has_value());
     ASSERT_EQ(send(other.Fd(), "y", 1, 0), 1);
     auto check = ReadInto(*accepted, buf, sizeof(buf), &got);
-    StepUntilDone(loop, check);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, check));
     ASSERT_EQ(got, 1);
     ASSERT_EQ(buf[0], 'y');
 }
@@ -2563,7 +2580,7 @@ void test_uring_destroyed_file_reader_and_writer() {
         ASSERT_EQ(got, -1);
         ASSERT_EQ(buf[0], 0);
         auto next = ReadInto(in, buf, sizeof(buf), &got);
-        StepUntilDone(loop, next);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
         ASSERT_EQ(got, 1);
         ASSERT_EQ(buf[0], 'x');
     }
@@ -2584,11 +2601,11 @@ void test_uring_destroyed_file_reader_and_writer() {
     }
     ASSERT_EQ(put, -1);
     auto next = WriteFrom(out, "v", 1, &put);
-    StepUntilDone(loop, next);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
     char buf[4] = {0};
     int got = -1;
     auto reader = ReadInto(in, buf, sizeof(buf), &got);
-    StepUntilDone(loop, reader);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader));
     ASSERT_EQ(got, 1);
     ASSERT_EQ(buf[0], 'v');
 }
@@ -2601,6 +2618,7 @@ void test_uring_destroyed_socket_writer() {
     listener.Bind(address);
     listener.Listen();
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
 
     char fill[4096] = {0};
     while (send(client.Fd(), fill, sizeof(fill), MSG_DONTWAIT) > 0) { }
@@ -2614,8 +2632,8 @@ void test_uring_destroyed_socket_writer() {
     std::string markers;
     auto drain = ReadMarkers(server, 'v', &markers);
     auto next = WriteFrom(client, "v", 1, &put);
-    StepUntilDone(loop, next);
-    StepUntilDone(loop, drain);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, drain));
     ASSERT_STREQ(markers.c_str(), "v");
 }
 
@@ -2630,7 +2648,9 @@ void test_uring_destroyed_after_repeated_wait() {
     listener.Bind(address);
     listener.Listen();
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
     auto [otherClient, otherServer] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
 
     char buf[4] = {0};
     int got = -1;
@@ -2645,7 +2665,7 @@ void test_uring_destroyed_after_repeated_wait() {
     loop.Poller().Poll();
     reader.reset();
     loop.Poller().WakeupReadyHandles();
-    StepUntilDone(loop, other);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, other));
     ASSERT_EQ(got, -1);
     ASSERT_EQ(otherGot, 2);
     ASSERT_EQ(0, memcmp(otherBuf, "yy", 2));
@@ -2783,10 +2803,10 @@ void test_uring_close_cancels_only_its_operations() {
     auto nextRead = IoResult(nextHandle, false, &bufs[1], 1, &results[2]);
     loop.Step();
     ASSERT_EQ(write(next[1], "n", 1), 1);
-    StepUntilDone(loop, nextRead);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, nextRead));
     ASSERT_EQ(results[2], 1);
-    StepUntilDone(loop, reader);
-    StepUntilDone(loop, writer);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader));
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, writer));
     ASSERT_EQ(results[0], -ECANCELED);
     ASSERT_EQ(results[1], -ECANCELED);
     close(fds[1]);
@@ -2805,7 +2825,7 @@ void test_uring_close_cancels_after_finished_operations() {
     int results[3] = {0, 0, 0};
     ASSERT_EQ(write(p[1], "x", 1), 1);
     auto completed = IoResult(*handle, false, buf, 1, &results[0]);
-    StepUntilDone(loop, completed);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, completed));
     ASSERT_EQ(results[0], 1);
     {
         auto cancelled = IoResult(*handle, false, buf, 1, &results[1]);
@@ -2817,7 +2837,7 @@ void test_uring_close_cancels_after_finished_operations() {
     auto pending = IoResult(*handle, false, buf, 1, &results[2]);
     loop.Step();
     handle.reset();
-    StepUntilDone(loop, pending);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, pending));
     ASSERT_EQ(results[2], -ECANCELED);
     close(p[1]);
 }
@@ -2924,12 +2944,12 @@ void test_notifier_factory() {
         notifier->Notify();
     }
     auto first = notifier->Wait();
-    Complete(loop, first);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, first));
 
     auto next = notifier->Wait();
     ASSERT_FALSE(next.done());
     std::thread producer([&] { notifier->Notify(); });
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
     producer.join();
 
     {
@@ -2939,7 +2959,7 @@ void test_notifier_factory() {
     }
     notifier->Notify();
     auto last = notifier->Wait();
-    Complete(loop, last);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, last));
 }
 
 template<typename TPoller>
@@ -2950,12 +2970,12 @@ void test_notifier_wait_signal() {
     auto wait = notifier.Wait();
     ASSERT_FALSE(wait.done());
     notifier.Notify();
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
 
     auto next = notifier.Wait();
     ASSERT_FALSE(next.done());
     notifier.Notify();
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
 }
 
 template<typename TPoller>
@@ -2967,7 +2987,7 @@ void test_notifier_notify_before_wait() {
     if constexpr (!kDriven<TPoller>) {
         ASSERT_TRUE(wait.done());
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
 }
 
 template<typename TPoller>
@@ -2981,7 +3001,7 @@ void test_notifier_coalesces() {
     if constexpr (!kDriven<TPoller>) {
         ASSERT_TRUE(wait.done());
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     auto next = notifier.Wait();
     ASSERT_FALSE(next.done());
 }
@@ -3006,7 +3026,7 @@ void test_notifier_concurrent_producers() {
     if constexpr (!kDriven<TPoller>) {
         ASSERT_TRUE(wait.done());
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     auto next = notifier.Wait();
     ASSERT_FALSE(next.done());
 }
@@ -3029,7 +3049,7 @@ void test_notifier_cross_thread_wakeup() {
         payload = 42;
         notifier.Notify();
     });
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     ASSERT_EQ(observed, 42);
 }
 
@@ -3062,7 +3082,7 @@ void test_notifier_notify_while_draining() {
             }
         });
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     producers.clear();
     ASSERT_EQ(published.load(), producerCount * perProducer);
 }
@@ -3083,7 +3103,7 @@ void test_notifier_rejects_second_listener() {
     }
     ASSERT_TRUE(rejected);
     notifier.Notify();
-    Complete(loop, first);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, first));
 }
 
 template<typename TPoller>
@@ -3094,7 +3114,7 @@ void test_notifier_interface() {
     auto wait = notifier->Wait();
     ASSERT_FALSE(wait.done());
     notifier->Notify();
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     auto next = notifier->Wait();
     ASSERT_FALSE(next.done());
 }
@@ -3112,7 +3132,7 @@ void test_notifier_cancel_wait() {
     loop.Step();
     auto wait = notifier.Wait();
     notifier.Notify();
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
 }
 
 TFuture<void> CancelNotifierWait(
@@ -3140,7 +3160,7 @@ void test_notifier_cancel_ready_from_timer() {
     if constexpr (!kDriven<TPoller>) {
         ASSERT_TRUE(next.done());
     }
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
     loop.Step();
 }
 
@@ -3158,12 +3178,12 @@ void test_notifier_cancel_collected_event() {
     if constexpr (!kDriven<TPoller>) {
         ASSERT_TRUE(next.done());
     }
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
     auto pending = notifier.Wait();
     loop.Poller().WakeupReadyHandles();
     ASSERT_FALSE(pending.done());
     notifier.Notify();
-    Complete(loop, pending);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, pending));
 }
 
 template<typename TPoller>
@@ -3177,7 +3197,7 @@ void test_notifier_cancel_retains_signal() {
     wait.reset();
     // No new Notify(): the signal sent before the cancel must still be delivered.
     auto next = notifier.Wait();
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
 }
 
 int CountOpenFds() {
@@ -3227,7 +3247,7 @@ void test_notifier_destroy_before_poll() {
         TNotifier replacement(loop.Poller());
         auto wait = replacement.Wait();
         replacement.Notify();
-        Complete(loop, wait);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     }
     loop.Step();
 }
@@ -3303,13 +3323,13 @@ void test_destroyed_waiter_not_resumed() {
             int fds[2];
             ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
             TFileHandle handle(fds[0], loop.Poller());
-            SetNonBlocking(fds[1]);
+            ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
             char byte = 0;
             auto wait = [&]() {
                 return write ? WriteByte(handle) : ReadByte(handle, &byte);
             };
             if (write) {
-                FillSendBuffer(fds[0]);
+                ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
             }
             std::optional<TFuture<void>> waiter{wait()};
             ASSERT_FALSE(waiter->done());
@@ -3320,19 +3340,19 @@ void test_destroyed_waiter_not_resumed() {
             case PENDING:
             case REGISTERED:
                 waiter.reset();
-                MakeReady(write, fds[1]);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
                 loop.Step();
                 loop.Step();
                 break;
             case COLLECTED:
-                MakeReady(write, fds[1]);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
                 loop.Poller().Poll();
                 waiter.reset();
                 loop.Poller().WakeupReadyHandles();
                 break;
             case CANCELLED_BY_TIMER: {
                 auto cancel = CancelNotifierWait(loop.Poller(), waiter);
-                MakeReady(write, fds[1]);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
                 loop.Step();
                 ASSERT_TRUE(cancel.done());
                 cancel.await_resume();
@@ -3342,22 +3362,22 @@ void test_destroyed_waiter_not_resumed() {
             case REPLACED:
                 // The new waiter registers before the old one is destroyed.
                 *waiter = wait();
-                MakeReady(write, fds[1]);
-                Complete(loop, *waiter);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
+                ASSERT_NO_FATAL_FAILURE(Complete(loop, *waiter));
                 break;
             }
 
             // The descriptor still serves the next waiter.
             if (write) {
-                FillSendBuffer(fds[0]);
+                ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
             } else {
                 Drain(fds[0]);
             }
             auto next = wait();
             ASSERT_FALSE(next.done());
             loop.Step();
-            MakeReady(write, fds[1]);
-            Complete(loop, next);
+            ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
+            ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
             close(fds[1]);
         }
     }
@@ -3398,7 +3418,7 @@ void test_reused_descriptor_wakes_new_waiter() {
                 ASSERT_EQ(write(oldFds[1], "o", 1), 1);
             }
             ASSERT_EQ(write(newFds[1], "n", 1), 1);
-            Complete(loop, newWait);
+            ASSERT_NO_FATAL_FAILURE(Complete(loop, newWait));
             loop.Step();
             loop.Step();
             ASSERT_EQ(newResumed, 1);
@@ -3468,15 +3488,15 @@ void test_close_skips_collected_events() {
         loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
         int fds[2];
         ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
-        SetNonBlocking(fds[1]);
+        ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
         auto handle = std::make_unique<TFileHandle>(fds[0], loop.Poller());
-        FillSendBuffer(fds[0]);
+        ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
         int resumed = 0;
         auto reader = WaitAndClose(handle, false, &resumed);
         auto writer = WaitAndClose(handle, true, &resumed);
         loop.Step();
-        MakeReady(false, fds[1]);
-        MakeReady(true, fds[1]);
+        ASSERT_NO_FATAL_FAILURE(MakeReady(false, fds[1]));
+        ASSERT_NO_FATAL_FAILURE(MakeReady(true, fds[1]));
         std::optional<TFuture<void>> closer;
         if (timer) {
             closer.emplace([](TPoller& poller, std::unique_ptr<TFileHandle>& handle) -> TFuture<void> {
@@ -3509,7 +3529,7 @@ void test_rebind_after_close_and_yield() {
         next.Bind(address);
         next.Listen();
     }(loop.Poller(), address);
-    StepUntilDone(loop, task);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, task));
 }
 
 #ifdef __linux__
@@ -3624,8 +3644,8 @@ void test_reuse_after_closing_several() {
     loop.Step();
     ASSERT_EQ(write(newFds[0], "0", 1), 1);
     ASSERT_EQ(write(newFds[1], "1", 1), 1);
-    Complete(loop, newWaits[0]);
-    Complete(loop, newWaits[1]);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, newWaits[0]));
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, newWaits[1]));
     ASSERT_EQ(newBytes[0], '1');
     ASSERT_EQ(newBytes[1], '0');
     ASSERT_FALSE(oldWaits[0]->done());
@@ -3643,7 +3663,7 @@ void test_hangup_wakes_reader_and_writer_once() {
     int fds[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     TFileHandle handle(fds[0], loop.Poller());
-    FillSendBuffer(fds[0]);
+    ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
     char byte = 0;
     int reads = 0;
     int writes = 0;
@@ -3671,8 +3691,8 @@ void test_reader_beside_blocked_writer() {
         int fds[2];
         ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
         TFileHandle handle(fds[0], loop.Poller());
-        SetNonBlocking(fds[1]);
-        FillSendBuffer(fds[0]);
+        ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
+        ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
         char byte = 0;
         int reads = 0;
         int writes = 0;
@@ -3684,11 +3704,11 @@ void test_reader_beside_blocked_writer() {
         loop.Step();
 
         ASSERT_EQ(write(fds[1], "r", 1), 1);
-        Complete(loop, reader);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, reader));
         ASSERT_EQ(byte, 'r');
         ASSERT_FALSE(writer.done());
         Drain(fds[1]);
-        Complete(loop, writer);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, writer));
         ASSERT_EQ(reads, 1);
         ASSERT_EQ(writes, 1);
         close(fds[1]);
@@ -3714,8 +3734,8 @@ void test_monitor_with_reader_and_writer() {
     int fds[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     TFileHandle handle(fds[0], loop.Poller());
-    SetNonBlocking(fds[1]);
-    FillSendBuffer(fds[0]);
+    ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
+    ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
     char byte = 0;
     int hangups = 0;
     int reads = 0;
@@ -3729,10 +3749,10 @@ void test_monitor_with_reader_and_writer() {
 
     // Data and room to write wake only their own waiters.
     ASSERT_EQ(write(fds[1], "r", 1), 1);
-    Complete(loop, reader);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, reader));
     ASSERT_EQ(byte, 'r');
     Drain(fds[1]);
-    Complete(loop, writer);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, writer));
     loop.Step();
     loop.Step();
     ASSERT_FALSE(monitor.done());
@@ -3741,8 +3761,8 @@ void test_monitor_with_reader_and_writer() {
     auto last = CountRead(handle, &byte, &reads);
     loop.Step();
     close(fds[1]);
-    Complete(loop, monitor);
-    Complete(loop, last);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, monitor));
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, last));
     loop.Step();
     loop.Step();
     ASSERT_EQ(hangups, 1);
@@ -3770,7 +3790,7 @@ void test_monitor_ignores_unread_data() {
     ASSERT_FALSE(monitor.done());
 
     close(fds[1]);
-    Complete(loop, monitor);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, monitor));
     ASSERT_EQ(hangups, 1);
 }
 
@@ -3797,11 +3817,11 @@ void test_monitor_after_hangup() {
     loop.Step();
     ASSERT_EQ(hangups, 0);
     ASSERT_EQ(shutdown(fds[1], SHUT_WR), 0);
-    Complete(loop, twice);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, twice));
     ASSERT_EQ(hangups, 2);
 
     auto late = CountHangups(handle, 1, &hangups);
-    Complete(loop, late);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, late));
     ASSERT_EQ(hangups, 3);
     close(fds[1]);
 }
@@ -3820,7 +3840,7 @@ void test_monitor_pipe() {
     loop.Step();
     ASSERT_FALSE(monitor.done());
     close(p[1]);
-    Complete(loop, monitor);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, monitor));
     ASSERT_EQ(hangups, 1);
 }
 
@@ -3833,7 +3853,7 @@ void test_monitor_pipe_write_end() {
         int p[2];
         ASSERT_EQ(pipe(p), 0);
         TFileHandle handle(p[1], loop.Poller());
-        FillSendBuffer(p[1]);
+        ASSERT_NO_FATAL_FAILURE(FillSendBuffer(p[1]));
         if (!registered) {
             close(p[0]);
         }
@@ -3906,7 +3926,7 @@ void test_destroyed_monitor_not_resumed() {
         if (stage != COLLECTED) {
             ASSERT_EQ(write(fds[1], "r", 1), 1);
         }
-        Complete(loop, reader);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, reader));
         ASSERT_EQ(reads, 1);
 
         // The descriptor still serves a new waiter, also after the hang-up.
@@ -3918,7 +3938,7 @@ void test_destroyed_monitor_not_resumed() {
             ASSERT_EQ(hangups, 0);
             ASSERT_EQ(shutdown(fds[1], SHUT_WR), 0);
         }
-        Complete(loop, *monitor);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, *monitor));
         loop.Step();
         loop.Step();
         ASSERT_EQ(hangups, 1);
@@ -4100,9 +4120,9 @@ void test_short_connections() {
             client.Future = SendRequest(loop.Poller(), address, kind == 1 ? "/slow" : "/", abort, &completed, &client.Stage);
         }
         loop.Step();
-        reap(clients);
-        reap(handlers);
-        checkServer();
+        ASSERT_NO_FATAL_FAILURE(reap(clients));
+        ASSERT_NO_FATAL_FAILURE(reap(handlers));
+        ASSERT_NO_FATAL_FAILURE(checkServer());
         while (inherited.size() > 16) {
             close(inherited.front());
             inherited.pop_front();
@@ -4111,9 +4131,9 @@ void test_short_connections() {
     const auto drain = TClock::now() + std::chrono::seconds(5);
     while (!clients.empty() && TClock::now() < drain) {
         loop.Step();
-        reap(clients);
-        reap(handlers);
-        checkServer();
+        ASSERT_NO_FATAL_FAILURE(reap(clients));
+        ASSERT_NO_FATAL_FAILURE(reap(handlers));
+        ASSERT_NO_FATAL_FAILURE(checkServer());
     }
     if (!clients.empty()) {
         const auto now = TClock::now();

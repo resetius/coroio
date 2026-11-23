@@ -167,7 +167,7 @@ void test_actor_context_notifier_factory() {
         }
         ASSERT_TRUE(ready());
     };
-    stepUntil([&] { return first.Waiting && second.Waiting; });
+    ASSERT_NO_FATAL_FAILURE(stepUntil([&] { return first.Waiting && second.Waiting; }));
     std::thread firstProducer([&] {
         first.Payload = 42;
         for (int i = 0; i < 1000; ++i) {
@@ -175,14 +175,14 @@ void test_actor_context_notifier_factory() {
         }
     });
     firstProducer.join();
-    stepUntil([&] { return first.Observed == 42 && system.ActorsSize() == 1; });
+    ASSERT_NO_FATAL_FAILURE(stepUntil([&] { return first.Observed == 42 && system.ActorsSize() == 1; }));
     ASSERT_EQ(second.Observed, 0);
     std::thread secondProducer([&] {
         second.Payload = 17;
         second.Notifier->Notify();
     });
     secondProducer.join();
-    stepUntil([&] { return second.Observed == 17 && system.ActorsSize() == 0; });
+    ASSERT_NO_FATAL_FAILURE(stepUntil([&] { return second.Observed == 17 && system.ActorsSize() == 0; }));
 }
 #endif
 
@@ -864,13 +864,13 @@ void test_behavior_actor() {
         ASSERT_TRUE(myActor.PodReceived.field5 == 1.618);
     };
 
-    check();
+    ASSERT_NO_FATAL_FAILURE(check());
 
     podNearBlob = SerializeNear<TPodMessage>(alloc, 41, 1.14, 'y', 1.71, 2.618);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
-    check();
+    ASSERT_NO_FATAL_FAILURE(check());
 }
 
 void test_envelope_reader() {
@@ -1173,7 +1173,7 @@ void test_envelope_reader_v2_copyout_live_blob() {
         ASSERT_TRUE(e2.has_value());
         r.Push(m3.data(), m3.size());
         r.Push(m3.data(), m3.size());
-        check(*e1, 'A');
+        ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
         ASSERT_TRUE(r.UsedChunksCount() == 1);
         e1.reset();
         ASSERT_TRUE(r.UsedChunksCount() == 0);
@@ -1193,11 +1193,11 @@ void test_envelope_reader_v2_copyout_live_blob() {
         r.Push(m2.data() + H + 8, P - 8);
         auto e2 = r.Pop();
         ASSERT_TRUE(e2.has_value());
-        check(*e2, 'B');
+        ASSERT_NO_FATAL_FAILURE(check(*e2, 'B'));
         for (int i = 0; i < 3; ++i) {
             r.Push(m3.data(), m3.size());
         }
-        check(*e1, 'A');
+        ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
         ASSERT_TRUE(r.UsedChunksCount() == 1);
         e1.reset();
         ASSERT_TRUE(r.UsedChunksCount() == 0);
@@ -1216,10 +1216,10 @@ void test_envelope_reader_v2_copyout_live_blob() {
         r.Push(m2.data() + H, P);
         auto e2 = r.Pop();
         ASSERT_TRUE(e2.has_value());
-        check(*e2, 'B');
+        ASSERT_NO_FATAL_FAILURE(check(*e2, 'B'));
         r.Push(m3.data(), m3.size());
         r.Push(m3.data(), m3.size());
-        check(*e1, 'A');
+        ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
         ASSERT_TRUE(r.UsedChunksCount() == 1);
         e1.reset();
         ASSERT_TRUE(r.UsedChunksCount() == 0);
@@ -1264,10 +1264,10 @@ void test_envelope_reader_v2_blob_outlives_reader() {
         e3 = r.Pop();
         ASSERT_TRUE(e1 && e2 && e3);
     }
-    check(*e3, 'C');
-    check(*e1, 'A');
+    ASSERT_NO_FATAL_FAILURE(check(*e3, 'C'));
+    ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
     e1.reset();
-    check(*e2, 'B');
+    ASSERT_NO_FATAL_FAILURE(check(*e2, 'B'));
     e2.reset();
     e3.reset();
 }
@@ -1977,11 +1977,11 @@ void test_payload_alignment_v2() {
             std::string lead(shift, 'z');
             SerializeFarInplace<TWrappedString>(stream, TActorId(1, 1, 1), TActorId(1, 2, 2), lead);
             frames.push_back({TWrappedString::MessageId, lead, false});
-            WriteAlignedFrames(stream, 50, rng, frames);
+            ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 50, rng, frames));
 
             TZeroCopyEnvelopeReaderV2 reader(chunkSize, 8);
             auto envelopes = ReadInPieces(reader, stream.Data.data(), stream.Committed, chunkSize, rng);
-            CheckAlignedFrames(envelopes, frames);
+            ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
         }
     }
 }
@@ -1990,10 +1990,10 @@ void test_payload_alignment_v1_and_plain_reader() {
     std::mt19937 rng(12);
     TVectorStream stream;
     std::vector<TExpectedFrame> frames;
-    WriteAlignedFrames(stream, 200, rng, frames);
+    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 200, rng, frames));
 
     TZeroCopyEnvelopeReader v1(64);
-    CheckAlignedFrames(ReadInPieces(v1, stream.Data.data(), stream.Committed, 300, rng), frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(ReadInPieces(v1, stream.Data.data(), stream.Committed, 300, rng), frames));
 
     TEnvelopeReader plain;
     plain.Push(stream.Data.data(), stream.Committed);
@@ -2001,7 +2001,7 @@ void test_payload_alignment_v1_and_plain_reader() {
     while (auto e = plain.Pop()) {
         envelopes.push_back(std::move(*e));
     }
-    CheckAlignedFrames(envelopes, frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
 void test_payload_alignment_wire_format() {
@@ -2065,7 +2065,7 @@ void test_node_aligns_payloads() {
     std::mt19937 rng(13);
     std::vector<TExpectedFrame> frames;
     for (int batch = 0; batch < 3; ++batch) {
-        WriteAlignedFrames(stream, 10, rng, frames);
+        ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 10, rng, frames));
         std::string bytes(1 + rng() % 60, 'e');
         node.Send(TEnvelope{
             .Sender = TActorId(1, 1, 1),
@@ -2106,7 +2106,7 @@ void test_node_aligns_payloads() {
     while (envelopes.size() < frames.size() && TClock::now() < deadline) {
         loop.Step();
     }
-    CheckAlignedFrames(envelopes, frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
 // An id in the padding bits would break the stream, even with an empty blob
@@ -2184,7 +2184,7 @@ void test_node_realigns_queue_on_reconnect() {
     // Queued behind the blocked write, padded for the old stream
     std::mt19937 rng(14);
     std::vector<TExpectedFrame> frames;
-    WriteAlignedFrames(stream, 20, rng, frames);
+    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 20, rng, frames));
 
     // Reading resumes on the second connection; 10 more rounds come after the reconnect
     const size_t total = frames.size() + 30;
@@ -2222,12 +2222,12 @@ void test_node_realigns_queue_on_reconnect() {
     }
     ASSERT_TRUE(reconnected);
     // Padded relative to the new stream
-    WriteAlignedFrames(stream, 10, rng, frames);
+    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 10, rng, frames));
     node.Drain();
     while (envelopes.size() < total && TClock::now() < deadline) {
         loop.Step();
     }
-    CheckAlignedFrames(envelopes, frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
 void test_intrusive_list_stale_tag() {
