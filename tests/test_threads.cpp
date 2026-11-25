@@ -2,6 +2,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -243,6 +245,45 @@ void test_loop_thread_stop() {
     }
 }
 
+namespace {
+
+// Poll() fails on request, as a backend does when its system call fails
+struct TFailingPoller : TSelect {
+    void Poll() {
+        if (Fail.load()) {
+            throw std::runtime_error("poll failed");
+        }
+        TSelect::Poll();
+    }
+
+    std::atomic<bool> Fail = false;
+};
+
+} // namespace
+
+// An exception that ends the loop reaches the owner through Join(), once
+void test_loop_thread_rethrows_loop_exception() {
+    {
+        TLoopThread<TFailingPoller> io;
+        io.Start();
+        io.Poller().Fail.store(true);
+        std::string error;
+        try {
+            io.Join();
+        } catch (const std::runtime_error& ex) {
+            error = ex.what();
+        }
+        ASSERT_STREQ(error.c_str(), "poll failed");
+        io.Join();
+    }
+    {
+        // The destructor drops an exception that nobody asked for
+        TLoopThread<TFailingPoller> io;
+        io.Poller().Fail.store(true);
+        io.Start();
+    }
+}
+
 // Each producer pushes one item and waits until the consumer has seen it: the consumer
 // goes to sleep between the rounds, and a lost wakeup stops the test at the deadline.
 template<typename TPoller>
@@ -374,6 +415,7 @@ int main(int argc, char* argv[]) {
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_loop_thread_runs_coroutines);
     ADD_TEST(my_unit_poller, test_loop_thread_stop);
+    ADD_TEST(unit_test, test_loop_thread_rethrows_loop_exception);
     ADD_TEST(my_unit_poller, test_mpsc_queue_wakes_consumer);
     ADD_TEST(my_unit_poller, test_mpsc_queue_stop_under_load);
 #endif

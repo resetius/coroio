@@ -4,7 +4,9 @@
 #include <coroio/loop.hpp>
 
 #include <cassert>
+#include <exception>
 #include <thread>
+#include <utility>
 
 namespace NNet {
 
@@ -37,6 +39,13 @@ namespace NNet {
  * `Stop()` does not destroy coroutines: they stay suspended where they were and
  * are destroyed by their owners after `Join()`. A stopped loop cannot be started again.
  *
+ * A poller closes a descriptor at its next poll, and after `Join()` there is none:
+ * sockets and notifiers destroyed after `Join()` stay open until the TLoopThread is
+ * destroyed, and only then does a peer see the end of its stream.
+ *
+ * An exception that ends the loop (a poller throws `std::system_error` when its
+ * system call fails) does not terminate the process: `Join()` rethrows it.
+ *
  * @tparam TPoller Polling backend; any POSIX poller.
  *
  * @note Not available on Windows: it needs `TNotifier`.
@@ -52,10 +61,13 @@ public:
     TLoopThread(const TLoopThread&) = delete;
     TLoopThread& operator=(const TLoopThread&) = delete;
 
-    /// Stops the loop and joins the thread.
+    /// Stops the loop and joins the thread. An exception of the loop that `Join()` has
+    /// not rethrown is dropped. No other thread may call `Stop()` during or after this.
     ~TLoopThread() {
         Stop();
-        Join();
+        if (Thread_.joinable()) {
+            Thread_.join();
+        }
     }
 
     /// The poller of the loop. See the class description for which thread may use it.
@@ -67,12 +79,18 @@ public:
     void Start() {
         assert(!Thread_.joinable() && "TLoopThread is started once");
         Thread_ = std::thread([this] {
-            Loop_.Loop();
+            try {
+                Loop_.Loop();
+            } catch (...) {
+                // Read by Join() after join(), which orders it after this write
+                Error_ = std::current_exception();
+            }
         });
     }
 
     /**
-     * @brief Asks the loop to exit. Any thread, any number of times.
+     * @brief Asks the loop to exit. Any thread, any number of times, while the
+     *        TLoopThread is alive: not concurrently with its destructor.
      *
      * The loop exits after the step that sees the request, so a coroutine that never
      * returns to the loop delays it. A request made before `Start()` is kept: the loop
@@ -82,10 +100,17 @@ public:
         StopNotifier_.Notify();
     }
 
-    /// Waits for the loop thread to exit. Owner thread only; does nothing if it is not running.
+    /**
+     * @brief Waits for the loop thread to exit. Owner thread only; does nothing if it is not running.
+     *
+     * @throws The exception that ended the loop, if there was one; only the first call after it.
+     */
     void Join() {
         if (Thread_.joinable()) {
             Thread_.join();
+        }
+        if (Error_) {
+            std::rethrow_exception(std::exchange(Error_, nullptr));
         }
     }
 
@@ -100,6 +125,7 @@ private:
     TLoop<TPoller> Loop_;
     TNotifier<TPoller> StopNotifier_;
     TFuture<void> Stopper_;
+    std::exception_ptr Error_;
     std::thread Thread_;
 };
 
