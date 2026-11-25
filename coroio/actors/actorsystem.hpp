@@ -330,6 +330,22 @@ public:
         }
     }
 
+    /**
+     * @brief Starts the actor system with outbound network serving only.
+     *
+     * `Serve(TSocket)` without the accept loop, for a system whose inbound connections
+     * are served elsewhere: `TThreadedInbound` reads them on an I/O thread and hands
+     * their envelopes to `Send`.
+     */
+    void ServeOutbound() {
+        Serve();
+        for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
+            if (Nodes[i].Node) {
+                Handles.emplace_back(OutboundServe(i));
+            }
+        }
+    }
+
 private:
     void GcIterationSync();
     void ExecuteSync();
