@@ -7,6 +7,7 @@ set(SOURCES
   address.cpp
   init.cpp
   notifier.cpp
+  read_buffer.cpp
   socket.cpp
   sockutils.cpp
   ssl.cpp
