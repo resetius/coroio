@@ -785,6 +785,55 @@ void test_threaded_node_destroyed_during_blocked_write() {
     ASSERT_EQ(peer.Accepted(), 1u);
 }
 
+// Small segments pile up while the peer is down, then large batches go out one per
+// Drain(). The node keeps at most MaxSpareSegments written segments, so the large
+// batches cannot grow a pool as deep as the backlog was.
+template<typename TPoller>
+void test_threaded_node_bounds_spare_segments() {
+    using TNodeType = TThreadedNode<TPoller>;
+    constexpr int count = 200;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TMessagesFactory factory;
+    RegisterTypes(factory);
+    const int port = GetFreePort();
+    TThreadedSetup<TPoller> setup(loop, factory, port);
+    auto& node = setup.Node;
+
+    size_t expected = 0;
+    for (int i = 0; i < count; ++i) {
+        SerializeFarInplace<TText>(node, Sender, Recipient, std::string("small"));
+        node.Drain();
+        expected += TextFrame("small").size();
+    }
+    ASSERT_EQ(node.SpareSegments(), 0u);
+
+    size_t received = 0;
+    TPeer<TPoller> peer(loop.Poller(), port);
+    peer.OnData = [&](size_t, const char*, size_t size) {
+        received += size;
+    };
+    // Every queued segment is written and comes back; only the cap stays
+    ASSERT_TRUE(Pump(loop, [&] { return received == expected && node.SpareSegments() == TNodeType::MaxSpareSegments; }));
+
+    const std::string large(64 * 1024, 'x');
+    size_t maxSpare = 0;
+    for (int i = 0; i < count; ++i) {
+        SerializeFarInplace<TText>(node, Sender, Recipient, large);
+        node.Drain();
+        expected += TextFrame(large).size();
+        maxSpare = std::max(maxSpare, node.SpareSegments());
+    }
+    ASSERT_TRUE(Pump(loop, [&] {
+        maxSpare = std::max(maxSpare, node.SpareSegments());
+        return received == expected;
+    }));
+    setup.Stop();
+    ASSERT_TRUE(maxSpare <= TNodeType::MaxSpareSegments);
+    ASSERT_TRUE(node.SpareSegments() <= TNodeType::MaxSpareSegments);
+    ASSERT_EQ(peer.Accepted(), 1u);
+}
+
 class TPonger : public IBehaviorActor, public TBehavior<TPonger, TPing> {
 public:
     TPonger() {
@@ -1073,6 +1122,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_threaded_node_connects_on_request);
     ADD_TEST(my_unit_poller, test_threaded_node_rejects_message_id_with_padding_bits);
     ADD_TEST(my_unit_poller, test_threaded_node_destroyed_during_blocked_write);
+    ADD_TEST(my_unit_poller, test_threaded_node_bounds_spare_segments);
     ADD_TEST(my_unit_poller, test_threaded_node_actor_systems);
     ADD_TEST(my_unit_poller, test_threaded_node_stress);
     ADD_TEST(my_unit_poller, test_threaded_node_stress_many_producers);

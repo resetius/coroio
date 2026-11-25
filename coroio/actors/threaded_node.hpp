@@ -33,7 +33,8 @@ struct TNullLock {
  *   into its buffer. `Drain` hands the segment to the I/O side and takes an empty one.
  * - **I/O side** — a coroutine on `poller`, which belongs to another thread (see
  *   `TLoopThread`). It connects, writes the segments to the socket in the order of
- *   `Drain` calls and returns them for reuse.
+ *   `Drain` calls and returns them for reuse. At most `MaxSpareSegments` written
+ *   segments are kept, each with the memory of its buffer; the rest are deleted.
  *
  * The byte stream is the one `TNode` writes: reconnects with a 1 s back-off, a failed
  * write drops the segment being written, and a reconnected stream starts with a filler
@@ -73,6 +74,10 @@ class TThreadedNode final : public INode {
 public:
     using TSocket = typename TPoller::TSocket;
 
+    /// Written segments kept for reuse. One goes around while the I/O side keeps up;
+    /// the others let a short backlog pass without allocating.
+    static constexpr size_t MaxSpareSegments = 4;
+
     /**
      * @brief Constructs the node and its I/O coroutine; does not connect.
      *
@@ -91,7 +96,9 @@ public:
         , Notifier_(poller)
         , Current_(std::make_unique<TSegment>())
         , Server_(Serve())
-    { }
+    {
+        Spare_.reserve(MaxSpareSegments);
+    }
 
     /// Destroys the coroutine first: a pending write reads `Writing_` and a pending
     /// connect uses `Socket_`, see `~TNode`.
@@ -102,6 +109,11 @@ public:
     /// The lock of the producer side. Hold it across `Offset`, `Acquire` and `Commit` of one frame.
     TLock& ProducerLock() {
         return Lock_;
+    }
+
+    /// Written segments kept for reuse now, at most `MaxSpareSegments`. Any thread.
+    size_t SpareSegments() const {
+        return SpareCount_.load(std::memory_order_relaxed);
     }
 
     // The framing is the one of TNode::Send
@@ -171,10 +183,7 @@ public:
         if (Current_->Size == 0) {
             return;
         }
-        auto next = Returned_.Pop();
-        if (!next) {
-            next = std::make_unique<TSegment>();
-        }
+        auto next = TakeSpare();
         next->Size = 0;
         SealedBytes_ += Current_->Size;
         Current_.swap(next);
@@ -189,7 +198,7 @@ public:
 
 private:
     // Frames committed between two Drain calls. The buffer keeps its memory while the
-    // segment goes around: producer, Queue_, I/O side, Returned_, producer.
+    // segment goes around: producer, Queue_, I/O side, Returned_, Spare_, producer.
     struct TSegment : TMpscQueueNode<TSegment> {
         std::vector<char> Data;
         size_t Size = 0;
@@ -211,11 +220,47 @@ private:
         }
     }
 
+    // Producer side. The segment returned last comes first: a backlog that has passed
+    // does not send every spare buffer around again.
+    std::unique_ptr<TSegment> TakeSpare() {
+        while (auto segment = Returned_.Pop()) {
+            Spare_.push_back(std::move(segment));
+        }
+        if (Spare_.empty()) {
+            return std::make_unique<TSegment>();
+        }
+        auto segment = std::move(Spare_.back());
+        Spare_.pop_back();
+        SpareCount_.fetch_sub(1, std::memory_order_relaxed);
+        return segment;
+    }
+
+    // I/O side. Only this side adds to SpareCount_, so the check keeps it at the cap.
+    // Relaxed: the count orders nothing, the segment itself goes through Returned_.
+    void Recycle(std::unique_ptr<TSegment> segment) {
+        if (SpareCount_.load(std::memory_order_relaxed) < MaxSpareSegments) {
+            SpareCount_.fetch_add(1, std::memory_order_relaxed);
+            Returned_.Push(std::move(segment));
+        }
+    }
+
+    // I/O side. A failed wait is logged and tried again after the back-off: the node
+    // then looks for work once a second instead of never.
+    TFuture<void> WaitForWork() {
+        try {
+            co_await Notifier_.Wait();
+            co_return;
+        } catch (const std::exception& ex) {
+            std::cerr << "Error waiting for frames to " << HostPort_.ToString() << ": " << ex.what() << "\n";
+        }
+        co_await Poller_.Sleep(std::chrono::milliseconds(1000));
+    }
+
     // I/O side
     TFuture<void> Serve() {
         // Like TNode, the node does not connect before StartConnect() or Drain()
         while (!ConnectRequested_.load(std::memory_order_acquire)) {
-            co_await Notifier_.Wait();
+            co_await WaitForWork();
         }
         while (true) {
             if (!Connected_) {
@@ -223,7 +268,7 @@ private:
             }
             Writing_ = Queue_.Pop();
             if (!Writing_) {
-                co_await Notifier_.Wait();
+                co_await WaitForWork();
                 continue;
             }
             // Counted before the write: a failed write drops the rest of the segment, as in TNode
@@ -235,7 +280,7 @@ private:
                 Connected_ = false;
             }
             WrittenBytes_ += Writing_->Size;
-            Returned_.Push(std::move(Writing_));
+            Recycle(std::move(Writing_));
             // A write that does not block does not suspend: without this a busy producer
             // would keep the loop from its other coroutines. Not Yield(): resumed from
             // a timer, it is resumed again in the same pass, before the poller polls.
@@ -292,11 +337,15 @@ private:
     TMpscQueue<TSegment> Queue_;
     TMpscQueue<TSegment> Returned_;
     std::atomic<bool> ConnectRequested_ = false;
+    // Segments in Returned_ and Spare_
+    std::atomic<size_t> SpareCount_ = 0;
     mutable std::atomic<uint64_t> AlignState_ = 0;
 
     // Producer side, under Lock_
     TLock Lock_;
     std::unique_ptr<TSegment> Current_;
+    // Taken from Returned_, newest last
+    std::vector<std::unique_ptr<TSegment>> Spare_;
     // Bytes of the segments handed to the I/O side
     uint64_t SealedBytes_ = 0;
     bool Active_ = false;
