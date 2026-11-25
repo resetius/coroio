@@ -6,9 +6,7 @@
 #include <exception>
 #include <mutex>
 #include <random>
-#include <stdarg.h>
 #include <stddef.h>
-#include <setjmp.h>
 #ifndef _WIN32
 #include <netinet/tcp.h>
 #endif
@@ -28,28 +26,24 @@
 #include "testlib.h"
 #include "perf.h"
 
-extern "C" {
-#include <cmocka.h>
-}
-
 using namespace NNet;
 using namespace NNet::NActors;
 
-void test_actor_id_equality(void**) {
+void test_actor_id_equality() {
     const TActorId actor(1, 64, 2);
     const TActorId same(1, 64, 2);
     const TActorId otherNode(2, 64, 2);
     const TActorId otherActor(1, 65, 2);
     const TActorId otherCookie(1, 64, 3);
-    assert_true(actor == same);
-    assert_false(actor != same);
-    assert_true(TActorId{} == TActorId{});
-    assert_true(TActorId{} != actor);
+    ASSERT_TRUE(actor == same);
+    ASSERT_FALSE(actor != same);
+    ASSERT_TRUE(TActorId{} == TActorId{});
+    ASSERT_TRUE(TActorId{} != actor);
     for (const auto& other : {otherNode, otherActor, otherCookie}) {
-        assert_false(actor == other);
-        assert_false(other == actor);
-        assert_true(actor != other);
-        assert_true(other != actor);
+        ASSERT_FALSE(actor == other);
+        ASSERT_FALSE(other == actor);
+        ASSERT_TRUE(actor != other);
+        ASSERT_TRUE(other != actor);
     }
 
     struct TCollisionHash {
@@ -58,20 +52,20 @@ void test_actor_id_equality(void**) {
     std::unordered_map<TActorId, int, TCollisionHash> values{
         {actor, 1}, {otherNode, 2}, {otherActor, 3}, {otherCookie, 4},
     };
-    assert_int_equal(values.size(), 4);
-    assert_int_equal(values.at(same), 1);
-    assert_int_equal(values.at(otherNode), 2);
-    assert_int_equal(values.at(otherActor), 3);
-    assert_int_equal(values.at(otherCookie), 4);
-    assert_int_equal(values.erase(same), 1);
-    assert_int_equal(values.size(), 3);
+    ASSERT_EQ(values.size(), 4);
+    ASSERT_EQ(values.at(same), 1);
+    ASSERT_EQ(values.at(otherNode), 2);
+    ASSERT_EQ(values.at(otherActor), 3);
+    ASSERT_EQ(values.at(otherCookie), 4);
+    ASSERT_EQ(values.erase(same), 1);
+    ASSERT_EQ(values.size(), 3);
 }
 
-void test_actor_id_hash(void**) {
+void test_actor_id_hash() {
     static_assert(noexcept(std::hash<TActorId>{}(TActorId{})));
     const TActorId actor(1, 64, 2);
     const TActorId same(1, 64, 2);
-    assert_true(std::hash<TActorId>{}(actor) == std::hash<TActorId>{}(same));
+    ASSERT_TRUE(std::hash<TActorId>{}(actor) == std::hash<TActorId>{}(same));
 
     std::unordered_map<TActorId, int> values;
     std::unordered_set<TActorId> actors;
@@ -80,25 +74,25 @@ void test_actor_id_hash(void**) {
         TActorId(0xffff, 0xffffffff, 0xffff),
     };
     for (size_t i = 0; i < ids.size(); ++i) {
-        assert_true(values.emplace(ids[i], i).second);
-        assert_true(actors.insert(ids[i]).second);
+        ASSERT_TRUE(values.emplace(ids[i], i).second);
+        ASSERT_TRUE(actors.insert(ids[i]).second);
     }
-    assert_false(values.emplace(same, -1).second);
-    assert_false(actors.insert(same).second);
-    assert_int_equal(values.size(), ids.size());
-    assert_int_equal(actors.size(), ids.size());
+    ASSERT_FALSE(values.emplace(same, -1).second);
+    ASSERT_FALSE(actors.insert(same).second);
+    ASSERT_EQ(values.size(), ids.size());
+    ASSERT_EQ(actors.size(), ids.size());
     for (size_t i = 0; i < ids.size(); ++i) {
-        assert_int_equal(values.at(ids[i]), i);
-        assert_int_equal(actors.count(ids[i]), 1);
+        ASSERT_EQ(values.at(ids[i]), i);
+        ASSERT_EQ(actors.count(ids[i]), 1);
     }
-    assert_int_equal(values.erase(same), 1);
-    assert_int_equal(actors.erase(same), 1);
-    assert_int_equal(values.count(actor), 0);
-    assert_int_equal(actors.count(actor), 0);
+    ASSERT_EQ(values.erase(same), 1);
+    ASSERT_EQ(actors.erase(same), 1);
+    ASSERT_EQ(values.count(actor), 0);
+    ASSERT_EQ(actors.count(actor), 0);
 }
 
 #ifndef _WIN32
-void test_actor_system_notifier_factory(void**) {
+void test_actor_system_notifier_factory() {
     TLoop<TDefaultPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TActorSystem system(&loop.Poller());
@@ -113,18 +107,18 @@ void test_actor_system_notifier_factory(void**) {
     while (!firstWait.done() && TClock::now() < deadline) {
         loop.Step();
     }
-    assert_true(firstWait.done());
+    ASSERT_TRUE(firstWait.done());
     firstWait.await_resume();
-    assert_false(secondWait.done());
+    ASSERT_FALSE(secondWait.done());
     auto next = first->Wait();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
     second->Notify();
     while (!secondWait.done() && TClock::now() < deadline) {
         loop.Step();
     }
-    assert_true(secondWait.done());
+    ASSERT_TRUE(secondWait.done());
     secondWait.await_resume();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
 }
 
 struct TNotifierActorState {
@@ -155,7 +149,7 @@ private:
     TNotifierActorState& State_;
 };
 
-void test_actor_context_notifier_factory(void**) {
+void test_actor_context_notifier_factory() {
     TLoop<TDefaultPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifierActorState first;
@@ -171,9 +165,9 @@ void test_actor_context_notifier_factory(void**) {
         while (!ready() && TClock::now() < deadline) {
             loop.Step();
         }
-        assert_true(ready());
+        ASSERT_TRUE(ready());
     };
-    stepUntil([&] { return first.Waiting && second.Waiting; });
+    ASSERT_NO_FATAL_FAILURE(stepUntil([&] { return first.Waiting && second.Waiting; }));
     std::thread firstProducer([&] {
         first.Payload = 42;
         for (int i = 0; i < 1000; ++i) {
@@ -181,14 +175,14 @@ void test_actor_context_notifier_factory(void**) {
         }
     });
     firstProducer.join();
-    stepUntil([&] { return first.Observed == 42 && system.ActorsSize() == 1; });
-    assert_int_equal(second.Observed, 0);
+    ASSERT_NO_FATAL_FAILURE(stepUntil([&] { return first.Observed == 42 && system.ActorsSize() == 1; }));
+    ASSERT_EQ(second.Observed, 0);
     std::thread secondProducer([&] {
         second.Payload = 17;
         second.Notifier->Notify();
     });
     secondProducer.join();
-    stepUntil([&] { return second.Observed == 17 && system.ActorsSize() == 0; });
+    ASSERT_NO_FATAL_FAILURE(stepUntil([&] { return second.Observed == 17 && system.ActorsSize() == 0; }));
 }
 #endif
 
@@ -270,7 +264,7 @@ class TResponderActor : public ICoroActor {
     }
 };
 
-void test_ping_pong(void**) {
+void test_ping_pong() {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
@@ -289,7 +283,7 @@ void test_ping_pong(void**) {
     }
 }
 
-void test_ask_respond(void**) {
+void test_ask_respond() {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
@@ -336,7 +330,7 @@ struct TAsyncBoss : IBehaviorActor, TBehavior<TAsyncBoss, TAsyncGo, TAsyncDone> 
 
 // Async handlers of several actors serving one sender must all complete:
 // the pending future belongs to the receiving actor, not to the sender.
-void test_async_handler_scatter_gather(void**) {
+void test_async_handler_scatter_gather() {
     TLoop<TDefaultPoller> loop;
     TActorSystem actorSystem(&loop.Poller());
 
@@ -353,7 +347,7 @@ void test_async_handler_scatter_gather(void**) {
     while (TClock::now() < until && done < 4) {
         loop.Step();
     }
-    assert_int_equal(done, 4);
+    ASSERT_EQ(done, 4);
 }
 
 class TSingleShotActor : public IActor {
@@ -365,7 +359,7 @@ public:
     }
 };
 
-void test_schedule(void**) {
+void test_schedule() {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
@@ -385,10 +379,10 @@ void test_schedule(void**) {
 
     auto elapsed = std::chrono::steady_clock::now() - now;
     std::cerr << "Elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms\n";
-    assert_true(elapsed >= std::chrono::milliseconds(1000));
+    ASSERT_TRUE(elapsed >= std::chrono::milliseconds(1000));
 }
 
-void test_schedule_cancel(void**) {
+void test_schedule_cancel() {
     TLoop<TDefaultPoller> loop;
 
     TActorSystem actorSystem(&loop.Poller());
@@ -412,32 +406,32 @@ void test_schedule_cancel(void**) {
 
     auto elapsed = std::chrono::steady_clock::now() - now;
     std::cerr << "Elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms\n";
-    assert_true(elapsed >= std::chrono::milliseconds(10) && elapsed < std::chrono::milliseconds(1000));
+    ASSERT_TRUE(elapsed >= std::chrono::milliseconds(10) && elapsed < std::chrono::milliseconds(1000));
 }
 
 struct TEmptyMessage {
     bool operator==(const TEmptyMessage&) const = default;
 };
 
-void test_serialize_zero_size(void**) {
+void test_serialize_zero_size() {
     TAllocator allocator;
 
     // Serialize
     auto blob = SerializeNear<TEmptyMessage>(allocator);
-    assert_true(blob.Size == 0);
-    assert_true(blob.Data.get() == nullptr);
+    ASSERT_TRUE(blob.Size == 0);
+    ASSERT_TRUE(blob.Data.get() == nullptr);
 
     // Deserialize
     auto deserialized = DeserializeNear<TEmptyMessage>(blob);
-    assert_true(deserialized == TEmptyMessage{});
+    ASSERT_TRUE(deserialized == TEmptyMessage{});
 
     void* ptr = blob.Data.get();
     auto farBlob = SerializeFar<TEmptyMessage>(std::move(blob));
-    assert_true(farBlob.Data.get() == ptr);
-    assert_true(farBlob.Size == 0);
+    ASSERT_TRUE(farBlob.Data.get() == ptr);
+    ASSERT_TRUE(farBlob.Size == 0);
 
     auto deserializedFar = DeserializeFar<TEmptyMessage>(farBlob);
-    assert_true(deserializedFar == TEmptyMessage{});
+    ASSERT_TRUE(deserializedFar == TEmptyMessage{});
 }
 
 struct TPodMessage {
@@ -449,32 +443,32 @@ struct TPodMessage {
     double field5;
 };
 
-void test_serialize_pod(void**) {
+void test_serialize_pod() {
     TPodMessage msg{1, 2.0, 'c', 4.0, 5.0};
     TAllocator allocator;
 
     // Serialize
     auto blob = SerializeNear<TPodMessage>(allocator, std::move(msg));
-    assert_true(blob.Size == sizeof(TPodMessage));
+    ASSERT_TRUE(blob.Size == sizeof(TPodMessage));
 
     // Deserialize
     auto& deserialized = DeserializeNear<TPodMessage>(blob);
-    assert_true(deserialized.field1 == 1);
-    assert_true(deserialized.field2 == 2.0);
-    assert_true(deserialized.field3 == 'c');
-    assert_true(deserialized.field4 == 4.0);
-    assert_true(deserialized.field5 == 5.0);
+    ASSERT_TRUE(deserialized.field1 == 1);
+    ASSERT_TRUE(deserialized.field2 == 2.0);
+    ASSERT_TRUE(deserialized.field3 == 'c');
+    ASSERT_TRUE(deserialized.field4 == 4.0);
+    ASSERT_TRUE(deserialized.field5 == 5.0);
 
     void* ptr = blob.Data.get();
     auto farBlob = SerializeFar<TPodMessage>(std::move(blob));
-    assert_true(farBlob.Data.get() == ptr);
+    ASSERT_TRUE(farBlob.Data.get() == ptr);
 
     auto& deserializedFar = DeserializeFar<TPodMessage>(farBlob);
-    assert_true(deserializedFar.field1 == 1);
-    assert_true(deserializedFar.field2 == 2.0);
-    assert_true(deserializedFar.field3 == 'c');
-    assert_true(deserializedFar.field4 == 4.0);
-    assert_true(deserializedFar.field5 == 5.0);
+    ASSERT_TRUE(deserializedFar.field1 == 1);
+    ASSERT_TRUE(deserializedFar.field2 == 2.0);
+    ASSERT_TRUE(deserializedFar.field3 == 'c');
+    ASSERT_TRUE(deserializedFar.field4 == 4.0);
+    ASSERT_TRUE(deserializedFar.field5 == 5.0);
 }
 
 struct TWrappedString {
@@ -516,25 +510,25 @@ void DeserializeFrom<TWrappedString>(TWrappedString& obj, TBlob& blob) {
 
 } // namespace NNet::NActors
 
-void test_serialize_non_pod(void**) {
+void test_serialize_non_pod() {
     TAllocator allocator;
     std::string str = "Hello, World!";
     auto size = str.size();
     auto blob = SerializeNear<std::string>(allocator, std::move(str));
 
     std::string& deserialized = DeserializeNear<std::string>(blob);
-    assert_string_equal(deserialized.c_str(), "Hello, World!");
+    ASSERT_STREQ(deserialized.c_str(), "Hello, World!");
 
     void* ptr = blob.Data.get();
     auto farBlob = SerializeFar<std::string>(std::move(blob));
-    assert_true(farBlob.Data.get() != ptr);
-    assert_true(farBlob.Size == size);
+    ASSERT_TRUE(farBlob.Data.get() != ptr);
+    ASSERT_TRUE(farBlob.Size == size);
 
     std::string deserializedFar = DeserializeFar<std::string>(farBlob);
-    assert_string_equal(deserializedFar.c_str(), "Hello, World!");
+    ASSERT_STREQ(deserializedFar.c_str(), "Hello, World!");
 }
 
-void test_serialize_messages_factory(void**) {
+void test_serialize_messages_factory() {
     TMessagesFactory factory;
     TAllocator alloc;
 
@@ -543,17 +537,17 @@ void test_serialize_messages_factory(void**) {
     auto blob = SerializeNear<TPodMessage>(alloc, 1, 2.0, 'c', 4.0, 5.0);
     auto blobSize = blob.Size;
     auto farBlob = factory.SerializeFar(TPodMessage::MessageId, std::move(blob));
-    assert_true(farBlob.Size == blobSize);
+    ASSERT_TRUE(farBlob.Size == blobSize);
 
     auto& mes = DeserializeFar<TPodMessage>(farBlob);
-    assert_true(mes.field1 == 1);
-    assert_true(mes.field2 == 2.0);
-    assert_true(mes.field3 == 'c');
-    assert_true(mes.field4 == 4.0);
-    assert_true(mes.field5 == 5.0);
+    ASSERT_TRUE(mes.field1 == 1);
+    ASSERT_TRUE(mes.field2 == 2.0);
+    ASSERT_TRUE(mes.field3 == 'c');
+    ASSERT_TRUE(mes.field4 == 4.0);
+    ASSERT_TRUE(mes.field5 == 5.0);
 }
 
-void test_serialize_messages_factory_non_pod(void**) {
+void test_serialize_messages_factory_non_pod() {
     TMessagesFactory factory;
     TAllocator alloc;
 
@@ -564,7 +558,7 @@ void test_serialize_messages_factory_non_pod(void**) {
     auto farBlob = factory.SerializeFar(TWrappedString::MessageId, std::move(blob));
 
     auto mes = DeserializeFar<TWrappedString>(farBlob);
-    assert_string_equal(mes.Value.c_str(), "Hello, World!");
+    ASSERT_STREQ(mes.Value.c_str(), "Hello, World!");
 }
 
 // An output stream like TNode's outbound buffer: Acquire reserves, Commit publishes.
@@ -588,7 +582,7 @@ struct TVectorStream {
     }
 };
 
-void test_serialize_far_inplace_round_trip(void**) {
+void test_serialize_far_inplace_round_trip() {
     TVectorStream stream;
     const TActorId sender(1, 2, 3);
     const TActorId recipient(2, 5, 7);
@@ -596,24 +590,24 @@ void test_serialize_far_inplace_round_trip(void**) {
     SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string());
 
     // The payload is exactly SerializedSize bytes after the header.
-    assert_int_equal(stream.Committed, 2 * sizeof(THeader) + 13);
+    ASSERT_EQ(stream.Committed, 2 * sizeof(THeader) + 13);
     THeader header;
     std::memcpy(&header, stream.Data.data(), sizeof(header));
-    assert_true(header.Sender == sender);
-    assert_true(header.Recipient == recipient);
-    assert_int_equal(header.MessageId, TWrappedString::MessageId);
-    assert_int_equal(header.Size, 13);
+    ASSERT_TRUE(header.Sender == sender);
+    ASSERT_TRUE(header.Recipient == recipient);
+    ASSERT_EQ(header.MessageId, TWrappedString::MessageId);
+    ASSERT_EQ(header.Size, 13);
 
     TZeroCopyEnvelopeReader reader;
     reader.Push(stream.Data.data(), stream.Committed);
     auto first = reader.Pop();
-    assert_true(first.has_value());
-    assert_string_equal(DeserializeFar<TWrappedString>(first->Blob).Value.c_str(), "Hello, World!");
+    ASSERT_TRUE(first.has_value());
+    ASSERT_STREQ(DeserializeFar<TWrappedString>(first->Blob).Value.c_str(), "Hello, World!");
     auto second = reader.Pop();
-    assert_true(second.has_value());
-    assert_int_equal(second->Blob.Size, 0);
-    assert_true(DeserializeFar<TWrappedString>(second->Blob).Value.empty());
-    assert_false(reader.Pop().has_value());
+    ASSERT_TRUE(second.has_value());
+    ASSERT_EQ(second->Blob.Size, 0);
+    ASSERT_TRUE(DeserializeFar<TWrappedString>(second->Blob).Value.empty());
+    ASSERT_FALSE(reader.Pop().has_value());
 }
 
 // Keeps the received bytes instead of copying them.
@@ -633,7 +627,7 @@ void DeserializeFrom<TBlobView>(TBlobView& obj, TBlob& blob) {
 
 } // namespace NNet::NActors
 
-void test_deserialize_far_takes_blob(void**) {
+void test_deserialize_far_takes_blob() {
     const std::string text = "kept, not copied";
     TBlob blob{
         .Data = TBlob::TRawPtr(::operator new(text.size()), TBlobDeleter{[](void* ptr) {
@@ -646,11 +640,11 @@ void test_deserialize_far_takes_blob(void**) {
     void* bytes = blob.Data.get();
 
     auto message = DeserializeFar<TBlobView>(blob);
-    assert_true(message.Bytes.get() == bytes);
-    assert_int_equal(message.Size, text.size());
-    assert_true(blob.Data.get() == nullptr);
-    assert_int_equal(blob.Size, 0);
-    assert_memory_equal(message.Bytes.get(), text.data(), text.size());
+    ASSERT_TRUE(message.Bytes.get() == bytes);
+    ASSERT_EQ(message.Size, text.size());
+    ASSERT_TRUE(blob.Data.get() == nullptr);
+    ASSERT_EQ(blob.Size, 0);
+    ASSERT_EQ(0, memcmp(message.Bytes.get(), text.data(), text.size()));
 }
 
 // Claims a payload one byte over the 32-bit size field of THeader.
@@ -668,12 +662,12 @@ size_t SerializedSize<TOversizedMessage>(const TOversizedMessage&) {
 
 template<>
 void SerializeTo<TOversizedMessage>(const TOversizedMessage&, std::span<char>) {
-    fail_msg("SerializeTo must not run for an oversized payload");
+    FAIL() << "SerializeTo must not run for an oversized payload";
 }
 
 } // namespace NNet::NActors
 
-void test_serialize_far_rejects_oversized_payload(void**) {
+void test_serialize_far_rejects_oversized_payload() {
     TVectorStream stream;
     bool thrown = false;
     try {
@@ -681,31 +675,31 @@ void test_serialize_far_rejects_oversized_payload(void**) {
     } catch (const std::length_error&) {
         thrown = true;
     }
-    assert_true(thrown);
+    ASSERT_TRUE(thrown);
     // The size is checked before anything is reserved.
-    assert_true(stream.Data.empty());
-    assert_int_equal(stream.Committed, 0);
+    ASSERT_TRUE(stream.Data.empty());
+    ASSERT_EQ(stream.Committed, 0);
 }
 
-void test_unbounded_vector_queue(void**) {
+void test_unbounded_vector_queue() {
     NNet::NActors::TUnboundedVectorQueue<int> queue(8);
 
     for (int i = 0; i < 10; ++i) {
         queue.Push(int(i));
     }
 
-    assert_true(queue.Size() == 10);
-    assert_false(queue.Empty());
+    ASSERT_TRUE(queue.Size() == 10);
+    ASSERT_FALSE(queue.Empty());
 
-    assert_true(queue.Front() == 0);
+    ASSERT_TRUE(queue.Front() == 0);
 
     for (int i = 0; i < 10; ++i) {
-        assert_true(queue.Front() == i);
+        ASSERT_TRUE(queue.Front() == i);
         queue.Pop();
     }
 
-    assert_true(queue.Size() == 0);
-    assert_true(queue.Empty());
+    ASSERT_TRUE(queue.Size() == 0);
+    ASSERT_TRUE(queue.Empty());
 
 
     for (int j = 5; j < 15; ++j) {
@@ -713,15 +707,15 @@ void test_unbounded_vector_queue(void**) {
             queue.Push(int(i));
         }
 
-        assert_true(queue.Size() == j);
+        ASSERT_TRUE(queue.Size() == j);
 
         for (int i = 0; i < j; ++i) {
-            assert_true(queue.Front() == i);
+            ASSERT_TRUE(queue.Front() == i);
             queue.Pop();
         }
 
-        assert_true(queue.Size() == 0);
-        assert_true(queue.Empty());
+        ASSERT_TRUE(queue.Size() == 0);
+        ASSERT_TRUE(queue.Empty());
     }
 }
 
@@ -747,7 +741,7 @@ struct TLocalBehavior : public TBehavior<TLocalBehavior, TLocalMessage> {
     }
 };
 
-void test_local_message(void**) {
+void test_local_message() {
     TAllocator alloc;
     TMessagesFactory factory;
     factory.RegisterSerializer<TLocalMessage>();
@@ -756,11 +750,11 @@ void test_local_message(void**) {
     IBehavior& dispatcher = behavior;
     dispatcher.Receive(TLocalMessage::MessageId,
         SerializeNear<TLocalMessage>(alloc, std::make_unique<int>(42)), {});
-    assert_int_equal(behavior.Received, 42);
+    ASSERT_EQ(behavior.Received, 42);
 
     dispatcher.Receive(TLocalMessage::MessageId,
         TBlob{nullptr, 0, TBlob::PointerType::Far}, {});
-    assert_int_equal(behavior.Unknown, 1);
+    ASSERT_EQ(behavior.Unknown, 1);
 
     bool rejected = false;
     try {
@@ -769,7 +763,7 @@ void test_local_message(void**) {
     } catch (const std::runtime_error&) {
         rejected = true;
     }
-    assert_true(rejected);
+    ASSERT_TRUE(rejected);
 
     TActorSystem actorSystem(nullptr);
     actorSystem.Send<TLocalMessage>(TActorId(), TActorId(2, 1, 1), std::make_unique<int>(7));
@@ -793,7 +787,7 @@ struct TRichBehavior : public TBehavior<TRichBehavior, TWrappedString, TPodMessa
     }
 };
 
-void test_behavior(void**) {
+void test_behavior() {
     TAllocator alloc;
     TActorSystem actorSystem(nullptr);
     auto behavior = std::unique_ptr<IBehavior>(new TRichBehavior());
@@ -808,12 +802,12 @@ void test_behavior(void**) {
     behavior->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
     auto& richBehavior = static_cast<TRichBehavior&>(*behavior);
-    assert_true(richBehavior.StrReceived.Value == "Hello, World!");
-    assert_true(richBehavior.PodReceived.field1 == 42);
-    assert_true(richBehavior.PodReceived.field2 == 3.14);
-    assert_true(richBehavior.PodReceived.field3 == 'x');
-    assert_true(richBehavior.PodReceived.field4 == 2.71);
-    assert_true(richBehavior.PodReceived.field5 == 1.618);
+    ASSERT_TRUE(richBehavior.StrReceived.Value == "Hello, World!");
+    ASSERT_TRUE(richBehavior.PodReceived.field1 == 42);
+    ASSERT_TRUE(richBehavior.PodReceived.field2 == 3.14);
+    ASSERT_TRUE(richBehavior.PodReceived.field3 == 'x');
+    ASSERT_TRUE(richBehavior.PodReceived.field4 == 2.71);
+    ASSERT_TRUE(richBehavior.PodReceived.field5 == 1.618);
 }
 
 struct TMyActor : public IBehaviorActor,
@@ -845,7 +839,7 @@ struct TMyActor : public IBehaviorActor,
     void HandleUnknownMessage(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) {}
 };
 
-void test_behavior_actor(void**) {
+void test_behavior_actor() {
     TAllocator alloc;
     TActorSystem actorSystem(nullptr);
 
@@ -862,27 +856,27 @@ void test_behavior_actor(void**) {
 
     auto check = [&] () {
         auto& myActor = static_cast<TMyActor&>(*actor);
-        assert_true(myActor.StrReceived.Value == "Hello, World!");
-        assert_true(myActor.PodReceived.field1 == 42);
-        assert_true(myActor.PodReceived.field2 == 3.14);
-        assert_true(myActor.PodReceived.field3 == 'x');
-        assert_true(myActor.PodReceived.field4 == 2.71);
-        assert_true(myActor.PodReceived.field5 == 1.618);
+        ASSERT_TRUE(myActor.StrReceived.Value == "Hello, World!");
+        ASSERT_TRUE(myActor.PodReceived.field1 == 42);
+        ASSERT_TRUE(myActor.PodReceived.field2 == 3.14);
+        ASSERT_TRUE(myActor.PodReceived.field3 == 'x');
+        ASSERT_TRUE(myActor.PodReceived.field4 == 2.71);
+        ASSERT_TRUE(myActor.PodReceived.field5 == 1.618);
     };
 
-    check();
+    ASSERT_NO_FATAL_FAILURE(check());
 
     podNearBlob = SerializeNear<TPodMessage>(alloc, 41, 1.14, 'y', 1.71, 2.618);
     ctx.reset(new (&actorSystem) TMockActorContext(TActorId(), TActorId(), &actorSystem));
     actor->Receive(TPodMessage::MessageId, std::move(podNearBlob), std::move(ctx));
 
-    check();
+    ASSERT_NO_FATAL_FAILURE(check());
 }
 
-void test_envelope_reader(void**) {
+void test_envelope_reader() {
     TAllocator alloc;
     TZeroCopyEnvelopeReader reader(64);
-    assert_true(reader.Size() == 0);
+    ASSERT_TRUE(reader.Size() == 0);
 
     for (int i = 0; i < 2; ++i) {
         THeader header {
@@ -891,24 +885,24 @@ void test_envelope_reader(void**) {
             .MessageId = TMessageId(i),
         };
         auto buffer = reader.Acquire(sizeof(THeader));
-        assert_true(buffer.size() == sizeof(THeader));
+        ASSERT_TRUE(buffer.size() == sizeof(THeader));
         std::memcpy(buffer.data(), &header, sizeof(THeader));
         reader.Commit(sizeof(THeader));
     }
 
     auto envelope = reader.Pop();
-    assert_true(envelope.has_value());
-    assert_true(envelope->Sender == TActorId(1, 1, 1));
-    assert_true(envelope->Recipient == TActorId(1, 2, 2));
-    assert_true(envelope->MessageId == 0);
-    assert_true(envelope->Blob.Size == 0);
+    ASSERT_TRUE(envelope.has_value());
+    ASSERT_TRUE(envelope->Sender == TActorId(1, 1, 1));
+    ASSERT_TRUE(envelope->Recipient == TActorId(1, 2, 2));
+    ASSERT_TRUE(envelope->MessageId == 0);
+    ASSERT_TRUE(envelope->Blob.Size == 0);
 
     envelope = reader.Pop();
-    assert_true(envelope.has_value());
-    assert_true(envelope->Sender == TActorId(1, 1, 1));
-    assert_true(envelope->Recipient == TActorId(1, 2, 2));
-    assert_true(envelope->MessageId == 1);
-    assert_true(envelope->Blob.Size == 0);
+    ASSERT_TRUE(envelope.has_value());
+    ASSERT_TRUE(envelope->Sender == TActorId(1, 1, 1));
+    ASSERT_TRUE(envelope->Recipient == TActorId(1, 2, 2));
+    ASSERT_TRUE(envelope->MessageId == 1);
+    ASSERT_TRUE(envelope->Blob.Size == 0);
 
     {
         THeader header {
@@ -918,22 +912,22 @@ void test_envelope_reader(void**) {
             .Size = 0
         };
         auto buffer = reader.Acquire(sizeof(THeader));
-        assert_true(buffer.size() == 16);
+        ASSERT_TRUE(buffer.size() == 16);
         std::memcpy(buffer.data(), &header, 16);
         reader.Commit(buffer.size());
 
         buffer = reader.Acquire(8);
-        assert_true(buffer.size() == 8);
+        ASSERT_TRUE(buffer.size() == 8);
         std::memcpy(buffer.data(), ((char*)&header) + 16, 8);
         reader.Commit(buffer.size());
     }
 
     envelope = reader.Pop();
-    assert_true(envelope.has_value());
-    assert_true(envelope->Sender == TActorId(1, 1, 1));
-    assert_true(envelope->Recipient == TActorId(1, 2, 2));
-    assert_true(envelope->MessageId == 2);
-    assert_true(envelope->Blob.Size == 0);
+    ASSERT_TRUE(envelope.has_value());
+    ASSERT_TRUE(envelope->Sender == TActorId(1, 1, 1));
+    ASSERT_TRUE(envelope->Recipient == TActorId(1, 2, 2));
+    ASSERT_TRUE(envelope->MessageId == 2);
+    ASSERT_TRUE(envelope->Blob.Size == 0);
 
     for (int i = 0; i < 10; ++i) {
         auto nearBlob = SerializeNear<TWrappedString>(alloc, "Message " + std::to_string(i));
@@ -950,17 +944,17 @@ void test_envelope_reader(void**) {
 
     for (int i = 0; i < 10; ++i) {
         auto envelope = reader.Pop();
-        assert_true(envelope.has_value());
-        assert_true(envelope->MessageId == i);
+        ASSERT_TRUE(envelope.has_value());
+        ASSERT_TRUE(envelope->MessageId == i);
         auto&& str = DeserializeFar<TWrappedString>(envelope->Blob);
-        assert_string_equal(str.Value.c_str(), ("Message " + std::to_string(i)).c_str());
+        ASSERT_STREQ(str.Value.c_str(), ("Message " + std::to_string(i)).c_str());
     }
 }
 
-void test_envelope_reader_v2(void**) {
+void test_envelope_reader_v2() {
     TAllocator alloc;
     TZeroCopyEnvelopeReaderV2 reader(64, 32);
-    assert_true(reader.Size() == 0);
+    ASSERT_TRUE(reader.Size() == 0);
 
     for (int i = 0; i < 2; ++i) {
         THeader header {
@@ -969,31 +963,31 @@ void test_envelope_reader_v2(void**) {
             .MessageId = TMessageId(i),
         };
         auto buffer = reader.Acquire(sizeof(THeader));
-        assert_true(buffer.size() == sizeof(THeader));
+        ASSERT_TRUE(buffer.size() == sizeof(THeader));
         std::memcpy(buffer.data(), &header, sizeof(THeader));
         reader.Commit(sizeof(THeader));
     }
 
-    assert_true(reader.Size() == 2*sizeof(THeader));
+    ASSERT_TRUE(reader.Size() == 2*sizeof(THeader));
 
-    assert_true(reader.UsedChunksCount() == 0);
+    ASSERT_TRUE(reader.UsedChunksCount() == 0);
     auto envelope = reader.Pop();
-    assert_true(reader.UsedChunksCount() == 0);
+    ASSERT_TRUE(reader.UsedChunksCount() == 0);
 
-    assert_true(envelope.has_value());
-    assert_true(envelope->Sender == TActorId(1, 1, 1));
-    assert_true(envelope->Recipient == TActorId(1, 2, 2));
-    assert_true(envelope->MessageId == 0);
-    assert_true(envelope->Blob.Size == 0);
+    ASSERT_TRUE(envelope.has_value());
+    ASSERT_TRUE(envelope->Sender == TActorId(1, 1, 1));
+    ASSERT_TRUE(envelope->Recipient == TActorId(1, 2, 2));
+    ASSERT_TRUE(envelope->MessageId == 0);
+    ASSERT_TRUE(envelope->Blob.Size == 0);
 
     envelope = reader.Pop();
-    assert_true(reader.UsedChunksCount() == 0);
+    ASSERT_TRUE(reader.UsedChunksCount() == 0);
 
-    assert_true(envelope.has_value());
-    assert_true(envelope->Sender == TActorId(1, 1, 1));
-    assert_true(envelope->Recipient == TActorId(1, 2, 2));
-    assert_true(envelope->MessageId == 1);
-    assert_true(envelope->Blob.Size == 0);
+    ASSERT_TRUE(envelope.has_value());
+    ASSERT_TRUE(envelope->Sender == TActorId(1, 1, 1));
+    ASSERT_TRUE(envelope->Recipient == TActorId(1, 2, 2));
+    ASSERT_TRUE(envelope->MessageId == 1);
+    ASSERT_TRUE(envelope->Blob.Size == 0);
 
     {
         THeader header {
@@ -1003,18 +997,18 @@ void test_envelope_reader_v2(void**) {
             .Size = 0
         };
         auto buffer = reader.Acquire(sizeof(THeader));
-        assert_true(buffer.size() == 24);
+        ASSERT_TRUE(buffer.size() == 24);
         std::memcpy(buffer.data(), &header, sizeof(THeader));
         reader.Commit(buffer.size());
     }
 
     envelope = reader.Pop();
-    assert_true(reader.UsedChunksCount() == 0);
-    assert_true(envelope.has_value());
-    assert_true(envelope->Sender == TActorId(1, 1, 1));
-    assert_true(envelope->Recipient == TActorId(1, 2, 2));
-    assert_true(envelope->MessageId == 2);
-    assert_true(envelope->Blob.Size == 0);
+    ASSERT_TRUE(reader.UsedChunksCount() == 0);
+    ASSERT_TRUE(envelope.has_value());
+    ASSERT_TRUE(envelope->Sender == TActorId(1, 1, 1));
+    ASSERT_TRUE(envelope->Recipient == TActorId(1, 2, 2));
+    ASSERT_TRUE(envelope->MessageId == 2);
+    ASSERT_TRUE(envelope->Blob.Size == 0);
 
     for (int i = 0; i < 10; ++i) {
         auto nearBlob = SerializeNear<TWrappedString>(alloc, "Message " + std::to_string(i));
@@ -1032,17 +1026,16 @@ void test_envelope_reader_v2(void**) {
     for (int i = 0; i < 10; ++i) {
         auto envelope = reader.Pop();
         if (i == 0) {
-            assert_int_equal(reader.UsedChunksCount(), 1);
+            ASSERT_EQ(reader.UsedChunksCount(), 1);
         }
-        assert_true(envelope.has_value());
-        assert_true(envelope->MessageId == i);
+        ASSERT_TRUE(envelope.has_value());
+        ASSERT_TRUE(envelope->MessageId == i);
         auto&& str = DeserializeFar<TWrappedString>(envelope->Blob);
-        assert_string_equal(str.Value.c_str(), ("Message " + std::to_string(i)).c_str());
+        ASSERT_STREQ(str.Value.c_str(), ("Message " + std::to_string(i)).c_str());
     }
 }
 
-void test_envelope_reader_microbenchmark(void** arg) {
-    TState* state = static_cast<TState*>(*arg);
+void test_envelope_reader_microbenchmark(TState* state) {
     TAllocator alloc;
     TZeroCopyEnvelopeReader v1;
     TZeroCopyEnvelopeReaderV2 v2(1024 * 1024 * 1024, 2 * sizeof(THeader));
@@ -1106,7 +1099,7 @@ void test_envelope_reader_microbenchmark(void** arg) {
     std::cerr << "V2 Push: " << elapsedV2 << " ms, Pop: " << elapsedV2Pop << " ms\n";
 }
 
-void test_envelope_reader_v2_recycled_chunk(void**) {
+void test_envelope_reader_v2_recycled_chunk() {
     constexpr size_t payloadSize = 32;
     // A chunk holds exactly one header and one payload
     TZeroCopyEnvelopeReaderV2 reader(sizeof(THeader) + payloadSize, 16);
@@ -1126,23 +1119,23 @@ void test_envelope_reader_v2_recycled_chunk(void**) {
 
     feed(1);
     auto e1 = reader.Pop();
-    assert_true(e1.has_value());
+    ASSERT_TRUE(e1.has_value());
     feed(2);
-    assert_true(reader.UsedChunksCount() == 1);
+    ASSERT_TRUE(reader.UsedChunksCount() == 1);
     e1.reset();
-    assert_true(reader.UsedChunksCount() == 0);
+    ASSERT_TRUE(reader.UsedChunksCount() == 0);
     feed(3);
     auto e2 = reader.Pop();
-    assert_true(e2.has_value());
+    ASSERT_TRUE(e2.has_value());
     auto e3 = reader.Pop();
-    assert_true(e3.has_value());
-    assert_true(e3->MessageId == 3);
+    ASSERT_TRUE(e3.has_value());
+    ASSERT_TRUE(e3->MessageId == 3);
     e3.reset();
     e2.reset();
-    assert_true(reader.UsedChunksCount() == 0);
+    ASSERT_TRUE(reader.UsedChunksCount() == 0);
 }
 
-void test_envelope_reader_v2_copyout_live_blob(void**) {
+void test_envelope_reader_v2_copyout_live_blob() {
     constexpr size_t H = sizeof(THeader);
     constexpr size_t P = 32;
 
@@ -1161,7 +1154,7 @@ void test_envelope_reader_v2_copyout_live_blob(void**) {
     auto check = [](const TEnvelope& e, char expected) {
         const char* data = static_cast<const char*>(e.Blob.Data.get());
         for (size_t i = 0; i < P; ++i) {
-            assert_true(data[i] == expected);
+            ASSERT_TRUE(data[i] == expected);
         }
     };
 
@@ -1174,16 +1167,16 @@ void test_envelope_reader_v2_copyout_live_blob(void**) {
         r.Push(m1.data(), m1.size());
         r.Push(m2.data(), 8);
         auto e1 = r.Pop();
-        assert_true(e1.has_value());
+        ASSERT_TRUE(e1.has_value());
         r.Push(m2.data() + 8, m2.size() - 8);
         auto e2 = r.Pop();
-        assert_true(e2.has_value());
+        ASSERT_TRUE(e2.has_value());
         r.Push(m3.data(), m3.size());
         r.Push(m3.data(), m3.size());
-        check(*e1, 'A');
-        assert_true(r.UsedChunksCount() == 1);
+        ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
+        ASSERT_TRUE(r.UsedChunksCount() == 1);
         e1.reset();
-        assert_true(r.UsedChunksCount() == 0);
+        ASSERT_TRUE(r.UsedChunksCount() == 0);
     }
 
     // The payload is split across chunks, the copying CopyOut drains a chunk with a live blob
@@ -1195,19 +1188,19 @@ void test_envelope_reader_v2_copyout_live_blob(void**) {
         r.Push(m1.data(), m1.size());
         r.Push(m2.data(), H + 8);
         auto e1 = r.Pop();
-        assert_true(e1.has_value());
-        assert_true(!r.Pop().has_value());
+        ASSERT_TRUE(e1.has_value());
+        ASSERT_TRUE(!r.Pop().has_value());
         r.Push(m2.data() + H + 8, P - 8);
         auto e2 = r.Pop();
-        assert_true(e2.has_value());
-        check(*e2, 'B');
+        ASSERT_TRUE(e2.has_value());
+        ASSERT_NO_FATAL_FAILURE(check(*e2, 'B'));
         for (int i = 0; i < 3; ++i) {
             r.Push(m3.data(), m3.size());
         }
-        check(*e1, 'A');
-        assert_true(r.UsedChunksCount() == 1);
+        ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
+        ASSERT_TRUE(r.UsedChunksCount() == 1);
         e1.reset();
-        assert_true(r.UsedChunksCount() == 0);
+        ASSERT_TRUE(r.UsedChunksCount() == 0);
     }
 
     // The header ends exactly at the chunk end, the template CopyOut drains a chunk with a live blob
@@ -1219,21 +1212,21 @@ void test_envelope_reader_v2_copyout_live_blob(void**) {
         r.Push(m1.data(), m1.size());
         r.Push(m2.data(), H);
         auto e1 = r.Pop();
-        assert_true(e1.has_value());
+        ASSERT_TRUE(e1.has_value());
         r.Push(m2.data() + H, P);
         auto e2 = r.Pop();
-        assert_true(e2.has_value());
-        check(*e2, 'B');
+        ASSERT_TRUE(e2.has_value());
+        ASSERT_NO_FATAL_FAILURE(check(*e2, 'B'));
         r.Push(m3.data(), m3.size());
         r.Push(m3.data(), m3.size());
-        check(*e1, 'A');
-        assert_true(r.UsedChunksCount() == 1);
+        ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
+        ASSERT_TRUE(r.UsedChunksCount() == 1);
         e1.reset();
-        assert_true(r.UsedChunksCount() == 0);
+        ASSERT_TRUE(r.UsedChunksCount() == 0);
     }
 }
 
-void test_envelope_reader_v2_blob_outlives_reader(void**) {
+void test_envelope_reader_v2_blob_outlives_reader() {
     constexpr size_t H = sizeof(THeader);
     constexpr size_t P = 32;
 
@@ -1249,10 +1242,10 @@ void test_envelope_reader_v2_blob_outlives_reader(void**) {
         return m;
     };
     auto check = [](const TEnvelope& e, char fill) {
-        assert_true(e.Blob.Size == P);
+        ASSERT_TRUE(e.Blob.Size == P);
         const char* d = static_cast<const char*>(e.Blob.Data.get());
         for (size_t i = 0; i < P; ++i) {
-            assert_true(d[i] == fill);
+            ASSERT_TRUE(d[i] == fill);
         }
     };
 
@@ -1269,17 +1262,17 @@ void test_envelope_reader_v2_blob_outlives_reader(void**) {
         e2 = r.Pop();
         r.Push(m3.data(), m3.size());
         e3 = r.Pop();
-        assert_true(e1 && e2 && e3);
+        ASSERT_TRUE(e1 && e2 && e3);
     }
-    check(*e3, 'C');
-    check(*e1, 'A');
+    ASSERT_NO_FATAL_FAILURE(check(*e3, 'C'));
+    ASSERT_NO_FATAL_FAILURE(check(*e1, 'A'));
     e1.reset();
-    check(*e2, 'B');
+    ASSERT_NO_FATAL_FAILURE(check(*e2, 'B'));
     e2.reset();
     e3.reset();
 }
 
-void test_envelope_reader_v2_sealed_blob_outlives_reader(void**) {
+void test_envelope_reader_v2_sealed_blob_outlives_reader() {
     constexpr size_t H = sizeof(THeader);
     constexpr size_t P = 32;
 
@@ -1305,13 +1298,13 @@ void test_envelope_reader_v2_sealed_blob_outlives_reader(void**) {
         r.Push(m1.data(), m1.size());
         r.Push(m2.data(), m2.size());
         e1 = r.Pop();
-        assert_true(e1.has_value());
+        ASSERT_TRUE(e1.has_value());
         r.Push(m3.data(), m3.size());
     }
-    assert_true(e1->Blob.Size == P);
+    ASSERT_TRUE(e1->Blob.Size == P);
     const char* d = static_cast<const char*>(e1->Blob.Data.get());
     for (size_t i = 0; i < P; ++i) {
-        assert_true(d[i] == 'A');
+        ASSERT_TRUE(d[i] == 'A');
     }
     e1.reset();
 }
@@ -1356,7 +1349,7 @@ static size_t FeedV2(TZeroCopyEnvelopeReaderV2& reader, const std::vector<char>&
     return pos + size;
 }
 
-void test_envelope_reader_v2_blobs_released_on_other_threads(void**) {
+void test_envelope_reader_v2_blobs_released_on_other_threads() {
     constexpr int messages = 100000;
     constexpr int workers = 3;
     // Blobs held by each worker, so they outlive chunk rotations
@@ -1420,12 +1413,12 @@ void test_envelope_reader_v2_blobs_released_on_other_threads(void**) {
     for (auto& t : threads) {
         t.join();
     }
-    assert_int_equal(received.load(), messages);
-    assert_int_equal(invalid.load(), 0);
-    assert_int_equal(reader.UsedChunksCount(), 0);
+    ASSERT_EQ(received.load(), messages);
+    ASSERT_EQ(invalid.load(), 0);
+    ASSERT_EQ(reader.UsedChunksCount(), 0);
 }
 
-void test_envelope_reader_v2_reader_dies_while_blobs_released(void**) {
+void test_envelope_reader_v2_reader_dies_while_blobs_released() {
     constexpr int rounds = 200;
     constexpr int workers = 3;
 
@@ -1476,7 +1469,7 @@ void test_envelope_reader_v2_reader_dies_while_blobs_released(void**) {
             t.join();
         }
     }
-    assert_int_equal(invalid.load(), 0);
+    ASSERT_EQ(invalid.load(), 0);
 }
 
 struct TMyNode : public TIntrusiveListNode<TMyNode> {
@@ -1485,7 +1478,7 @@ struct TMyNode : public TIntrusiveListNode<TMyNode> {
     TMyNode(int value) : Value(value) {}
 };
 
-void test_intrusive_list(void**) {
+void test_intrusive_list() {
     using TList = TIntrusiveList<TMyNode>;
     TList list;
 
@@ -1496,13 +1489,13 @@ void test_intrusive_list(void**) {
     int i = 0;
     while (list.Front()) {
         auto node = list.Erase(list.Front());
-        assert_int_equal(node->Value, i);
+        ASSERT_EQ(node->Value, i);
         i++;
     }
-    assert_true(list.Size() == 0);
+    ASSERT_TRUE(list.Size() == 0);
 }
 
-void test_node_reconnects_to_dead_peer(void**) {
+void test_node_reconnects_to_dead_peer() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1541,17 +1534,17 @@ void test_node_reconnects_to_dead_peer(void**) {
         node.Drain();
     }
 
-    assert_true(done);
+    ASSERT_TRUE(done);
     // The first bytes on the wire are the real message, not a connection probe.
-    assert_true(received.Sender == sender);
-    assert_true(received.Recipient == recipient);
-    assert_int_equal(received.MessageId, 42);
-    assert_int_equal(received.Size, 0);
+    ASSERT_TRUE(received.Sender == sender);
+    ASSERT_TRUE(received.Recipient == recipient);
+    ASSERT_EQ(received.MessageId, 42);
+    ASSERT_EQ(received.Size, 0);
 }
 
 // Bytes queued while the node connects are flushed when the connection completes,
 // without another Drain() call.
-void test_node_flushes_bytes_queued_while_connecting(void**) {
+void test_node_flushes_bytes_queued_while_connecting() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1588,11 +1581,11 @@ void test_node_flushes_bytes_queued_while_connecting(void**) {
         loop.Step();
     }
 
-    assert_true(done);
-    assert_int_equal(received.MessageId, 42);
+    ASSERT_TRUE(done);
+    ASSERT_EQ(received.MessageId, 42);
 }
 
-void test_node_sets_tcp_nodelay(void**) {
+void test_node_sets_tcp_nodelay() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1628,17 +1621,17 @@ void test_node_sets_tcp_nodelay(void**) {
         loop.Step();
         node.Drain();
     }
-    assert_true(done);
+    ASSERT_TRUE(done);
 
     int value = 0;
     socklen_t len = sizeof(value);
-    assert_int_equal(getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char*) &value, &len), 0);
-    assert_true(value != 0);
+    ASSERT_EQ(getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char*) &value, &len), 0);
+    ASSERT_TRUE(value != 0);
 }
 
 // Destroying a node whose write is blocked must cancel the write before the send buffer
 // is freed (the kernel reads it on io_uring); run under ASan on every poller.
-void test_node_destroyed_during_blocked_write(void**) {
+void test_node_destroyed_during_blocked_write() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1667,7 +1660,7 @@ void test_node_destroyed_during_blocked_write(void**) {
             node.Drain();
             loop.Step();
         }
-        assert_true(accepted.has_value());
+        ASSERT_TRUE(accepted.has_value());
     }
     loop.Step();
 }
@@ -1692,7 +1685,7 @@ void SerializeTo<TFailingMessage>(const TFailingMessage&, std::span<char>) {
 
 } // namespace NNet::NActors
 
-void test_node_drops_failed_serialization(void**) {
+void test_node_drops_failed_serialization() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1732,11 +1725,11 @@ void test_node_drops_failed_serialization(void**) {
         loop.Step();
     }
 
-    assert_true(thrown);
-    assert_true(done);
+    ASSERT_TRUE(thrown);
+    ASSERT_TRUE(done);
     // The bytes reserved for the failed message never reach the wire.
-    assert_int_equal(received.MessageId, 42);
-    assert_int_equal(received.Size, 0);
+    ASSERT_EQ(received.MessageId, 42);
+    ASSERT_EQ(received.Size, 0);
 }
 
 class TRecordingActor : public IActor {
@@ -1754,7 +1747,7 @@ public:
 
 // A read that stops at the per-turn byte budget may leave complete envelopes
 // buffered; they must be delivered without waiting for more bytes.
-void test_inbound_envelope_after_yield(void**) {
+void test_inbound_envelope_after_yield() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1807,11 +1800,11 @@ void test_inbound_envelope_after_yield(void**) {
         loop.Step();
     }
 
-    assert_true(written);
-    assert_true(inboundClosed);
-    assert_int_equal(received.size(), 2);
-    assert_int_equal(received[0], 100);
-    assert_int_equal(received[1], 200);
+    ASSERT_TRUE(written);
+    ASSERT_TRUE(inboundClosed);
+    ASSERT_EQ(received.size(), 2);
+    ASSERT_EQ(received[0], 100);
+    ASSERT_EQ(received[1], 200);
 }
 
 class TStringCollector : public IBehaviorActor, public TBehavior<TStringCollector, TWrappedString> {
@@ -1833,7 +1826,7 @@ public:
 
 // A far message larger than the per-turn read budget is written in place by
 // SerializeFarInplace and read back by TBehavior through DeserializeFrom.
-void test_far_message_across_yield(void**) {
+void test_far_message_across_yield() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -1877,11 +1870,11 @@ void test_far_message_across_yield(void**) {
         loop.Step();
     }
 
-    assert_true(written);
-    assert_true(inboundClosed);
-    assert_int_equal(received.size(), 2);
-    assert_true(received[0] == large);
-    assert_string_equal(received[1].c_str(), "tail");
+    ASSERT_TRUE(written);
+    ASSERT_TRUE(inboundClosed);
+    ASSERT_EQ(received.size(), 2);
+    ASSERT_TRUE(received[0] == large);
+    ASSERT_STREQ(received[1].c_str(), "tail");
 }
 
 // Payloads that ask for 16-byte alignment on the wire
@@ -1941,15 +1934,15 @@ static void WriteAlignedFrames(TStream& stream, int rounds, std::mt19937& rng, s
 }
 
 static void CheckAlignedFrames(const std::vector<TEnvelope>& envelopes, const std::vector<TExpectedFrame>& frames) {
-    assert_int_equal(envelopes.size(), frames.size());
+    ASSERT_EQ(envelopes.size(), frames.size());
     for (size_t i = 0; i < frames.size(); ++i) {
         const auto& e = envelopes[i];
-        assert_int_equal(e.MessageId, frames[i].MessageId);
-        assert_int_equal(e.Blob.Size, frames[i].Payload.size());
+        ASSERT_EQ(e.MessageId, frames[i].MessageId);
+        ASSERT_EQ(e.Blob.Size, frames[i].Payload.size());
         if (e.Blob.Size > 0) {
-            assert_memory_equal(e.Blob.Data.get(), frames[i].Payload.data(), e.Blob.Size);
+            ASSERT_EQ(0, memcmp(e.Blob.Data.get(), frames[i].Payload.data(), e.Blob.Size));
             if (frames[i].Aligned) {
-                assert_int_equal(reinterpret_cast<uintptr_t>(e.Blob.Data.get()) % 16, 0);
+                ASSERT_EQ(reinterpret_cast<uintptr_t>(e.Blob.Data.get()) % 16, 0);
             }
         }
     }
@@ -1974,7 +1967,7 @@ static std::vector<TEnvelope> ReadInPieces(TReader& reader, const char* data, si
     return envelopes;
 }
 
-void test_payload_alignment_v2(void**) {
+void test_payload_alignment_v2() {
     std::mt19937 rng(11);
     for (size_t chunkSize : {64, 100, 129, 256, 1000, 4096}) {
         // A leading string of 0..15 bytes shifts every later frame
@@ -1984,23 +1977,23 @@ void test_payload_alignment_v2(void**) {
             std::string lead(shift, 'z');
             SerializeFarInplace<TWrappedString>(stream, TActorId(1, 1, 1), TActorId(1, 2, 2), lead);
             frames.push_back({TWrappedString::MessageId, lead, false});
-            WriteAlignedFrames(stream, 50, rng, frames);
+            ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 50, rng, frames));
 
             TZeroCopyEnvelopeReaderV2 reader(chunkSize, 8);
             auto envelopes = ReadInPieces(reader, stream.Data.data(), stream.Committed, chunkSize, rng);
-            CheckAlignedFrames(envelopes, frames);
+            ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
         }
     }
 }
 
-void test_payload_alignment_v1_and_plain_reader(void**) {
+void test_payload_alignment_v1_and_plain_reader() {
     std::mt19937 rng(12);
     TVectorStream stream;
     std::vector<TExpectedFrame> frames;
-    WriteAlignedFrames(stream, 200, rng, frames);
+    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 200, rng, frames));
 
     TZeroCopyEnvelopeReader v1(64);
-    CheckAlignedFrames(ReadInPieces(v1, stream.Data.data(), stream.Committed, 300, rng), frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(ReadInPieces(v1, stream.Data.data(), stream.Committed, 300, rng), frames));
 
     TEnvelopeReader plain;
     plain.Push(stream.Data.data(), stream.Committed);
@@ -2008,10 +2001,10 @@ void test_payload_alignment_v1_and_plain_reader(void**) {
     while (auto e = plain.Pop()) {
         envelopes.push_back(std::move(*e));
     }
-    CheckAlignedFrames(envelopes, frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
-void test_payload_alignment_wire_format(void**) {
+void test_payload_alignment_wire_format() {
     const TActorId sender(1, 2, 3);
     const TActorId recipient(2, 5, 7);
     TVectorStream stream;
@@ -2022,35 +2015,35 @@ void test_payload_alignment_wire_format(void**) {
     // A type without PayloadAlignment: the header and the payload, as before
     SerializeFarInplace<TWrappedString>(stream, sender, recipient, std::string("abc"));
     const THeader plain{sender, recipient, TWrappedString::MessageId, 3};
-    assert_int_equal(stream.Committed, 3 + sizeof(THeader) + 3);
-    assert_memory_equal(stream.Data.data() + 3, &plain, sizeof(plain));
-    assert_memory_equal(stream.Data.data() + 3 + sizeof(THeader), "abc", 3);
+    ASSERT_EQ(stream.Committed, 3 + sizeof(THeader) + 3);
+    ASSERT_EQ(0, memcmp(stream.Data.data() + 3, &plain, sizeof(plain)));
+    ASSERT_EQ(0, memcmp(stream.Data.data() + 3 + sizeof(THeader), "abc", 3));
 
     const TPlainPod pod{{1, 2}};
     const size_t podStart = stream.Committed;
     SerializeFarInplace<TPlainPod>(stream, sender, recipient, pod);
     const THeader podHeader{sender, recipient, TPlainPod::MessageId, sizeof(TPlainPod)};
-    assert_int_equal(stream.Committed, podStart + sizeof(THeader) + sizeof(TPlainPod));
-    assert_memory_equal(stream.Data.data() + podStart, &podHeader, sizeof(podHeader));
-    assert_memory_equal(stream.Data.data() + podStart + sizeof(THeader), &pod, sizeof(pod));
+    ASSERT_EQ(stream.Committed, podStart + sizeof(THeader) + sizeof(TPlainPod));
+    ASSERT_EQ(0, memcmp(stream.Data.data() + podStart, &podHeader, sizeof(podHeader)));
+    ASSERT_EQ(0, memcmp(stream.Data.data() + podStart + sizeof(THeader), &pod, sizeof(pod)));
 
     // An aligned type: zero padding up to the next multiple of 16, its length in the top bits of the id
     const size_t start = stream.Committed;
     SerializeFarInplace<TAlignedBytes>(stream, sender, recipient, TAlignedBytes{"xyz"});
     const uint32_t padding = (16 - (start + sizeof(THeader)) % 16) % 16;
-    assert_true(padding > 0);
+    ASSERT_TRUE(padding > 0);
     const THeader aligned{sender, recipient, TAlignedBytes::MessageId | (padding << 28), 3};
-    assert_int_equal(stream.Committed, start + sizeof(THeader) + padding + 3);
-    assert_memory_equal(stream.Data.data() + start, &aligned, sizeof(aligned));
+    ASSERT_EQ(stream.Committed, start + sizeof(THeader) + padding + 3);
+    ASSERT_EQ(0, memcmp(stream.Data.data() + start, &aligned, sizeof(aligned)));
     for (uint32_t i = 0; i < padding; ++i) {
-        assert_int_equal(stream.Data[start + sizeof(THeader) + i], 0);
+        ASSERT_EQ(stream.Data[start + sizeof(THeader) + i], 0);
     }
-    assert_int_equal((start + sizeof(THeader) + padding) % 16, 0);
-    assert_memory_equal(stream.Data.data() + start + sizeof(THeader) + padding, "xyz", 3);
+    ASSERT_EQ((start + sizeof(THeader) + padding) % 16, 0);
+    ASSERT_EQ(0, memcmp(stream.Data.data() + start + sizeof(THeader) + padding, "xyz", 3));
 }
 
 // TNode pads relative to its own stream offset, across several drains and both send paths
-void test_node_aligns_payloads(void**) {
+void test_node_aligns_payloads() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -2072,7 +2065,7 @@ void test_node_aligns_payloads(void**) {
     std::mt19937 rng(13);
     std::vector<TExpectedFrame> frames;
     for (int batch = 0; batch < 3; ++batch) {
-        WriteAlignedFrames(stream, 10, rng, frames);
+        ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 10, rng, frames));
         std::string bytes(1 + rng() % 60, 'e');
         node.Send(TEnvelope{
             .Sender = TActorId(1, 1, 1),
@@ -2113,11 +2106,11 @@ void test_node_aligns_payloads(void**) {
     while (envelopes.size() < frames.size() && TClock::now() < deadline) {
         loop.Step();
     }
-    CheckAlignedFrames(envelopes, frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
 // An id in the padding bits would break the stream, even with an empty blob
-void test_node_rejects_message_id_with_padding_bits(void**) {
+void test_node_rejects_message_id_with_padding_bits() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -2133,15 +2126,15 @@ void test_node_rejects_message_id_with_padding_bits(void**) {
     } catch (const std::invalid_argument&) {
         thrown = true;
     }
-    assert_true(thrown);
-    assert_int_equal(node.Offset(), 0);
+    ASSERT_TRUE(thrown);
+    ASSERT_EQ(node.Offset(), 0);
     node.Send(TEnvelope{.Sender = TActorId(1, 1, 1), .Recipient = TActorId(2, 2, 2), .MessageId = MaxMessageId});
-    assert_int_equal(node.Offset(), sizeof(THeader));
+    ASSERT_EQ(node.Offset(), sizeof(THeader));
 }
 
 // Frames queued during a write that fails are re-padded for the next connection.
 // Not on Windows: its loopback takes the whole 64 MiB without a reading peer, so no write stays blocked.
-void test_node_realigns_queue_on_reconnect(void**) {
+void test_node_realigns_queue_on_reconnect() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
     auto& poller = loop.Poller();
@@ -2185,13 +2178,13 @@ void test_node_realigns_queue_on_reconnect(void**) {
     while (TClock::now() < blocked) {
         loop.Step();
     }
-    assert_true(first.has_value());
-    assert_int_equal(node.Offset() % 16, (sizeof(THeader) + large) % 16);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_EQ(node.Offset() % 16, (sizeof(THeader) + large) % 16);
 
     // Queued behind the blocked write, padded for the old stream
     std::mt19937 rng(14);
     std::vector<TExpectedFrame> frames;
-    WriteAlignedFrames(stream, 20, rng, frames);
+    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 20, rng, frames));
 
     // Reading resumes on the second connection; 10 more rounds come after the reconnect
     const size_t total = frames.size() + 30;
@@ -2221,23 +2214,23 @@ void test_node_realigns_queue_on_reconnect(void**) {
     linger reset{};
     reset.l_onoff = 1;
     reset.l_linger = 0;
-    assert_int_equal(setsockopt(first->Fd(), SOL_SOCKET, SO_LINGER, (const char*) &reset, sizeof(reset)), 0);
+    ASSERT_EQ(setsockopt(first->Fd(), SOL_SOCKET, SO_LINGER, (const char*) &reset, sizeof(reset)), 0);
     first->Close();
     const auto deadline = TClock::now() + std::chrono::seconds(10);
     while (!reconnected && TClock::now() < deadline) {
         loop.Step();
     }
-    assert_true(reconnected);
+    ASSERT_TRUE(reconnected);
     // Padded relative to the new stream
-    WriteAlignedFrames(stream, 10, rng, frames);
+    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 10, rng, frames));
     node.Drain();
     while (envelopes.size() < total && TClock::now() < deadline) {
         loop.Step();
     }
-    CheckAlignedFrames(envelopes, frames);
+    ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
-void test_intrusive_list_stale_tag(void**) {
+void test_intrusive_list_stale_tag() {
     using TList = TIntrusiveList<TMyNode>;
     TList first(1);
     TList second(2);
@@ -2246,30 +2239,29 @@ void test_intrusive_list_stale_tag(void**) {
     first.PushBack(std::make_unique<TMyNode>(1));
 
     auto erased = first.Erase(first.Front());
-    assert_true(erased->Tag == 0);
+    ASSERT_TRUE(erased->Tag == 0);
     auto popped = first.PopFront();
-    assert_true(popped->Tag == 0);
+    ASSERT_TRUE(popped->Tag == 0);
 
     TMyNode* erasedPtr = erased.get();
     TMyNode* poppedPtr = popped.get();
     second.PushBack(std::move(erased));
     second.PushBack(std::move(popped));
 
-    assert_true(first.Erase(erasedPtr) == nullptr);
-    assert_true(first.Erase(poppedPtr) == nullptr);
-    assert_true(second.Size() == 2);
+    ASSERT_TRUE(first.Erase(erasedPtr) == nullptr);
+    ASSERT_TRUE(first.Erase(poppedPtr) == nullptr);
+    ASSERT_TRUE(second.Size() == 2);
 }
+
+#define TEST_SUITE_NAME "test_actors"
+#define unit_test_prestate(f, s) RegisterTest(TEST_SUITE_NAME, #f, [s]() { f(s); })
 
 int main(int argc, char** argv) {
     TInitializer init;
 
     TState state;
 
-    std::vector<CMUnitTest> tests;
-    std::unordered_set<std::string> filters;
-    tests.reserve(500);
-
-    parse_filters(argc, argv, filters);
+    testing::InitGoogleTest(&argc, argv);
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--perf")) {
@@ -2291,53 +2283,53 @@ int main(int argc, char** argv) {
         }
     }
 
-    ADD_TEST(cmocka_unit_test, test_actor_id_equality);
-    ADD_TEST(cmocka_unit_test, test_actor_id_hash);
+    ADD_TEST(unit_test, test_actor_id_equality);
+    ADD_TEST(unit_test, test_actor_id_hash);
 #ifndef _WIN32
-    ADD_TEST(cmocka_unit_test, test_actor_system_notifier_factory);
-    ADD_TEST(cmocka_unit_test, test_actor_context_notifier_factory);
+    ADD_TEST(unit_test, test_actor_system_notifier_factory);
+    ADD_TEST(unit_test, test_actor_context_notifier_factory);
 #endif
-    ADD_TEST(cmocka_unit_test, test_ping_pong);
-    ADD_TEST(cmocka_unit_test, test_ask_respond);
-    ADD_TEST(cmocka_unit_test, test_async_handler_scatter_gather);
-    ADD_TEST(cmocka_unit_test, test_schedule);
-    ADD_TEST(cmocka_unit_test, test_schedule_cancel);
-    ADD_TEST(cmocka_unit_test, test_serialize_zero_size);
-    ADD_TEST(cmocka_unit_test, test_serialize_pod);
-    ADD_TEST(cmocka_unit_test, test_serialize_non_pod);
-    ADD_TEST(cmocka_unit_test, test_serialize_messages_factory);
-    ADD_TEST(cmocka_unit_test, test_serialize_far_inplace_round_trip);
-    ADD_TEST(cmocka_unit_test, test_deserialize_far_takes_blob);
-    ADD_TEST(cmocka_unit_test, test_serialize_far_rejects_oversized_payload);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_recycled_chunk);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_copyout_live_blob);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blob_outlives_reader);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_sealed_blob_outlives_reader);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_blobs_released_on_other_threads);
-    ADD_TEST(cmocka_unit_test, test_envelope_reader_v2_reader_dies_while_blobs_released);
-    ADD_TEST(cmocka_unit_test_prestate, test_envelope_reader_microbenchmark, &state);
-    ADD_TEST(cmocka_unit_test, test_serialize_messages_factory_non_pod);
-    ADD_TEST(cmocka_unit_test, test_unbounded_vector_queue);
-    ADD_TEST(cmocka_unit_test, test_behavior);
-    ADD_TEST(cmocka_unit_test, test_local_message);
-    ADD_TEST(cmocka_unit_test, test_behavior_actor);
-    ADD_TEST(cmocka_unit_test, test_intrusive_list);
-    ADD_TEST(cmocka_unit_test, test_node_reconnects_to_dead_peer);
-    ADD_TEST(cmocka_unit_test, test_node_drops_failed_serialization);
-    ADD_TEST(cmocka_unit_test, test_node_flushes_bytes_queued_while_connecting);
-    ADD_TEST(cmocka_unit_test, test_node_sets_tcp_nodelay);
-    ADD_TEST(cmocka_unit_test, test_node_destroyed_during_blocked_write);
-    ADD_TEST(cmocka_unit_test, test_inbound_envelope_after_yield);
-    ADD_TEST(cmocka_unit_test, test_far_message_across_yield);
-    ADD_TEST(cmocka_unit_test, test_intrusive_list_stale_tag);
-    ADD_TEST(cmocka_unit_test, test_payload_alignment_v2);
-    ADD_TEST(cmocka_unit_test, test_payload_alignment_v1_and_plain_reader);
-    ADD_TEST(cmocka_unit_test, test_payload_alignment_wire_format);
-    ADD_TEST(cmocka_unit_test, test_node_aligns_payloads);
-    ADD_TEST(cmocka_unit_test, test_node_rejects_message_id_with_padding_bits);
-    ADD_TEST(cmocka_unit_test, test_node_realigns_queue_on_reconnect);
+    ADD_TEST(unit_test, test_ping_pong);
+    ADD_TEST(unit_test, test_ask_respond);
+    ADD_TEST(unit_test, test_async_handler_scatter_gather);
+    ADD_TEST(unit_test, test_schedule);
+    ADD_TEST(unit_test, test_schedule_cancel);
+    ADD_TEST(unit_test, test_serialize_zero_size);
+    ADD_TEST(unit_test, test_serialize_pod);
+    ADD_TEST(unit_test, test_serialize_non_pod);
+    ADD_TEST(unit_test, test_serialize_messages_factory);
+    ADD_TEST(unit_test, test_serialize_far_inplace_round_trip);
+    ADD_TEST(unit_test, test_deserialize_far_takes_blob);
+    ADD_TEST(unit_test, test_serialize_far_rejects_oversized_payload);
+    ADD_TEST(unit_test, test_envelope_reader);
+    ADD_TEST(unit_test, test_envelope_reader_v2);
+    ADD_TEST(unit_test, test_envelope_reader_v2_recycled_chunk);
+    ADD_TEST(unit_test, test_envelope_reader_v2_copyout_live_blob);
+    ADD_TEST(unit_test, test_envelope_reader_v2_blob_outlives_reader);
+    ADD_TEST(unit_test, test_envelope_reader_v2_sealed_blob_outlives_reader);
+    ADD_TEST(unit_test, test_envelope_reader_v2_blobs_released_on_other_threads);
+    ADD_TEST(unit_test, test_envelope_reader_v2_reader_dies_while_blobs_released);
+    ADD_TEST(unit_test_prestate, test_envelope_reader_microbenchmark, &state);
+    ADD_TEST(unit_test, test_serialize_messages_factory_non_pod);
+    ADD_TEST(unit_test, test_unbounded_vector_queue);
+    ADD_TEST(unit_test, test_behavior);
+    ADD_TEST(unit_test, test_local_message);
+    ADD_TEST(unit_test, test_behavior_actor);
+    ADD_TEST(unit_test, test_intrusive_list);
+    ADD_TEST(unit_test, test_node_reconnects_to_dead_peer);
+    ADD_TEST(unit_test, test_node_drops_failed_serialization);
+    ADD_TEST(unit_test, test_node_flushes_bytes_queued_while_connecting);
+    ADD_TEST(unit_test, test_node_sets_tcp_nodelay);
+    ADD_TEST(unit_test, test_node_destroyed_during_blocked_write);
+    ADD_TEST(unit_test, test_inbound_envelope_after_yield);
+    ADD_TEST(unit_test, test_far_message_across_yield);
+    ADD_TEST(unit_test, test_intrusive_list_stale_tag);
+    ADD_TEST(unit_test, test_payload_alignment_v2);
+    ADD_TEST(unit_test, test_payload_alignment_v1_and_plain_reader);
+    ADD_TEST(unit_test, test_payload_alignment_wire_format);
+    ADD_TEST(unit_test, test_node_aligns_payloads);
+    ADD_TEST(unit_test, test_node_rejects_message_id_with_padding_bits);
+    ADD_TEST(unit_test, test_node_realigns_queue_on_reconnect);
 
-    return _cmocka_run_group_tests("test_actors", tests.data(), tests.size(), NULL, NULL);
+    return RUN_ALL_TESTS();
 }

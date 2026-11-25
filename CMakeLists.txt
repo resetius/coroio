@@ -11,7 +11,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 option(COROIO_BUILD_EXAMPLES "Build coroio examples" ${_COROIO_IS_ROOT})
-option(COROIO_BUILD_TESTS "Build coroio tests" ${_COROIO_IS_ROOT})
+option(COROIO_BUILD_TESTS "Build coroio tests" OFF)
 
 add_subdirectory(coroio)
 add_subdirectory(coroio/dns)

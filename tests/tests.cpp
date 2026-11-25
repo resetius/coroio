@@ -8,9 +8,7 @@
 #include <list>
 #include <exception>
 #include <sstream>
-#include <stdarg.h>
 #include <stddef.h>
-#include <setjmp.h>
 #include <signal.h>
 
 #include <coroio/all.hpp>
@@ -32,10 +30,6 @@
 #include <unordered_set>
 
 #include "testlib.h"
-
-extern "C" {
-#include <cmocka.h>
-}
 
 #include "server.crt"
 #include "server.key"
@@ -61,44 +55,44 @@ using namespace NNet;
 
 static constexpr std::chrono::milliseconds maxDiration(10000);
 
-void test_timespec(void**) {
+void test_timespec() {
     auto t1 =  std::chrono::seconds(4);
     auto t2 =  std::chrono::seconds(10);
     auto ts = GetTimespec(TTime(t1), TTime(t2), maxDiration);
-    assert_int_equal(ts.tv_sec, 6);
-    assert_int_equal(ts.tv_nsec, 0);
+    ASSERT_EQ(ts.tv_sec, 6);
+    ASSERT_EQ(ts.tv_nsec, 0);
 
     auto t3 =  std::chrono::milliseconds(10001);
     ts = GetTimespec(TTime(t1), TTime(t3), maxDiration);
-    assert_int_equal(ts.tv_sec, 6);
-    assert_int_equal(ts.tv_nsec, 1000*1000);
+    ASSERT_EQ(ts.tv_sec, 6);
+    ASSERT_EQ(ts.tv_nsec, 1000*1000);
 
     auto t4 = std::chrono::minutes(10000);
     ts = GetTimespec(TTime(t1), TTime(t4), maxDiration);
-    assert_int_equal(ts.tv_sec, 10);
-    assert_int_equal(ts.tv_nsec, 0);
+    ASSERT_EQ(ts.tv_sec, 10);
+    ASSERT_EQ(ts.tv_nsec, 0);
 }
 
-void test_addr(void**) {
+void test_addr() {
     int port = GetFreePort();
     TAddress address("127.0.0.1", port);
     auto low = std::get<sockaddr_in>(address.Addr());
-    assert_true(low.sin_port == ntohs(port));
-    assert_true(low.sin_family == AF_INET);
+    ASSERT_TRUE(low.sin_port == ntohs(port));
+    ASSERT_TRUE(low.sin_family == AF_INET);
 
     unsigned int value = ntohl((127<<24)|(0<<16)|(0<<8)|1);
-    assert_true(memcmp(&low.sin_addr, &value, 4) == 0);
+    ASSERT_TRUE(memcmp(&low.sin_addr, &value, 4) == 0);
 }
 
-void test_addr6(void**) {
+void test_addr6() {
     int port = GetFreePort();
     TAddress address("::1", port);
     auto low = std::get<sockaddr_in6>(address.Addr());
-    assert_true(low.sin6_port == ntohs(port));
-    assert_true(low.sin6_family == AF_INET6);
+    ASSERT_TRUE(low.sin6_port == ntohs(port));
+    ASSERT_TRUE(low.sin6_family == AF_INET6);
 }
 
-void test_bad_addr(void**) {
+void test_bad_addr() {
     int port = GetFreePort();
     int flag = 0;
     try {
@@ -106,11 +100,11 @@ void test_bad_addr(void**) {
     } catch (const std::exception& ex) {
         flag = 1;
     }
-    assert_int_equal(flag, 1);
+    ASSERT_EQ(flag, 1);
 }
 
 template<typename TPoller>
-void test_listen(void**) {
+void test_listen() {
     int port = GetFreePort();
     TLoop<TPoller> loop;
     TAddress address("127.0.0.1", port);
@@ -120,7 +114,7 @@ void test_listen(void**) {
 }
 
 template<typename TPoller>
-void test_accept(void**) {
+void test_accept() {
     int port = GetFreePort();
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -159,12 +153,12 @@ void test_accept(void**) {
 
     in_addr addr1 = std::get<sockaddr_in>(clientSocket.RemoteAddr()->Addr()).sin_addr;
     in_addr addr2 = std::get<sockaddr_in>(socket.LocalAddr()->Addr()).sin_addr;
-    assert_memory_equal(&addr1, &addr2, 4);
+    ASSERT_EQ(0, memcmp(&addr1, &addr2, 4));
 }
 
 #ifndef _WIN32
 template<typename TPoller>
-void test_cloexec(void**) {
+void test_cloexec() {
     int port = GetFreePort();
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
@@ -202,14 +196,14 @@ void test_cloexec(void**) {
 
     for (int fd : {socket.Fd(), client.Fd(), accepted.Fd()}) {
         int flags = fcntl(fd, F_GETFD);
-        assert_true(flags >= 0);
-        assert_true(flags & FD_CLOEXEC);
+        ASSERT_TRUE(flags >= 0);
+        ASSERT_TRUE(flags & FD_CLOEXEC);
     }
 }
 #endif
 
 template<typename TPoller>
-void test_write_after_connect(void**) {
+void test_write_after_connect() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -249,11 +243,11 @@ void test_write_after_connect(void**) {
         loop.Step();
     }
 
-    assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
+    ASSERT_TRUE(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
 
 template<typename TPoller>
-void test_write_after_accept(void**) {
+void test_write_after_accept() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -293,11 +287,11 @@ void test_write_after_accept(void**) {
         loop.Step();
     }
 
-    assert_true(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
+    ASSERT_TRUE(memcmp(&send_buf, &rcv_buf, sizeof(send_buf))==0);
 }
 
 template<typename TPoller>
-void test_read_write_same_socket(void**) {
+void test_read_write_same_socket() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -348,12 +342,12 @@ void test_read_write_same_socket(void**) {
         loop.Step();
     }
 
-    assert_string_equal(buf1, "Hello from client");
-    assert_string_equal(buf2, "Hello from server");
+    ASSERT_STREQ(buf1, "Hello from client");
+    ASSERT_STREQ(buf2, "Hello from server");
 }
 
 template<typename TPoller>
-void test_connection_timeout(void**) {
+void test_connection_timeout() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -390,11 +384,11 @@ void test_connection_timeout(void**) {
         loop.Step();
     }
 
-    assert_true(timeout);
+    ASSERT_TRUE(timeout);
 }
 
 template<typename TPoller>
-void test_connection_timeout_cleanup(void**) {
+void test_connection_timeout_cleanup() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -431,11 +425,11 @@ void test_connection_timeout_cleanup(void**) {
     // A wait left in the poller would resume the destroyed coroutine here.
     loop.Step();
 
-    assert_true(timeout);
+    ASSERT_TRUE(timeout);
 }
 
 template<typename TPoller>
-void test_remove_connection_timeout(void**) {
+void test_remove_connection_timeout() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -468,11 +462,11 @@ void test_remove_connection_timeout(void**) {
         loop.Step();
     }
 
-    assert_false(timeout);
+    ASSERT_FALSE(timeout);
 }
 
 template<typename TPoller>
-void test_connection_refused_on_write(void**) {
+void test_connection_refused_on_write() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -500,12 +494,12 @@ void test_connection_refused_on_write(void**) {
         loop.Step();
     }
 
-    assert_false(connected);
-    assert_int_equal(err.value(), ConnRefused);
+    ASSERT_FALSE(connected);
+    ASSERT_EQ(err.value(), ConnRefused);
 }
 
 template<typename TPoller>
-void test_connection_refused_on_read(void**) {
+void test_connection_refused_on_read() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -533,12 +527,12 @@ void test_connection_refused_on_read(void**) {
         loop.Step();
     }
 
-    assert_false(connected);
-    assert_int_equal(err.value(), ConnRefused);
+    ASSERT_FALSE(connected);
+    ASSERT_EQ(err.value(), ConnRefused);
 }
 
 template<typename TPoller>
-void test_connection_refused(void**) {
+void test_connection_refused() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -561,11 +555,11 @@ void test_connection_refused(void**) {
         loop.Step();
     }
 
-    assert_int_equal(err.value(), ConnRefused);
+    ASSERT_EQ(err.value(), ConnRefused);
 }
 
 template<typename TPoller>
-void test_timeout(void**) {
+void test_timeout() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
@@ -583,11 +577,11 @@ void test_timeout(void**) {
         loop.Step();
     }
 
-    assert_true(next >= now + timeout);
+    ASSERT_TRUE(next >= now + timeout);
 }
 
 template<typename TPoller>
-void test_timeout2(void**) {
+void test_timeout2() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     TLoop loop;
@@ -616,13 +610,13 @@ void test_timeout2(void**) {
         loop.Step();
     }
 
-    assert_true(val1 == 1);
-    assert_true(val2 == 2);
-    assert_true(val == 2);
+    ASSERT_TRUE(val1 == 1);
+    ASSERT_TRUE(val2 == 2);
+    ASSERT_TRUE(val == 2);
 }
 
 template<typename TPoller>
-void test_read_write_full(void**) {
+void test_read_write_full() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
@@ -662,11 +656,11 @@ void test_read_write_full(void**) {
         loop.Step();
     }
 
-    assert_memory_equal(data.data(), received.data(), data.size());
+    ASSERT_EQ(0, memcmp(data.data(), received.data(), data.size()));
 }
 
 template<typename TPoller>
-void test_read_until(void**) {
+void test_read_until() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
@@ -714,14 +708,14 @@ line9
         loop.Step();
     }
 
-    assert_true(received.size() == 3);
-    assert_true(received[0] == "line1\n");
-    assert_true(received[1] == "line2\n");
-    assert_true(received[2] == "ine3\n");
+    ASSERT_TRUE(received.size() == 3);
+    ASSERT_TRUE(received[0] == "line1\n");
+    ASSERT_TRUE(received[1] == "line2\n");
+    ASSERT_TRUE(received[2] == "ine3\n");
 }
 
 template<typename TPoller>
-void test_read_write_struct(void**) {
+void test_read_write_struct() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
@@ -765,11 +759,11 @@ void test_read_write_struct(void**) {
         loop.Step();
     }
 
-    assert_memory_equal(data.data.data(), received.data.data(), data.data.size());
+    ASSERT_EQ(0, memcmp(data.data.data(), received.data.data(), data.data.size()));
 }
 
 template<typename TPoller>
-void test_read_write_lines(void**) {
+void test_read_write_lines() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     uint32_t seed = 31337;
@@ -820,13 +814,13 @@ void test_read_write_lines(void**) {
         loop.Step();
     }
 
-    assert_int_equal(lines.size(), received.size());
+    ASSERT_EQ(lines.size(), received.size());
     for (int i = 0; i < lines.size(); i++) {
-        assert_string_equal(lines[i].data(), received[i].data());
+        ASSERT_STREQ(lines[i].data(), received[i].data());
     }
 }
 
-void test_line_splitter(void**) {
+void test_line_splitter() {
     TLineSplitter splitter(16);
     uint32_t seed = 31337;
     for (int i = 0; i < 10000; i++) {
@@ -837,7 +831,7 @@ void test_line_splitter(void**) {
         auto l = splitter.Pop();
         std::string result = std::string(l.Part1);
         result += l.Part2;
-        assert_string_equal(line.data(), result.data());
+        ASSERT_STREQ(line.data(), result.data());
     }
 
     for (int i = 0; i < 10000; i++) {
@@ -857,12 +851,12 @@ void test_line_splitter(void**) {
             auto l = splitter.Pop();
             std::string result = std::string(l.Part1);
             result += l.Part2;
-            assert_string_equal(lines[i].data(), result.data());
+            ASSERT_STREQ(lines[i].data(), result.data());
         }
     }
 }
 
-void test_zero_copy_line_splitter(void**) {
+void test_zero_copy_line_splitter() {
     TZeroCopyLineSplitter splitter(16);
     uint32_t seed = 31337;
     for (int i = 0; i < 1000; i++) {
@@ -873,7 +867,7 @@ void test_zero_copy_line_splitter(void**) {
         auto l = splitter.Pop();
         std::string result = std::string(l.Part1);
         result += l.Part2;
-        assert_string_equal(line.data(), result.data());
+        ASSERT_STREQ(line.data(), result.data());
     }
 
     for (int i = 0; i < 10000; i++) {
@@ -893,12 +887,12 @@ void test_zero_copy_line_splitter(void**) {
             auto l = splitter.Pop();
             std::string result = std::string(l.Part1);
             result += l.Part2;
-            assert_string_equal(lines[i].data(), result.data());
+            ASSERT_STREQ(lines[i].data(), result.data());
         }
     }
 }
 
-void test_line_splitter_wrap(void**) {
+void test_line_splitter_wrap() {
     TLineSplitter splitter(4); // Cap=8
     splitter.Push("aaa\n", 4);
     splitter.Pop();
@@ -907,12 +901,12 @@ void test_line_splitter_wrap(void**) {
 
     splitter.Push("cc\n", 3);
     auto l = splitter.Pop();
-    assert_true(static_cast<bool>(l));
+    ASSERT_TRUE(static_cast<bool>(l));
     std::string result = std::string(l.Part1) + std::string(l.Part2);
-    assert_string_equal("cc\n", result.data());
+    ASSERT_STREQ("cc\n", result.data());
 }
 
-void test_zero_copy_line_splitter_wrap(void**) {
+void test_zero_copy_line_splitter_wrap() {
     TZeroCopyLineSplitter splitter(4); // Cap=8
     splitter.Push("aaa\n", 4);
     splitter.Pop();
@@ -921,22 +915,22 @@ void test_zero_copy_line_splitter_wrap(void**) {
 
     splitter.Push("cc\n", 3);
     auto l = splitter.Pop();
-    assert_true(static_cast<bool>(l));
+    ASSERT_TRUE(static_cast<bool>(l));
     std::string result = std::string(l.Part1) + std::string(l.Part2);
-    assert_string_equal("cc\n", result.data());
+    ASSERT_STREQ("cc\n", result.data());
 }
 
-void test_self_id(void**) {
+void test_self_id() {
     void* id;
     TFuture<void> h = [](void** id) -> TFuture<void> {
         *id = (co_await Self()).address();
         co_return;
     }(&id);
 
-    assert_ptr_equal(id, h.raw().address());
+    ASSERT_EQ(id, h.raw().address());
 }
 
-void test_resolv_nameservers(void**) {
+void test_resolv_nameservers() {
     std::string data = R"__(nameserver 127.0.0.1
 nameserver 192.168.0.2
 nameserver 127.0.0.2
@@ -944,16 +938,16 @@ nameserver 127.0.0.2
     std::istringstream iss(data);
     TResolvConf conf(iss);
 
-    assert_int_equal(conf.Nameservers.size(), 3);
+    ASSERT_EQ(conf.Nameservers.size(), 3);
 
     data = "";
     iss = std::istringstream(data);
     conf = TResolvConf(iss);
-    assert_int_equal(conf.Nameservers.size(), 1);
+    ASSERT_EQ(conf.Nameservers.size(), 1);
 }
 
 template<typename TPoller>
-void test_resolver(void**) {
+void test_resolver() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
@@ -977,11 +971,11 @@ void test_resolver(void**) {
         loop.Step();
     }
 
-    assert_true(!addresses.empty());
+    ASSERT_TRUE(!addresses.empty());
 }
 
 template<typename TPoller>
-void test_resolve_bad_name(void**) {
+void test_resolve_bad_name() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
@@ -1001,12 +995,12 @@ void test_resolve_bad_name(void**) {
         loop.Step();
     }
 
-    assert_true(!!ex);
+    ASSERT_TRUE(!!ex);
 }
 
 #ifdef HAVE_OPENSSL
 template<typename TPoller>
-void test_read_write_full_ssl(void**) {
+void test_read_write_full_ssl() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
 
@@ -1063,12 +1057,12 @@ void test_read_write_full_ssl(void**) {
     h1.await_resume();
     h2.await_resume();
 
-    assert_memory_equal(data.data(), received.data(), data.size());
+    ASSERT_EQ(0, memcmp(data.data(), received.data(), data.size()));
 }
 #endif // HAVE_OPENSSL
 
 template<typename TPoller>
-void test_future_chaining(void**) {
+void test_future_chaining() {
     TFuture<int> intFuture = []() -> TFuture<int> {
         co_return 1;
     }();
@@ -1082,11 +1076,11 @@ void test_future_chaining(void**) {
         *val = co_await f;
     }(std::move(doubleFuture), &val);
 
-    assert_true(std::abs(val - 1.5) < 1e-13);
+    ASSERT_TRUE(std::abs(val - 1.5) < 1e-13);
 }
 
 template<typename TPoller>
-void test_futures_any(void**) {
+void test_futures_any() {
     using TLoop = TLoop<TPoller>;
     TLoop loop;
 
@@ -1122,11 +1116,11 @@ void test_futures_any(void**) {
         loop.Step();
     }
 
-    assert_true(ok == 1);
+    ASSERT_TRUE(ok == 1);
 }
 
 template<typename TPoller>
-void test_futures_any_result(void**) {
+void test_futures_any_result() {
     using TLoop = TLoop<TPoller>;
     TLoop loop;
 
@@ -1161,11 +1155,11 @@ void test_futures_any_result(void**) {
         loop.Step();
     }
 
-    assert_true(ok == 2);
+    ASSERT_TRUE(ok == 2);
 }
 
 template<typename TPoller>
-void test_futures_any_same_wakeup(void**) {
+void test_futures_any_same_wakeup() {
     using TLoop = TLoop<TPoller>;
     TLoop loop;
 
@@ -1206,11 +1200,11 @@ void test_futures_any_same_wakeup(void**) {
         loop.Step();
     }
 
-    assert_true(ok == 2);
+    ASSERT_TRUE(ok == 2);
 }
 
 template<typename TPoller>
-void test_futures_all(void**) {
+void test_futures_all() {
     std::vector<int> r;
     TFuture<void> h1 = [](std::vector<int>* r) -> TFuture<void> {
         std::vector<TFuture<int>> futures;
@@ -1222,7 +1216,7 @@ void test_futures_all(void**) {
         co_return;
     }(&r);
 
-    assert_true(r == (std::vector<int>{1, 2, 3, 4}));
+    ASSERT_TRUE(r == (std::vector<int>{1, 2, 3, 4}));
 
     int ok = 0;
     TFuture<void> h2 = [](int* ok) -> TFuture<void> {
@@ -1236,7 +1230,7 @@ void test_futures_all(void**) {
         co_return;
     }(&ok);
 
-    assert_true(ok == 1);
+    ASSERT_TRUE(ok == 1);
 }
 
 #ifndef _WIN32
@@ -1258,14 +1252,14 @@ bool IsClosed(int fd) {
 } // namespace
 
 template<typename TPoller>
-void test_any_simultaneous(void**) {
+void test_any_simultaneous() {
     TLoop<TPoller> loop;
 
     int fds1[2], fds2[2];
-    assert_int_equal(pipe(fds1), 0);
-    assert_int_equal(pipe(fds2), 0);
-    assert_int_equal(write(fds1[1], "x", 1), 1);
-    assert_int_equal(write(fds2[1], "x", 1), 1);
+    ASSERT_EQ(pipe(fds1), 0);
+    ASSERT_EQ(pipe(fds2), 0);
+    ASSERT_EQ(write(fds1[1], "x", 1), 1);
+    ASSERT_EQ(write(fds2[1], "x", 1), 1);
 
     int resumed = 0;
     int result = 0;
@@ -1279,28 +1273,28 @@ void test_any_simultaneous(void**) {
     for (int i = 0; i < 100 && !task.done(); ++i) {
         loop.Step();
     }
-    assert_true(task.done());
-    assert_int_equal(result, 1);
-    assert_int_equal(resumed, 1);
+    ASSERT_TRUE(task.done());
+    ASSERT_EQ(result, 1);
+    ASSERT_EQ(resumed, 1);
 
     // The loser must not be resumed by events left over from the winning iteration.
     loop.Step();
 
-    assert_true(IsClosed(fds1[0]));
-    assert_true(IsClosed(fds2[0]));
+    ASSERT_TRUE(IsClosed(fds1[0]));
+    ASSERT_TRUE(IsClosed(fds2[0]));
     close(fds1[1]);
     close(fds2[1]);
 }
 
 template<typename TPoller>
-void test_all_simultaneous(void**) {
+void test_all_simultaneous() {
     TLoop<TPoller> loop;
 
     int fds1[2], fds2[2];
-    assert_int_equal(pipe(fds1), 0);
-    assert_int_equal(pipe(fds2), 0);
-    assert_int_equal(write(fds1[1], "a", 1), 1);
-    assert_int_equal(write(fds2[1], "b", 1), 1);
+    ASSERT_EQ(pipe(fds1), 0);
+    ASSERT_EQ(pipe(fds2), 0);
+    ASSERT_EQ(write(fds1[1], "a", 1), 1);
+    ASSERT_EQ(write(fds2[1], "b", 1), 1);
 
     std::vector<int> results;
     TFuture<void> task = [](TPoller& poller, int* fds1, int* fds2, std::vector<int>* results) -> TFuture<void> {
@@ -1319,28 +1313,28 @@ void test_all_simultaneous(void**) {
     for (int i = 0; i < 100 && !task.done(); ++i) {
         loop.Step();
     }
-    assert_true(task.done());
-    assert_true(results == (std::vector<int>{'a', 'b'}));
+    ASSERT_TRUE(task.done());
+    ASSERT_TRUE(results == (std::vector<int>{'a', 'b'}));
 
     loop.Step();
 
-    assert_true(IsClosed(fds1[0]));
-    assert_true(IsClosed(fds2[0]));
+    ASSERT_TRUE(IsClosed(fds1[0]));
+    ASSERT_TRUE(IsClosed(fds2[0]));
     close(fds1[1]);
     close(fds2[1]);
 }
 
 template<typename TPoller>
-void test_any_pending_loser(void**) {
+void test_any_pending_loser() {
     TLoop<TPoller> loop;
 
     int fds1[2], fds2[2];
-    assert_int_equal(pipe(fds1), 0);
-    assert_int_equal(pipe(fds2), 0);
-    assert_int_equal(write(fds1[1], "x", 1), 1);
+    ASSERT_EQ(pipe(fds1), 0);
+    ASSERT_EQ(pipe(fds2), 0);
+    ASSERT_EQ(write(fds1[1], "x", 1), 1);
     // Keeps the pipe open after the loser closes its descriptor.
     int keep = dup(fds2[0]);
-    assert_true(keep >= 0);
+    ASSERT_TRUE(keep >= 0);
 
     int resumed = 0;
     int result = 0;
@@ -1354,21 +1348,21 @@ void test_any_pending_loser(void**) {
     for (int i = 0; i < 100 && !task.done(); ++i) {
         loop.Step();
     }
-    assert_true(task.done());
-    assert_int_equal(result, 1);
-    assert_int_equal(resumed, 1);
+    ASSERT_TRUE(task.done());
+    ASSERT_EQ(result, 1);
+    ASSERT_EQ(resumed, 1);
     // The poller closes the loser's descriptor in its next iteration.
     loop.Step();
-    assert_true(IsClosed(fds2[0]));
+    ASSERT_TRUE(IsClosed(fds2[0]));
 
     // The loser's frame is gone; data arriving for it must not resume anything.
-    assert_int_equal(write(fds2[1], "y", 1), 1);
+    ASSERT_EQ(write(fds2[1], "y", 1), 1);
     for (int i = 0; i < 3; ++i) {
         loop.Step();
     }
-    assert_int_equal(resumed, 1);
+    ASSERT_EQ(resumed, 1);
 
-    assert_true(IsClosed(fds1[0]));
+    ASSERT_TRUE(IsClosed(fds1[0]));
     close(keep);
     close(fds1[1]);
     close(fds2[1]);
@@ -1376,7 +1370,7 @@ void test_any_pending_loser(void**) {
 #endif // _WIN32
 
 template<typename TPoller>
-void test_remote_disconnect(void**) {
+void test_remote_disconnect() {
     using TLoop = TLoop<TPoller>;
     using TSocket = typename TPoller::TSocket;
     int port = GetFreePort();
@@ -1413,14 +1407,14 @@ void test_remote_disconnect(void**) {
         loop.Step();
     }
 
-    assert_true(h1.done() && h2.done());
+    ASSERT_TRUE(h1.done() && h2.done());
     h1.await_resume();
     h2.await_resume();
-    assert_true(monitored);
+    ASSERT_TRUE(monitored);
 }
 
 template<typename TPoller>
-void test_monitor_unsupported(void**) {
+void test_monitor_unsupported() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TSocket socket(loop.Poller(), AF_INET);
@@ -1435,18 +1429,18 @@ void test_monitor_unsupported(void**) {
         } catch (const std::system_error& ex) {
             thrown = ex.code() == std::errc::operation_not_supported;
         }
-        assert_true(thrown);
+        ASSERT_TRUE(thrown);
     }
 }
 
 #ifdef __linux__
 
 #ifdef HAVE_URING
-void test_uring_create(void**) {
+void test_uring_create() {
     TUring uring(256);
 }
 
-void test_uring_wait_signal(void**) {
+void test_uring_wait_signal() {
     struct sigaction sa = {}, old;
     sa.sa_handler = [](int) {};
     sigaction(SIGUSR1, &sa, &old); // no SA_RESTART: the wait is interrupted
@@ -1457,62 +1451,62 @@ void test_uring_wait_signal(void**) {
         pthread_kill(self, SIGUSR1);
     });
     auto start = std::chrono::steady_clock::now();
-    assert_int_equal(uring.Wait({5, 0}), 0); // must not throw
+    ASSERT_EQ(uring.Wait({5, 0}), 0); // must not throw
     t.join();
     sigaction(SIGUSR1, &old, nullptr);
-    assert_true(std::chrono::steady_clock::now() - start < std::chrono::seconds(4));
+    ASSERT_TRUE(std::chrono::steady_clock::now() - start < std::chrono::seconds(4));
 }
 
-void test_uring_write(void**) {
+void test_uring_write() {
     TUring uring(256);
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    assert_int_equal(0, pipe(p));
+    ASSERT_EQ(0, pipe(p));
     TUring::TOperation op;
     op.Handle = std::noop_coroutine();
     uring.Write(p[1], buf, 1, op);
-    assert_int_equal(uring.Wait(), 1);
+    ASSERT_EQ(uring.Wait(), 1);
     int err = read(p[0], rbuf, 1);
-    assert_true(rbuf[0] == 'e');
+    ASSERT_TRUE(rbuf[0] == 'e');
 }
 
-void test_uring_read(void**) {
+void test_uring_read() {
     TUring uring(256);
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    assert_int_equal(0, pipe(p));
-    assert_int_equal(1, write(p[1], buf, 1));
+    ASSERT_EQ(0, pipe(p));
+    ASSERT_EQ(1, write(p[1], buf, 1));
     TUring::TOperation op;
     op.Handle = std::noop_coroutine();
     uring.Read(p[0], rbuf, 1, op);
-    assert_int_equal(uring.Wait(), 1);
-    assert_true(rbuf[0] == 'e');
+    ASSERT_EQ(uring.Wait(), 1);
+    ASSERT_TRUE(rbuf[0] == 'e');
 }
 
-void test_uring_read_more_than_write(void**) {
+void test_uring_read_more_than_write() {
     TUring uring(256);
     char buf[1] = {'e'};
     char rbuf[10] = "test test";
     int p[2];
-    assert_int_equal(0, pipe(p));
-    assert_int_equal(1, write(p[1], buf, 1));
+    ASSERT_EQ(0, pipe(p));
+    ASSERT_EQ(1, write(p[1], buf, 1));
     TFuture<void> h = []() -> TFuture<void> { co_return; }();
     TUring::TOperation op;
     op.Handle = h.raw();
     uring.Read(p[0], rbuf, sizeof(rbuf), op);
-    assert_int_equal(uring.Wait(), 1);
-    assert_int_equal(op.Result, 1);
-    assert_true(rbuf[0] == 'e');
+    ASSERT_EQ(uring.Wait(), 1);
+    ASSERT_EQ(op.Result, 1);
+    ASSERT_TRUE(rbuf[0] == 'e');
 }
 
-void test_uring_write_resume(void**) {
+void test_uring_write_resume() {
     TUring uring(256);
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    assert_int_equal(0, pipe(p));
+    ASSERT_EQ(0, pipe(p));
     int r = 31337;
     TUring::TOperation op;
     TFuture<void> h = [](TUring::TOperation* op, int* r) -> TFuture<void> {
@@ -1522,21 +1516,21 @@ void test_uring_write_resume(void**) {
     }(&op, &r);
     op.Handle = h.raw();
     uring.Write(p[1], buf, 1, op);
-    assert_true(!h.done());
-    assert_int_equal(uring.Wait(), 1);
+    ASSERT_TRUE(!h.done());
+    ASSERT_EQ(uring.Wait(), 1);
     uring.WakeupReadyHandles();
     int err = read(p[0], rbuf, 1);
-    assert_true(rbuf[0] == 'e');
-    assert_int_equal(r, 1);
-    assert_true(h.done());
+    ASSERT_TRUE(rbuf[0] == 'e');
+    ASSERT_EQ(r, 1);
+    ASSERT_TRUE(h.done());
 }
 
-void test_uring_read_resume(void**) {
+void test_uring_read_resume() {
     TUring uring(256);
     char buf[1] = {'e'};
     char rbuf[1] = {'k'};
     int p[2];
-    assert_int_equal(0, pipe(p));
+    ASSERT_EQ(0, pipe(p));
     int r = 31337;
     TUring::TOperation op;
     TFuture<void> h = [](TUring::TOperation* op, int* r) -> TFuture<void> {
@@ -1544,22 +1538,22 @@ void test_uring_read_resume(void**) {
         *r = op->Result;
         co_return;
     }(&op, &r);
-    assert_int_equal(1, write(p[1], buf, 1));
+    ASSERT_EQ(1, write(p[1], buf, 1));
     op.Handle = h.raw();
     uring.Read(p[0], rbuf, 1, op);
-    assert_true(!h.done());
-    assert_int_equal(uring.Wait(), 1);
+    ASSERT_TRUE(!h.done());
+    ASSERT_EQ(uring.Wait(), 1);
     uring.WakeupReadyHandles();
-    assert_true(rbuf[0] == 'e');
-    assert_int_equal(r, 1);
-    assert_true(h.done());
+    ASSERT_TRUE(rbuf[0] == 'e');
+    ASSERT_EQ(r, 1);
+    ASSERT_TRUE(h.done());
 }
 
-void test_uring_file_offset(void**) {
+void test_uring_file_offset() {
     TUring uring(256);
     char path[] = "/tmp/coroio_uring_offset_XXXXXX";
     int fd = mkstemp(path);
-    assert_true(fd >= 0);
+    ASSERT_TRUE(fd >= 0);
     unlink(path);
 
     const char data[] = "0123456789abcdefghij";
@@ -1567,69 +1561,69 @@ void test_uring_file_offset(void**) {
         TUring::TOperation op;
         op.Handle = std::noop_coroutine();
         uring.Write(fd, data + i, 5, op);
-        assert_int_equal(uring.Wait(), 1);
+        ASSERT_EQ(uring.Wait(), 1);
         uring.WakeupReadyHandles();
-        assert_int_equal(op.Result, 5);
+        ASSERT_EQ(op.Result, 5);
     }
 
     char check[sizeof(data)] = {};
-    assert_int_equal(20, pread(fd, check, 20, 0));
-    assert_memory_equal(check, data, 20);
+    ASSERT_EQ(20, pread(fd, check, 20, 0));
+    ASSERT_EQ(0, memcmp(check, data, 20));
 
-    assert_int_equal(0, lseek(fd, 0, SEEK_SET));
+    ASSERT_EQ(0, lseek(fd, 0, SEEK_SET));
     char rbuf[20] = {};
     for (int i = 0; i < 20; i += 5) {
         TUring::TOperation op;
         op.Handle = std::noop_coroutine();
         uring.Read(fd, rbuf + i, 5, op);
-        assert_int_equal(uring.Wait(), 1);
+        ASSERT_EQ(uring.Wait(), 1);
         uring.WakeupReadyHandles();
-        assert_int_equal(op.Result, 5);
+        ASSERT_EQ(op.Result, 5);
     }
-    assert_memory_equal(rbuf, data, 20);
+    ASSERT_EQ(0, memcmp(rbuf, data, 20));
     close(fd);
 }
 
 // Wait() without WakeupReadyHandles(): each operation still gets its own result.
-void test_uring_wait_result_without_wakeup(void**) {
+void test_uring_wait_result_without_wakeup() {
     TUring uring(256);
     char rbuf[10];
     int p[2];
-    assert_int_equal(0, pipe(p));
+    ASSERT_EQ(0, pipe(p));
     TFuture<void> h1 = []() -> TFuture<void> { co_return; }();
     TFuture<void> h2 = []() -> TFuture<void> { co_return; }();
     TUring::TOperation op1, op2;
-    assert_int_equal(1, write(p[1], "a", 1));
+    ASSERT_EQ(1, write(p[1], "a", 1));
     op1.Handle = h1.raw();
     uring.Read(p[0], rbuf, sizeof(rbuf), op1);
-    assert_int_equal(uring.Wait(), 1);
-    assert_int_equal(op1.Result, 1);
-    assert_int_equal(3, write(p[1], "bcd", 3));
+    ASSERT_EQ(uring.Wait(), 1);
+    ASSERT_EQ(op1.Result, 1);
+    ASSERT_EQ(3, write(p[1], "bcd", 3));
     op2.Handle = h2.raw();
     uring.Read(p[0], rbuf, sizeof(rbuf), op2);
-    assert_int_equal(uring.Wait(), 1);
-    assert_int_equal(op2.Result, 3);
-    assert_int_equal(op1.Result, 1);
+    ASSERT_EQ(uring.Wait(), 1);
+    ASSERT_EQ(op2.Result, 3);
+    ASSERT_EQ(op1.Result, 1);
     close(p[0]);
     close(p[1]);
 }
 
-void test_uring_no_sqe(void** ) {
+void test_uring_no_sqe() {
     TUring uring(1);
     char rbuf[1] = {'k'};
-    int p[2]; assert_int_equal(0, pipe(p));
-    assert_int_equal(1, write(p[1], rbuf, 1));
-    assert_int_equal(1, write(p[1], rbuf, 1));
+    int p[2]; ASSERT_EQ(0, pipe(p));
+    ASSERT_EQ(1, write(p[1], rbuf, 1));
+    ASSERT_EQ(1, write(p[1], rbuf, 1));
     TUring::TOperation op1, op2;
     op1.Handle = std::noop_coroutine();
     uring.Read(p[0], rbuf, 1, op1);
     op2.Handle = std::noop_coroutine();
     uring.Read(p[0], rbuf, 1, op2);
     int k = uring.Wait();
-    assert_true(k == 1 || k == 2);
+    ASSERT_TRUE(k == 1 || k == 2);
     if (k == 1) {
         uring.WakeupReadyHandles();
-        assert_int_equal(1, uring.Wait());
+        ASSERT_EQ(1, uring.Wait());
     }
 }
 #endif
@@ -1644,7 +1638,7 @@ void StepUntilDone(TLoop<TPoller>& loop, TFuture<void>& future) {
     while (!future.done() && TClock::now() < deadline) {
         loop.Step();
     }
-    assert_true(future.done());
+    ASSERT_TRUE(future.done());
     future.await_resume();
 }
 
@@ -1718,6 +1712,9 @@ ConnectedPair(TLoop<TPoller>& loop, typename TPoller::TSocket& listener, const T
     auto connect = client.Connect(address);
     StepUntilDone(loop, connect);
     StepUntilDone(loop, accept);
+    if (testing::Test::HasFatalFailure()) {
+        return {std::move(client), TSocket()};
+    }
     return {std::move(client), std::move(*server)};
 }
 
@@ -1725,7 +1722,7 @@ ConnectedPair(TLoop<TPoller>& loop, typename TPoller::TSocket& listener, const T
 
 // For pollers that perform the I/O themselves (io_uring, IOCP).
 template<typename TPoller>
-void test_destroyed_driven_reader_not_resumed(void**) {
+void test_destroyed_driven_reader_not_resumed() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -1736,6 +1733,7 @@ void test_destroyed_driven_reader_not_resumed(void**) {
     pairs.reserve(4);
     for (int i = 0; i < 4; i++) {
         pairs.emplace_back(ConnectedPair(loop, listener, address));
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
     }
 
     for (bool submitted : {false, true}) {
@@ -1746,17 +1744,17 @@ void test_destroyed_driven_reader_not_resumed(void**) {
             loop.Step();
         }
         reader.reset();
-        assert_int_equal(send(pairs[0].first.Fd(), "x", 1, 0), 1);
+        ASSERT_EQ(send(pairs[0].first.Fd(), "x", 1, 0), 1);
         for (int i = 0; i < 3; i++) {
             loop.Step();
         }
         // The read was cancelled, not completed into buf: the byte is left for the next reader.
-        assert_int_equal(got, -1);
-        assert_int_equal(buf[0], 0);
+        ASSERT_EQ(got, -1);
+        ASSERT_EQ(buf[0], 0);
         auto next = ReadInto(pairs[0].second, buf, sizeof(buf), &got);
-        StepUntilDone(loop, next);
-        assert_int_equal(got, 1);
-        assert_int_equal(buf[0], 'x');
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+        ASSERT_EQ(got, 1);
+        ASSERT_EQ(buf[0], 'x');
     }
 
     for (bool collected : {true, false}) {
@@ -1769,9 +1767,9 @@ void test_destroyed_driven_reader_not_resumed(void**) {
             readers[i].emplace(ReadInto(pairs[i].second, bufs[i], sizeof(bufs[i]), &got[i]));
         }
         loop.Step();
-        assert_int_equal(send(pairs[0].first.Fd(), "x", 1, 0), 1);
-        assert_int_equal(send(pairs[1].first.Fd(), "yy", 2, 0), 2);
-        assert_int_equal(send(pairs[2].first.Fd(), "zzz", 3, 0), 3);
+        ASSERT_EQ(send(pairs[0].first.Fd(), "x", 1, 0), 1);
+        ASSERT_EQ(send(pairs[1].first.Fd(), "yy", 2, 0), 2);
+        ASSERT_EQ(send(pairs[2].first.Fd(), "zzz", 3, 0), 3);
         if (collected) {
             loop.Poller().Poll();
         }
@@ -1780,11 +1778,11 @@ void test_destroyed_driven_reader_not_resumed(void**) {
         if (collected) {
             loop.Poller().WakeupReadyHandles();
         }
-        StepUntilDone(loop, *readers[2]);
-        assert_int_equal(got[0], -1);
-        assert_int_equal(got[1], -1);
-        assert_int_equal(got[2], 3);
-        assert_memory_equal(bufs[2], "zzz", 3);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, *readers[2]));
+        ASSERT_EQ(got[0], -1);
+        ASSERT_EQ(got[1], -1);
+        ASSERT_EQ(got[2], 3);
+        ASSERT_EQ(0, memcmp(bufs[2], "zzz", 3));
     }
 
     {
@@ -1797,22 +1795,22 @@ void test_destroyed_driven_reader_not_resumed(void**) {
         auto destroyer = ReadThenDestroy(pairs[1].second, bufs[1], sizeof(bufs[1]), &again, &after);
         auto last = ReadInto(pairs[3].second, bufs[3], sizeof(bufs[3]), &got[3]);
         loop.Step();
-        assert_int_equal(send(pairs[0].first.Fd(), "a", 1, 0), 1);
-        assert_int_equal(send(pairs[1].first.Fd(), "b", 1, 0), 1);
-        assert_int_equal(send(pairs[2].first.Fd(), "cc", 2, 0), 2);
-        assert_int_equal(send(pairs[3].first.Fd(), "dddd", 4, 0), 4);
-        StepUntilDone(loop, destroyer);
-        StepUntilDone(loop, last);
-        assert_false(again.has_value());
-        assert_false(after.has_value());
-        assert_int_equal(got[0], 1);
-        assert_int_equal(got[3], 4);
-        assert_memory_equal(bufs[3], "dddd", 4);
+        ASSERT_EQ(send(pairs[0].first.Fd(), "a", 1, 0), 1);
+        ASSERT_EQ(send(pairs[1].first.Fd(), "b", 1, 0), 1);
+        ASSERT_EQ(send(pairs[2].first.Fd(), "cc", 2, 0), 2);
+        ASSERT_EQ(send(pairs[3].first.Fd(), "dddd", 4, 0), 4);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, destroyer));
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, last));
+        ASSERT_FALSE(again.has_value());
+        ASSERT_FALSE(after.has_value());
+        ASSERT_EQ(got[0], 1);
+        ASSERT_EQ(got[3], 4);
+        ASSERT_EQ(0, memcmp(bufs[3], "dddd", 4));
     }
 }
 
 template<typename TPoller>
-void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
+void test_destroyed_driven_accept_and_connect_not_resumed() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -1828,14 +1826,14 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
         accept.reset();
         TSocket client(loop.Poller(), address.Domain());
         auto connect = client.Connect(address);
-        StepUntilDone(loop, connect);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, connect));
         for (int i = 0; i < 3; i++) {
             loop.Step();
         }
-        assert_false(accepted.has_value());
+        ASSERT_FALSE(accepted.has_value());
         auto next = AcceptInto(listener, &accepted);
-        StepUntilDone(loop, next);
-        assert_true(accepted.has_value());
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+        ASSERT_TRUE(accepted.has_value());
     }
 
     {
@@ -1849,12 +1847,12 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
         loop.Poller().Poll();
         accept.reset();
         loop.Poller().WakeupReadyHandles();
-        assert_false(accepted.has_value());
+        ASSERT_FALSE(accepted.has_value());
         char buf[1];
         int got = -1;
         auto eof = ReadInto(client, buf, sizeof(buf), &got);
-        StepUntilDone(loop, eof);
-        assert_int_equal(got, 0);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, eof));
+        ASSERT_EQ(got, 0);
     }
 
     {
@@ -1876,7 +1874,7 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
                 loop.Step();
             }
         }
-        assert_false(connect->done());
+        ASSERT_FALSE(connect->done());
         connect.reset();
         while (TClock::now() < deadline + std::chrono::milliseconds(100)) {
             loop.Step();
@@ -1887,7 +1885,7 @@ void test_destroyed_driven_accept_and_connect_not_resumed(void**) {
 // Many reads wait at once. The destroyed ones are found among them, and the
 // others still get their own results.
 template<typename TPoller>
-void test_destroyed_driven_reader_among_many(void**) {
+void test_destroyed_driven_reader_among_many() {
     using TSocket = typename TPoller::TSocket;
     constexpr int count = 64;
     TLoop<TPoller> loop;
@@ -1899,6 +1897,7 @@ void test_destroyed_driven_reader_among_many(void**) {
     pairs.reserve(count);
     for (int i = 0; i < count; i++) {
         pairs.emplace_back(ConnectedPair(loop, listener, address));
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
     }
 
     char bufs[count][4] = {};
@@ -1912,7 +1911,7 @@ void test_destroyed_driven_reader_among_many(void**) {
     loop.Step();
     for (int i = 1; i < count; i++) {
         char c = 'a' + i % 26;
-        assert_int_equal(send(pairs[i].first.Fd(), &c, 1, 0), 1);
+        ASSERT_EQ(send(pairs[i].first.Fd(), &c, 1, 0), 1);
     }
     // Waits for its own completion, taking the others meanwhile,
     readers[0].reset();
@@ -1920,28 +1919,28 @@ void test_destroyed_driven_reader_among_many(void**) {
     readers[count - 1].reset();
     for (int i = 0; i < count; i++) {
         if (readers[i]) {
-            StepUntilDone(loop, *readers[i]);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, *readers[i]));
         }
     }
     for (int i = 0; i < count; i++) {
         if (i == 0 || i == count / 2 || i == count - 1) {
-            assert_int_equal(got[i], -1);
+            ASSERT_EQ(got[i], -1);
         } else {
-            assert_int_equal(got[i], 1);
-            assert_int_equal(bufs[i][0], 'a' + i % 26);
+            ASSERT_EQ(got[i], 1);
+            ASSERT_EQ(bufs[i][0], 'a' + i % 26);
         }
     }
     // Destroyed before its byte came: the byte is left for the next reader.
     auto next = ReadInto(pairs[count / 2].second, bufs[0], sizeof(bufs[0]), &got[0]);
-    StepUntilDone(loop, next);
-    assert_int_equal(got[0], 1);
-    assert_int_equal(bufs[0][0], 'a' + (count / 2) % 26);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+    ASSERT_EQ(got[0], 1);
+    ASSERT_EQ(bufs[0][0], 'a' + (count / 2) % 26);
 }
 
 // Accept on a socket that is not listening fails. On IOCP AcceptEx fails at
 // once, so nothing is posted and the awaitable has nothing to cancel.
 template<typename TPoller>
-void test_driven_accept_not_listening(void**) {
+void test_driven_accept_not_listening() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -1956,15 +1955,15 @@ void test_driven_accept_not_listening(void**) {
             *failed = true;
         }
     }(socket, &accepted, &failed);
-    StepUntilDone(loop, accept);
-    assert_true(failed);
-    assert_false(accepted.has_value());
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
+    ASSERT_TRUE(failed);
+    ASSERT_FALSE(accepted.has_value());
 }
 
 #ifdef _WIN32
 // A failed or aborted read or write gets the error in its packet, not 0 bytes
 // that look like the end of the stream (#183).
-void test_iocp_failed_read_write(void**) {
+void test_iocp_failed_read_write() {
     using TSocket = TIOCp::TSocket;
     TLoop<TIOCp> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
@@ -1978,24 +1977,26 @@ void test_iocp_failed_read_write(void**) {
     const int errors[] = {WSAECONNRESET, WSAECONNABORTED, WSA_OPERATION_ABORTED};
     for (int i = 0; i < 3; i++) {
         auto [client, server] = ConnectedPair(loop, listener, address);
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
         char buf[1];
         int result = 0;
         auto read = IoResult(server, false, buf, sizeof(buf), &result);
         loop.Step();
         if (i == 0) {
-            assert_int_equal(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
+            ASSERT_EQ(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
             client.Close();
         } else if (i == 1) {
             server.Close();
         } else {
             loop.Poller().Cancel(server.Fd());
         }
-        StepUntilDone(loop, read);
-        assert_int_equal(result, -errors[i]);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
+        ASSERT_EQ(result, -errors[i]);
     }
 
     // A write waits for the peer, which does not read, and the peer resets.
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
     std::vector<char> data(1 << 20);
     int result = 0;
     std::optional<TFuture<void>> write;
@@ -2005,22 +2006,22 @@ void test_iocp_failed_read_write(void**) {
             loop.Step();
         }
     }
-    assert_false(write->done());
-    assert_int_equal(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
+    ASSERT_FALSE(write->done());
+    ASSERT_EQ(setsockopt(client.Fd(), SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&reset), sizeof(reset)), 0);
     client.Close();
-    StepUntilDone(loop, *write);
-    assert_int_equal(result, -WSAECONNRESET);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, *write));
+    ASSERT_EQ(result, -WSAECONNRESET);
 }
 
 // An accept aborted by closing the listener or by Cancel(fd) returns the error
 // and closes the socket it prepared, instead of throwing on its empty address.
-void test_iocp_aborted_accept(void**) {
+void test_iocp_aborted_accept() {
     using TSocket = TIOCp::TSocket;
     constexpr int count = 100;
     DWORD before = 0;
     for (int i = 0; i <= count; i++) {
         if (i == 1) { // after the first one, which may set up Winsock state
-            assert_true(GetProcessHandleCount(GetCurrentProcess(), &before));
+            ASSERT_TRUE(GetProcessHandleCount(GetCurrentProcess(), &before));
         }
         TLoop<TIOCp> loop;
         loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
@@ -2037,15 +2038,15 @@ void test_iocp_aborted_accept(void**) {
             loop.Poller().Cancel(listener.Fd());
         }
         try {
-            StepUntilDone(loop, accept);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
         } catch (const std::exception& ex) {
-            fail_msg("%s", ex.what());
+            FAIL() << ex.what();
         }
-        assert_int_equal(result->error_or(0), WSA_OPERATION_ABORTED);
+        ASSERT_EQ(result->error_or(0), WSA_OPERATION_ABORTED);
     }
     DWORD after = 0;
-    assert_true(GetProcessHandleCount(GetCurrentProcess(), &after));
-    assert_in_range(after, 0, before + count / 10);
+    ASSERT_TRUE(GetProcessHandleCount(GetCurrentProcess(), &after));
+    ASSERT_LE(after, before + count / 10);
 }
 
 namespace {
@@ -2053,19 +2054,24 @@ namespace {
 std::string TempFile(const std::string& content) {
     char dir[MAX_PATH];
     char path[MAX_PATH];
-    assert_true(GetTempPathA(sizeof(dir), dir) > 0);
-    assert_true(GetTempFileNameA(dir, "cio", 0, path) != 0);
+    EXPECT_TRUE(GetTempPathA(sizeof(dir), dir) > 0);
+    EXPECT_TRUE(GetTempFileNameA(dir, "cio", 0, path) != 0);
     FILE* f = fopen(path, "wb");
-    assert_non_null(f);
-    assert_int_equal(fwrite(content.data(), 1, content.size(), f), content.size());
-    fclose(f);
+    EXPECT_NE(f, nullptr);
+    if (f) {
+        EXPECT_EQ(fwrite(content.data(), 1, content.size(), f), content.size());
+        fclose(f);
+    }
     return path;
 }
 
 std::string FileContent(const std::string& path) {
     std::string content;
     FILE* f = fopen(path.c_str(), "rb");
-    assert_non_null(f);
+    EXPECT_NE(f, nullptr);
+    if (!f) {
+        return content;
+    }
     char buf[256];
     while (size_t n = fread(buf, 1, sizeof(buf), f)) {
         content.append(buf, n);
@@ -2082,12 +2088,12 @@ int OpenFile(const std::string& path, bool overlapped, bool append = false) {
         // GENERIC_WRITE has FILE_WRITE_DATA, with which overlapped writes do not append.
         DWORD access = append ? FILE_APPEND_DATA : GENERIC_READ | GENERIC_WRITE;
         HANDLE h = CreateFileA(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
-        assert_true(h != INVALID_HANDLE_VALUE);
+        EXPECT_TRUE(h != INVALID_HANDLE_VALUE);
         fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), 0);
     } else {
         fd = _open(path.c_str(), (append ? _O_WRONLY | _O_APPEND : _O_RDWR) | _O_BINARY);
     }
-    assert_true(fd >= 0);
+    EXPECT_TRUE(fd >= 0);
     return fd;
 }
 
@@ -2111,7 +2117,7 @@ TFuture<void> ReadChunks(TFile& file, size_t size, std::vector<std::string>* chu
 
 // Reads and writes of a regular file use and advance the file pointer, as read() and write()
 // do (#156), with an overlapped handle and with a synchronous one.
-void test_iocp_file_read_write(void**) {
+void test_iocp_file_read_write() {
     for (bool overlapped : {true, false}) {
         auto path = TempFile("");
         {
@@ -2120,36 +2126,36 @@ void test_iocp_file_read_write(void**) {
             TIOCp::TFileHandle file(fd, loop.Poller());
             std::vector<int> written;
             auto write = WriteChunks(file, {"AAAA", "BBBB", "CCCC", "DDDD"}, &written);
-            StepUntilDone(loop, write);
-            assert_true(written == std::vector<int>({4, 4, 4, 4}));
-            assert_string_equal(FileContent(path).c_str(), "AAAABBBBCCCCDDDD");
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
+            ASSERT_TRUE(written == std::vector<int>({4, 4, 4, 4}));
+            ASSERT_STREQ(FileContent(path).c_str(), "AAAABBBBCCCCDDDD");
 
-            assert_int_equal(_lseeki64(fd, 0, SEEK_SET), 0);
+            ASSERT_EQ(_lseeki64(fd, 0, SEEK_SET), 0);
             std::vector<std::string> chunks;
             auto read = ReadChunks(file, 4, &chunks);
-            StepUntilDone(loop, read);
-            assert_true(chunks == std::vector<std::string>({"AAAA", "BBBB", "CCCC", "DDDD"}));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
+            ASSERT_TRUE(chunks == std::vector<std::string>({"AAAA", "BBBB", "CCCC", "DDDD"}));
 
             // Reads at and across the end of the file leave the pointer at the end, so the
             // next write leaves no hole.
             auto atEnd = ReadChunks(file, 4, &chunks);
-            StepUntilDone(loop, atEnd);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, atEnd));
             auto next = WriteChunks(file, {"EE"}, &written);
-            StepUntilDone(loop, next);
-            assert_int_equal(_lseeki64(fd, -2, SEEK_CUR), 16);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+            ASSERT_EQ(_lseeki64(fd, -2, SEEK_CUR), 16);
             auto across = ReadChunks(file, 4, &chunks);
-            StepUntilDone(loop, across);
-            assert_true(chunks.back() == "EE");
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, across));
+            ASSERT_TRUE(chunks.back() == "EE");
             auto last = WriteChunks(file, {"FF"}, &written);
-            StepUntilDone(loop, last);
-            assert_string_equal(FileContent(path).c_str(), "AAAABBBBCCCCDDDDEEFF");
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, last));
+            ASSERT_STREQ(FileContent(path).c_str(), "AAAABBBBCCCCDDDDEEFF");
         }
-        assert_true(DeleteFileA(path.c_str())); // fails while a handle is open
+        ASSERT_TRUE(DeleteFileA(path.c_str())); // fails while a handle is open
     }
 }
 
 // Writes go to the end of a file opened for appending.
-void test_iocp_file_append(void**) {
+void test_iocp_file_append() {
     for (bool overlapped : {true, false}) {
         auto path = TempFile("XXXX");
         {
@@ -2157,42 +2163,42 @@ void test_iocp_file_append(void**) {
             TIOCp::TFileHandle file(OpenFile(path, overlapped, true), loop.Poller());
             std::vector<int> written;
             auto write = WriteChunks(file, {"AAAA", "BBBB"}, &written);
-            StepUntilDone(loop, write);
-            assert_true(written == std::vector<int>({4, 4}));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
+            ASSERT_TRUE(written == std::vector<int>({4, 4}));
         }
-        assert_string_equal(FileContent(path).c_str(), "XXXXAAAABBBB");
-        assert_true(DeleteFileA(path.c_str()));
+        ASSERT_STREQ(FileContent(path).c_str(), "XXXXAAAABBBB");
+        ASSERT_TRUE(DeleteFileA(path.c_str()));
     }
 }
 
 // Close() closes the file's handle in the next iteration, and the closed TFileHandle gives EBADF.
-void test_iocp_file_close(void**) {
+void test_iocp_file_close() {
     for (bool overlapped : {true, false}) {
         auto path = TempFile("");
         TLoop<TIOCp> loop;
         TIOCp::TFileHandle file(OpenFile(path, overlapped), loop.Poller());
         std::vector<int> written;
         auto write = WriteChunks(file, {"AAAA"}, &written);
-        StepUntilDone(loop, write);
-        assert_true(written == std::vector<int>({4}));
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
+        ASSERT_TRUE(written == std::vector<int>({4}));
         file.Close();
         loop.Step();
         // Opening without sharing fails while another handle is open.
         HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-        assert_true(h != INVALID_HANDLE_VALUE);
+        ASSERT_TRUE(h != INVALID_HANDLE_VALUE);
         CloseHandle(h);
         char buf[4];
         int result = 0;
         auto read = IoResult(file, false, buf, sizeof(buf), &result);
-        StepUntilDone(loop, read);
-        assert_int_equal(result, -EBADF);
-        assert_true(DeleteFileA(path.c_str()));
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
+        ASSERT_EQ(result, -EBADF);
+        ASSERT_TRUE(DeleteFileA(path.c_str()));
     }
 }
 
 // Operations posted together take consecutive ranges of the file: two writers and two readers
 // lose and repeat nothing, and the readers that stop at the end leave the pointer there.
-void test_iocp_file_concurrent(void**) {
+void test_iocp_file_concurrent() {
     const std::vector<std::string> expected = {"AAAA", "BBBB", "CCCC", "DDDD"};
     for (bool overlapped : {true, false}) {
         auto path = TempFile("");
@@ -2203,44 +2209,44 @@ void test_iocp_file_concurrent(void**) {
             std::vector<int> written;
             auto first = WriteChunks(file, {"AAAA", "CCCC"}, &written);
             auto second = WriteChunks(file, {"BBBB", "DDDD"}, &written);
-            StepUntilDone(loop, first);
-            StepUntilDone(loop, second);
-            assert_true(written == std::vector<int>({4, 4, 4, 4}));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, first));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, second));
+            ASSERT_TRUE(written == std::vector<int>({4, 4, 4, 4}));
             std::string content = FileContent(path);
-            assert_int_equal(content.size(), 16);
+            ASSERT_EQ(content.size(), 16);
             std::vector<std::string> chunks;
             for (size_t i = 0; i < content.size(); i += 4) {
                 chunks.push_back(content.substr(i, 4));
             }
             std::sort(chunks.begin(), chunks.end());
-            assert_true(chunks == expected);
+            ASSERT_TRUE(chunks == expected);
 
-            assert_int_equal(_lseeki64(fd, 0, SEEK_SET), 0);
+            ASSERT_EQ(_lseeki64(fd, 0, SEEK_SET), 0);
             std::vector<std::string> read[2];
             auto reader1 = ReadChunks(file, 4, &read[0]);
             auto reader2 = ReadChunks(file, 4, &read[1]);
-            StepUntilDone(loop, reader1);
-            StepUntilDone(loop, reader2);
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader1));
+            ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader2));
             chunks = read[0];
             chunks.insert(chunks.end(), read[1].begin(), read[1].end());
             std::sort(chunks.begin(), chunks.end());
-            assert_true(chunks == expected);
-            assert_int_equal(_lseeki64(fd, 0, SEEK_CUR), 16);
+            ASSERT_TRUE(chunks == expected);
+            ASSERT_EQ(_lseeki64(fd, 0, SEEK_CUR), 16);
         }
-        assert_true(DeleteFileA(path.c_str()));
+        ASSERT_TRUE(DeleteFileA(path.c_str()));
     }
 }
 
 // Pipes have no file pointer. A destroyed pending read is cancelled and leaves the data for
 // the next read, a message longer than the buffer is read in parts, and a closed writer gives
 // the end. A pipe without FILE_FLAG_OVERLAPPED, e.g. an inherited stdin, is read synchronously.
-void test_iocp_pipe(void**) {
+void test_iocp_pipe() {
     const std::string name = "\\\\.\\pipe\\coroio-test-" + std::to_string(GetCurrentProcessId());
     for (DWORD mode : {PIPE_TYPE_BYTE | PIPE_READMODE_BYTE, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE}) {
         HANDLE server = CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, mode, 1, 4096, 4096, 0, nullptr);
-        assert_true(server != INVALID_HANDLE_VALUE);
+        ASSERT_TRUE(server != INVALID_HANDLE_VALUE);
         HANDLE client = CreateFileA(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
-        assert_true(client != INVALID_HANDLE_VALUE);
+        ASSERT_TRUE(client != INVALID_HANDLE_VALUE);
         TLoop<TIOCp> loop;
         loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
         TIOCp::TFileHandle reading(_open_osfhandle(reinterpret_cast<intptr_t>(server), 0), loop.Poller());
@@ -2250,39 +2256,39 @@ void test_iocp_pipe(void**) {
         int got = -1;
         std::optional<TFuture<void>> cancelled{ReadInto(reading, buf, sizeof(buf), &got)};
         loop.Step();
-        assert_false(cancelled->done());
+        ASSERT_FALSE(cancelled->done());
         cancelled.reset();
 
         std::vector<int> written;
         auto write = WriteChunks(writing, {"pingpong"}, &written);
-        StepUntilDone(loop, write);
-        assert_true(written == std::vector<int>({8}));
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
+        ASSERT_TRUE(written == std::vector<int>({8}));
         std::vector<std::string> chunks;
         auto read = ReadChunks(reading, 4, &chunks);
         for (int i = 0; i < 100 && chunks.size() < 2; i++) {
             loop.Step();
         }
         writing.Close();
-        StepUntilDone(loop, read);
-        assert_int_equal(got, -1);
-        assert_int_equal(buf[0], 0);
-        assert_true(chunks == std::vector<std::string>({"ping", "pong"}));
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
+        ASSERT_EQ(got, -1);
+        ASSERT_EQ(buf[0], 0);
+        ASSERT_TRUE(chunks == std::vector<std::string>({"ping", "pong"}));
     }
 
     int p[2];
-    assert_int_equal(_pipe(p, 4096, _O_BINARY), 0);
+    ASSERT_EQ(_pipe(p, 4096, _O_BINARY), 0);
     TLoop<TIOCp> loop;
     TIOCp::TFileHandle reading(p[0], loop.Poller());
     TIOCp::TFileHandle writing(p[1], loop.Poller());
     std::vector<int> written;
     auto write = WriteChunks(writing, {"ping"}, &written);
-    StepUntilDone(loop, write);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, write));
     writing.Close();
     loop.Step();
     std::vector<std::string> chunks;
     auto read = ReadChunks(reading, 4, &chunks);
-    StepUntilDone(loop, read);
-    assert_true(chunks == std::vector<std::string>({"ping"}));
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, read));
+    ASSERT_TRUE(chunks == std::vector<std::string>({"ping"}));
 }
 
 std::string SocketName(int fd, bool peer) {
@@ -2297,7 +2303,7 @@ std::string SocketName(int fd, bool peer) {
 
 // An accepted socket has the listener's family and accept context, so its
 // addresses and shutdown() work, on IPv4 and IPv6 (#158).
-void test_iocp_accepted_socket(void**) {
+void test_iocp_accepted_socket() {
     using TSocket = TIOCp::TSocket;
     for (const char* host : {"127.0.0.1", "::1"}) {
         TLoop<TIOCp> loop;
@@ -2306,21 +2312,22 @@ void test_iocp_accepted_socket(void**) {
         listener.Bind(address);
         listener.Listen();
         auto [client, server] = ConnectedPair(loop, listener, address);
-        assert_string_equal(SocketName(server.Fd(), true).c_str(), SocketName(client.Fd(), false).c_str());
-        assert_string_equal(SocketName(server.Fd(), true).c_str(), server.RemoteAddr()->ToString().c_str());
-        assert_string_equal(SocketName(server.Fd(), false).c_str(), address.ToString().c_str());
-        assert_int_equal(shutdown(server.Fd(), SD_SEND), 0);
+        ASSERT_FALSE(testing::Test::HasFatalFailure());
+        ASSERT_STREQ(SocketName(server.Fd(), true).c_str(), SocketName(client.Fd(), false).c_str());
+        ASSERT_STREQ(SocketName(server.Fd(), true).c_str(), server.RemoteAddr()->ToString().c_str());
+        ASSERT_STREQ(SocketName(server.Fd(), false).c_str(), address.ToString().c_str());
+        ASSERT_EQ(shutdown(server.Fd(), SD_SEND), 0);
         char buf[1];
         int got = -1;
         auto eof = ReadInto(client, buf, sizeof(buf), &got);
-        StepUntilDone(loop, eof);
-        assert_int_equal(got, 0);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, eof));
+        ASSERT_EQ(got, 0);
     }
 }
 #endif
 
 template<typename TPoller>
-void test_accept_closed_listener(void**) {
+void test_accept_closed_listener() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TSocket listener(loop.Poller(), AF_INET);
@@ -2328,10 +2335,10 @@ void test_accept_closed_listener(void**) {
     std::optional<std::expected<TSocket, int>> result;
     auto accept = AcceptResult(listener, &result);
     try {
-        StepUntilDone(loop, accept);
-        fail_msg("no exception");
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
+        FAIL() << "no exception";
     } catch (const std::system_error& ex) {
-        assert_int_equal(ex.code().value(), EBADF);
+        ASSERT_EQ(ex.code().value(), EBADF);
     }
 }
 
@@ -2339,13 +2346,17 @@ void test_accept_closed_listener(void**) {
 int ConnectTo(const TAddress& address) {
     int fd = socket(address.Domain(), SOCK_STREAM, 0);
     auto [addr, len] = address.RawAddr();
-    assert_int_equal(connect(fd, addr, len), 0);
+    if (connect(fd, addr, len) != 0) {
+        ADD_FAILURE() << "connect failed";
+        close(fd);
+        return -1;
+    }
     return fd;
 }
 
 // Readiness of a connection that someone else accepts first is returned as EAGAIN.
 template<typename TPoller>
-void test_accept_after_spurious_readiness(void**) {
+void test_accept_after_spurious_readiness() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -2355,19 +2366,21 @@ void test_accept_after_spurious_readiness(void**) {
     std::optional<std::expected<TSocket, int>> result;
     auto accept = AcceptResult(listener, &result);
     int first = ConnectTo(address);
+    ASSERT_GE(first, 0);
     loop.Poller().Poll();
     int stolen = ::accept(listener.Fd(), nullptr, nullptr);
     loop.Poller().WakeupReadyHandles();
-    StepUntilDone(loop, accept);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, accept));
     if (stolen >= 0) { // a completion-based poller accepts before the steal
-        assert_int_equal(result->error_or(0), EAGAIN);
+        ASSERT_EQ(result->error_or(0), EAGAIN);
         int second = ConnectTo(address);
+        ASSERT_GE(second, 0);
         auto next = AcceptResult(listener, &result);
-        StepUntilDone(loop, next);
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
         close(second);
         close(stolen);
     }
-    assert_true(result->has_value());
+    ASSERT_TRUE(result->has_value());
     close(first);
 }
 
@@ -2379,7 +2392,7 @@ struct TOkRouter: IRouter {
 
 // The web server goes on accepting after the descriptors have run out.
 template<typename TPoller>
-void test_accept_after_descriptor_shortage(void**) {
+void test_accept_after_descriptor_shortage() {
     // The detached accept loop and the handler of the refused connection are left suspended.
 #if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
     __lsan::ScopedDisabler lsanDisabler;
@@ -2418,17 +2431,19 @@ void test_accept_after_descriptor_shortage(void**) {
         close(fd);
     }
     setrlimit(RLIMIT_NOFILE, &saved);
-    assert_int_equal(connected, 0);
+    ASSERT_EQ(connected, 0);
 
     int client = ConnectTo(address);
+    ASSERT_GE(client, 0);
+
     const char request[] = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
-    assert_int_equal(send(client, request, sizeof(request) - 1, 0), sizeof(request) - 1);
+    ASSERT_EQ(send(client, request, sizeof(request) - 1, 0), sizeof(request) - 1);
     char response[16] = {};
     while (recv(client, response, sizeof(response) - 1, MSG_DONTWAIT) < 0 && TClock::now() < deadline) {
         loop.Step();
     }
-    assert_string_equal(response, "HTTP/1.1 200 OK");
-    assert_true(log.front().starts_with("Accept failed: "));
+    ASSERT_STREQ(response, "HTTP/1.1 200 OK");
+    ASSERT_TRUE(log.front().starts_with("Accept failed: "));
     close(client);
     close(refused);
 }
@@ -2453,7 +2468,7 @@ TFuture<void> RepostAndDrop(NDetail::TCompletions* completions, NDetail::TOperat
 } // namespace
 
 // Completions moved between the lists are still found by their positions.
-void test_completions(void**) {
+void test_completions() {
     constexpr int count = 6;
     int resumed[count] = {};
     std::vector<TFuture<void>> coroutines;
@@ -2464,29 +2479,29 @@ void test_completions(void**) {
         ops[i].Handle = coroutines.back().raw();
     }
     NDetail::TCompletions completions;
-    assert_false(completions.Drop(ops[0])); // pending
+    ASSERT_FALSE(completions.Drop(ops[0])); // pending
     for (int i = 0; i < 3; i++) {
         completions.Collect(&ops[i], 10 + i);
     }
     for (int i = 3; i < count; i++) {
         completions.Reap(&ops[i], 10 + i);
     }
-    assert_true(completions.Drop(ops[0]));
-    assert_true(completions.Drop(ops[4]));
+    ASSERT_TRUE(completions.Drop(ops[0]));
+    ASSERT_TRUE(completions.Drop(ops[4]));
     // Not delivered: the collected completions are kept, and the reaped ones join them.
-    assert_true(completions.Carry());
-    assert_true(completions.Drop(ops[2]));
-    assert_true(completions.Drop(ops[5]));
-    assert_true(completions.Carry());
+    ASSERT_TRUE(completions.Carry());
+    ASSERT_TRUE(completions.Drop(ops[2]));
+    ASSERT_TRUE(completions.Drop(ops[5]));
+    ASSERT_TRUE(completions.Carry());
     completions.Wakeup();
     int expected[count] = {0, 1, 0, 1, 0, 0};
     for (int i = 0; i < count; i++) {
-        assert_int_equal(resumed[i], expected[i]);
+        ASSERT_EQ(resumed[i], expected[i]);
     }
-    assert_true(!ops[1].Handle);
-    assert_int_equal(ops[1].Result, 11);
-    assert_int_equal(ops[3].Result, 13);
-    assert_false(completions.Carry());
+    ASSERT_TRUE(!ops[1].Handle);
+    ASSERT_EQ(ops[1].Result, 11);
+    ASSERT_EQ(ops[3].Result, 13);
+    ASSERT_FALSE(completions.Carry());
 
     // The delivered completion is not taken for the next operation's.
     NDetail::TOperationState op;
@@ -2495,14 +2510,14 @@ void test_completions(void**) {
     op.Handle = repost.raw();
     completions.Collect(&op, 1);
     completions.Wakeup();
-    assert_true(repost.done());
-    assert_false(dropped);
+    ASSERT_TRUE(repost.done());
+    ASSERT_FALSE(dropped);
 }
 
 #ifdef HAVE_URING
 // An operation not submitted yet is dropped without reaching the kernel, so
 // nothing is consumed on behalf of the destroyed coroutine.
-void test_uring_destroyed_before_submit(void**) {
+void test_uring_destroyed_before_submit() {
     using TSocket = TUring::TSocket;
     TLoop<TUring> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -2510,37 +2525,38 @@ void test_uring_destroyed_before_submit(void**) {
     listener.Bind(address);
     listener.Listen();
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
 
-    assert_int_equal(send(client.Fd(), "x", 1, 0), 1);
+    ASSERT_EQ(send(client.Fd(), "x", 1, 0), 1);
     char buf[4] = {0};
     int got = -1;
     std::optional<TFuture<void>> reader{ReadInto(server, buf, sizeof(buf), &got)};
     reader.reset();
     auto next = ReadInto(server, buf, sizeof(buf), &got);
-    StepUntilDone(loop, next);
-    assert_int_equal(got, 1);
-    assert_int_equal(buf[0], 'x');
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+    ASSERT_EQ(got, 1);
+    ASSERT_EQ(buf[0], 'x');
 
     TSocket other(loop.Poller(), address.Domain());
     auto connect = other.Connect(address);
-    StepUntilDone(loop, connect);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, connect));
     std::optional<TSocket> accepted;
     std::optional<TFuture<void>> accept{AcceptInto(listener, &accepted)};
     accept.reset();
     auto nextAccept = AcceptInto(listener, &accepted);
-    StepUntilDone(loop, nextAccept);
-    assert_true(accepted.has_value());
-    assert_int_equal(send(other.Fd(), "y", 1, 0), 1);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, nextAccept));
+    ASSERT_TRUE(accepted.has_value());
+    ASSERT_EQ(send(other.Fd(), "y", 1, 0), 1);
     auto check = ReadInto(*accepted, buf, sizeof(buf), &got);
-    StepUntilDone(loop, check);
-    assert_int_equal(got, 1);
-    assert_int_equal(buf[0], 'y');
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, check));
+    ASSERT_EQ(got, 1);
+    ASSERT_EQ(buf[0], 'y');
 }
 
-void test_uring_destroyed_file_reader_and_writer(void**) {
+void test_uring_destroyed_file_reader_and_writer() {
     TLoop<TUring> loop;
     int p[2];
-    assert_int_equal(pipe(p), 0);
+    ASSERT_EQ(pipe(p), 0);
     TUring::TFileHandle in(p[0], loop.Poller());
     TUring::TFileHandle out(p[1], loop.Poller());
 
@@ -2552,49 +2568,49 @@ void test_uring_destroyed_file_reader_and_writer(void**) {
         if (submitted) {
             loop.Step();
         } else {
-            assert_int_equal(write(p[1], "x", 1), 1);
+            ASSERT_EQ(write(p[1], "x", 1), 1);
         }
         reader.reset();
         if (submitted) {
-            assert_int_equal(write(p[1], "x", 1), 1);
+            ASSERT_EQ(write(p[1], "x", 1), 1);
         }
         for (int i = 0; i < 3; i++) {
             loop.Step();
         }
-        assert_int_equal(got, -1);
-        assert_int_equal(buf[0], 0);
+        ASSERT_EQ(got, -1);
+        ASSERT_EQ(buf[0], 0);
         auto next = ReadInto(in, buf, sizeof(buf), &got);
-        StepUntilDone(loop, next);
-        assert_int_equal(got, 1);
-        assert_int_equal(buf[0], 'x');
+        ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+        ASSERT_EQ(got, 1);
+        ASSERT_EQ(buf[0], 'x');
     }
 
     // Destroyed while the pipe is full: its byte is not written.
     int size = fcntl(p[1], F_GETPIPE_SZ);
-    assert_true(size > 0);
+    ASSERT_TRUE(size > 0);
     std::vector<char> fill(size, 0);
-    assert_int_equal(write(p[1], fill.data(), size), size);
+    ASSERT_EQ(write(p[1], fill.data(), size), size);
     int put = -1;
     std::optional<TFuture<void>> writer{WriteFrom(out, "w", 1, &put)};
     loop.Step();
     writer.reset();
     for (int done = 0; done < size; ) {
         auto n = read(p[0], fill.data(), size - done);
-        assert_true(n > 0);
+        ASSERT_TRUE(n > 0);
         done += n;
     }
-    assert_int_equal(put, -1);
+    ASSERT_EQ(put, -1);
     auto next = WriteFrom(out, "v", 1, &put);
-    StepUntilDone(loop, next);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
     char buf[4] = {0};
     int got = -1;
     auto reader = ReadInto(in, buf, sizeof(buf), &got);
-    StepUntilDone(loop, reader);
-    assert_int_equal(got, 1);
-    assert_int_equal(buf[0], 'v');
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader));
+    ASSERT_EQ(got, 1);
+    ASSERT_EQ(buf[0], 'v');
 }
 
-void test_uring_destroyed_socket_writer(void**) {
+void test_uring_destroyed_socket_writer() {
     using TSocket = TUring::TSocket;
     TLoop<TUring> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -2602,10 +2618,11 @@ void test_uring_destroyed_socket_writer(void**) {
     listener.Bind(address);
     listener.Listen();
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
 
     char fill[4096] = {0};
     while (send(client.Fd(), fill, sizeof(fill), MSG_DONTWAIT) > 0) { }
-    assert_true(errno == EAGAIN || errno == EWOULDBLOCK);
+    ASSERT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
     int put = -1;
     std::optional<TFuture<void>> writer{WriteFrom(client, "w", 1, &put)};
     loop.Step();
@@ -2615,15 +2632,15 @@ void test_uring_destroyed_socket_writer(void**) {
     std::string markers;
     auto drain = ReadMarkers(server, 'v', &markers);
     auto next = WriteFrom(client, "v", 1, &put);
-    StepUntilDone(loop, next);
-    StepUntilDone(loop, drain);
-    assert_string_equal(markers.c_str(), "v");
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, next));
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, drain));
+    ASSERT_STREQ(markers.c_str(), "v");
 }
 
 // Completions collected by a Wait() not followed by WakeupReadyHandles() are
 // kept by the next Wait(): a destroyed coroutine drops its completion there
 // instead of waiting for one that will not come again.
-void test_uring_destroyed_after_repeated_wait(void**) {
+void test_uring_destroyed_after_repeated_wait() {
     using TSocket = TUring::TSocket;
     TLoop<TUring> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -2631,7 +2648,9 @@ void test_uring_destroyed_after_repeated_wait(void**) {
     listener.Bind(address);
     listener.Listen();
     auto [client, server] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
     auto [otherClient, otherServer] = ConnectedPair(loop, listener, address);
+    ASSERT_FALSE(testing::Test::HasFatalFailure());
 
     char buf[4] = {0};
     int got = -1;
@@ -2640,16 +2659,16 @@ void test_uring_destroyed_after_repeated_wait(void**) {
     std::optional<TFuture<void>> reader{ReadInto(server, buf, sizeof(buf), &got)};
     auto other = ReadInto(otherServer, otherBuf, sizeof(otherBuf), &otherGot);
     loop.Step();
-    assert_int_equal(send(client.Fd(), "x", 1, 0), 1);
-    assert_int_equal(send(otherClient.Fd(), "yy", 2, 0), 2);
+    ASSERT_EQ(send(client.Fd(), "x", 1, 0), 1);
+    ASSERT_EQ(send(otherClient.Fd(), "yy", 2, 0), 2);
     loop.Poller().Poll();
     loop.Poller().Poll();
     reader.reset();
     loop.Poller().WakeupReadyHandles();
-    StepUntilDone(loop, other);
-    assert_int_equal(got, -1);
-    assert_int_equal(otherGot, 2);
-    assert_memory_equal(otherBuf, "yy", 2);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, other));
+    ASSERT_EQ(got, -1);
+    ASSERT_EQ(otherGot, 2);
+    ASSERT_EQ(0, memcmp(otherBuf, "yy", 2));
 }
 
 struct TSmallCqUring: public TUring {
@@ -2660,7 +2679,7 @@ struct TSmallCqUring: public TUring {
 
 // Cancel() reaps more completions than the CQ holds; the ones of live
 // coroutines are delivered by the next Wait(), each with its own result.
-void test_uring_destroyed_reader_with_full_cq(void**) {
+void test_uring_destroyed_reader_with_full_cq() {
     TSmallCqUring uring; // room for 8 completions
     constexpr int count = 16;
     std::vector<TUring::TSocket> sockets;
@@ -2668,7 +2687,7 @@ void test_uring_destroyed_reader_with_full_cq(void**) {
     int peers[count];
     for (int i = 0; i < count; i++) {
         int sp[2];
-        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
         sockets.emplace_back(sp[0], uring);
         peers[i] = sp[1];
     }
@@ -2682,7 +2701,7 @@ void test_uring_destroyed_reader_with_full_cq(void**) {
     uring.Wait({0, 0});
     for (int i = 0; i < count; i++) {
         char c = 'a' + i;
-        assert_int_equal(write(peers[i], &c, 1), 1);
+        ASSERT_EQ(write(peers[i], &c, 1), 1);
     }
     readers[count - 2].reset();
     readers[1].reset();
@@ -2692,10 +2711,10 @@ void test_uring_destroyed_reader_with_full_cq(void**) {
     }
     for (int i = 0; i < count; i++) {
         if (i == 1 || i == count - 2) {
-            assert_int_equal(got[i], -1);
+            ASSERT_EQ(got[i], -1);
         } else {
-            assert_int_equal(got[i], 1);
-            assert_int_equal(bufs[i][0], 'a' + i);
+            ASSERT_EQ(got[i], 1);
+            ASSERT_EQ(bufs[i][0], 'a' + i);
         }
         close(peers[i]);
     }
@@ -2703,7 +2722,7 @@ void test_uring_destroyed_reader_with_full_cq(void**) {
 
 // The SQ wraps around while the reads wait: a destroyed reader is found by
 // its SQ position whether its SQE is still queued or submitted already.
-void test_uring_destroyed_queued_and_submitted_readers(void**) {
+void test_uring_destroyed_queued_and_submitted_readers() {
     TUring uring(16); // a full SQ is submitted
     constexpr int count = 64;
     std::vector<TUring::TSocket> sockets;
@@ -2711,7 +2730,7 @@ void test_uring_destroyed_queued_and_submitted_readers(void**) {
     int peers[count];
     for (int i = 0; i < count; i++) {
         int sp[2];
-        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
         sockets.emplace_back(sp[0], uring);
         peers[i] = sp[1];
     }
@@ -2729,7 +2748,7 @@ void test_uring_destroyed_queued_and_submitted_readers(void**) {
     readers[submitted].reset();
     for (int i = 0; i < count; i++) {
         char c = 'a' + i % 26;
-        assert_int_equal(write(peers[i], &c, 1), 1);
+        ASSERT_EQ(write(peers[i], &c, 1), 1);
     }
     auto waiting = [&]() {
         for (auto& reader : readers) {
@@ -2748,14 +2767,14 @@ void test_uring_destroyed_queued_and_submitted_readers(void**) {
         char c = 'a' + i % 26;
         if (i == queued || i == submitted) {
             // Cancelled before the byte came: it is left in the socket.
-            assert_int_equal(got[i], -1);
+            ASSERT_EQ(got[i], -1);
             char left = 0;
-            assert_int_equal(recv(sockets[i].Fd(), &left, 1, MSG_DONTWAIT), 1);
-            assert_int_equal(left, c);
+            ASSERT_EQ(recv(sockets[i].Fd(), &left, 1, MSG_DONTWAIT), 1);
+            ASSERT_EQ(left, c);
         } else {
-            assert_true(readers[i]->done());
-            assert_int_equal(got[i], 1);
-            assert_int_equal(bufs[i][0], c);
+            ASSERT_TRUE(readers[i]->done());
+            ASSERT_EQ(got[i], 1);
+            ASSERT_EQ(bufs[i][0], c);
         }
         close(peers[i]);
     }
@@ -2763,12 +2782,12 @@ void test_uring_destroyed_queued_and_submitted_readers(void**) {
 
 // Closing a socket cancels its pending read and write (CANCEL_ALL) before the
 // number is released, so a descriptor opened meanwhile keeps its read (#180).
-void test_uring_close_cancels_only_its_operations(void**) {
+void test_uring_close_cancels_only_its_operations() {
     TLoop<TUring> loop;
     int fds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     int size = 4096;
-    assert_int_equal(setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)), 0);
+    ASSERT_EQ(setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)), 0);
     auto handle = std::make_unique<TUring::TSocket>(fds[0], loop.Poller());
     static char data[65536];
     while (write(fds[0], data, sizeof(data)) > 0) { }
@@ -2779,17 +2798,17 @@ void test_uring_close_cancels_only_its_operations(void**) {
     loop.Step();
     handle.reset();
     int next[2];
-    assert_int_equal(pipe(next), 0);
+    ASSERT_EQ(pipe(next), 0);
     TUring::TFileHandle nextHandle(next[0], loop.Poller());
     auto nextRead = IoResult(nextHandle, false, &bufs[1], 1, &results[2]);
     loop.Step();
-    assert_int_equal(write(next[1], "n", 1), 1);
-    StepUntilDone(loop, nextRead);
-    assert_int_equal(results[2], 1);
-    StepUntilDone(loop, reader);
-    StepUntilDone(loop, writer);
-    assert_int_equal(results[0], -ECANCELED);
-    assert_int_equal(results[1], -ECANCELED);
+    ASSERT_EQ(write(next[1], "n", 1), 1);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, nextRead));
+    ASSERT_EQ(results[2], 1);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, reader));
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, writer));
+    ASSERT_EQ(results[0], -ECANCELED);
+    ASSERT_EQ(results[1], -ECANCELED);
     close(fds[1]);
     close(next[1]);
 }
@@ -2797,17 +2816,17 @@ void test_uring_close_cancels_only_its_operations(void**) {
 // A close cancels the pending read of its descriptor after earlier operations
 // on it completed, were cancelled or were dropped before they were submitted,
 // so their count goes back down.
-void test_uring_close_cancels_after_finished_operations(void**) {
+void test_uring_close_cancels_after_finished_operations() {
     TLoop<TUring> loop;
     int p[2];
-    assert_int_equal(pipe(p), 0);
+    ASSERT_EQ(pipe(p), 0);
     auto handle = std::make_unique<TUring::TFileHandle>(p[0], loop.Poller());
     char buf[1] = {0};
     int results[3] = {0, 0, 0};
-    assert_int_equal(write(p[1], "x", 1), 1);
+    ASSERT_EQ(write(p[1], "x", 1), 1);
     auto completed = IoResult(*handle, false, buf, 1, &results[0]);
-    StepUntilDone(loop, completed);
-    assert_int_equal(results[0], 1);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, completed));
+    ASSERT_EQ(results[0], 1);
     {
         auto cancelled = IoResult(*handle, false, buf, 1, &results[1]);
         loop.Step();
@@ -2818,19 +2837,19 @@ void test_uring_close_cancels_after_finished_operations(void**) {
     auto pending = IoResult(*handle, false, buf, 1, &results[2]);
     loop.Step();
     handle.reset();
-    StepUntilDone(loop, pending);
-    assert_int_equal(results[2], -ECANCELED);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, pending));
+    ASSERT_EQ(results[2], -ECANCELED);
     close(p[1]);
 }
 
 // The two linked SQEs of a close are never split, even on the smallest queue.
-void test_uring_closes_on_small_queues(void**) {
+void test_uring_closes_on_small_queues() {
     for (int size : {1, 8}) {
         TUring uring(size);
         int fds[20][2];
         std::vector<std::unique_ptr<TUring::TFileHandle>> handles;
         for (auto& pair : fds) {
-            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+            ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
             handles.push_back(std::make_unique<TUring::TFileHandle>(pair[0], uring));
         }
         char buf[1] = {0};
@@ -2842,57 +2861,48 @@ void test_uring_closes_on_small_queues(void**) {
             uring.Wait({0, 1000000});
             uring.WakeupReadyHandles();
         }
-        assert_int_equal(result, -ECANCELED);
+        ASSERT_EQ(result, -ECANCELED);
         for (auto& pair : fds) {
-            assert_true(IsClosed(pair[0]));
+            ASSERT_TRUE(IsClosed(pair[0]));
             close(pair[1]);
         }
     }
 }
 #endif
 
-void test_base64(void**) {
+void test_base64() {
     std::string data = "test string";
     std::string encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
-    assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmc=");
-    assert_int_equal(encoded.size(), 16);
+    ASSERT_STREQ(encoded.data(), "dGVzdCBzdHJpbmc=");
+    ASSERT_EQ(encoded.size(), 16);
 
     data = "test string1";
     encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
-    assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmcx");
-    assert_int_equal(encoded.size(), 16);
+    ASSERT_STREQ(encoded.data(), "dGVzdCBzdHJpbmcx");
+    ASSERT_EQ(encoded.size(), 16);
 
     data = "test string12";
     encoded = NNet::NUtils::Base64Encode((const unsigned char*)data.data(), data.size());
-    assert_string_equal(encoded.data(), "dGVzdCBzdHJpbmcxMg==");
-    assert_int_equal(encoded.size(), 20);
+    ASSERT_STREQ(encoded.data(), "dGVzdCBzdHJpbmcxMg==");
+    ASSERT_EQ(encoded.size(), 20);
 }
 
-void test_sha1(void**) {
+void test_sha1() {
     std::string digest;
     std::string data = "test string";
     digest.resize(40);
     NNet::NUtils::SHA1Digest((const unsigned char*)data.data(), data.size(), (unsigned char*)digest.data());
-    assert_string_equal(digest.data(), "661295c9cbf9d6b2f6428414504a8deed3020641");
+    ASSERT_STREQ(digest.data(), "661295c9cbf9d6b2f6428414504a8deed3020641");
 
     data = "test string1";
     NNet::NUtils::SHA1Digest((const unsigned char*)data.data(), data.size(), (unsigned char*)digest.data());
-    assert_string_equal(digest.data(), "3567ba6828093bdf2a25c425bc3b6c21f7bfdc53");
+    ASSERT_STREQ(digest.data(), "3567ba6828093bdf2a25c425bc3b6c21f7bfdc53");
 }
 
-#define my_unit_test(f, a) { #f "(" #a ")", f<a>, NULL, NULL, NULL }
-#define my_unit_test2(f, a, b) \
-    { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
-    { #f "(" #b ")", f<b>, NULL, NULL, NULL }
-#define my_unit_test3(f, a, b, c) \
-    { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
-    { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
-    { #f "(" #c ")", f<c>, NULL, NULL, NULL }
-#define my_unit_test4(f, a, b, c, d) \
-    { #f "(" #a ")", f<a>, NULL, NULL, NULL }, \
-    { #f "(" #b ")", f<b>, NULL, NULL, NULL }, \
-    { #f "(" #c ")", f<c>, NULL, NULL, NULL }, \
-    { #f "(" #d ")", f<d>, NULL, NULL, NULL }
+#define my_unit_test(f, a) RegisterTest(#f, #a, f<a>)
+#define my_unit_test2(f, a, b) my_unit_test(f, a); my_unit_test(f, b)
+#define my_unit_test3(f, a, b, c) my_unit_test2(f, a, b); my_unit_test(f, c)
+#define my_unit_test4(f, a, b, c, d) my_unit_test3(f, a, b, c); my_unit_test(f, d)
 
 #ifdef __linux__
 #ifdef HAVE_URING
@@ -2917,7 +2927,7 @@ void Complete(TLoop<TPoller>& loop, TFuture<void>& wait) {
     while (!wait.done() && TClock::now() < deadline) {
         loop.Step();
     }
-    assert_true(wait.done());
+    ASSERT_TRUE(wait.done());
     wait.await_resume();
 }
 
@@ -2925,7 +2935,7 @@ template<typename TPoller>
 constexpr bool kDriven = !std::is_same_v<typename TPoller::TFileHandle, TFileHandle>;
 
 template<typename TPoller>
-void test_notifier_factory(void**) {
+void test_notifier_factory() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TPollerBase& poller = loop.Poller();
@@ -2934,54 +2944,54 @@ void test_notifier_factory(void**) {
         notifier->Notify();
     }
     auto first = notifier->Wait();
-    Complete(loop, first);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, first));
 
     auto next = notifier->Wait();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
     std::thread producer([&] { notifier->Notify(); });
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
     producer.join();
 
     {
         auto cancelled = notifier->Wait();
-        assert_false(cancelled.done());
+        ASSERT_FALSE(cancelled.done());
         loop.Step();
     }
     notifier->Notify();
     auto last = notifier->Wait();
-    Complete(loop, last);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, last));
 }
 
 template<typename TPoller>
-void test_notifier_wait_signal(void**) {
+void test_notifier_wait_signal() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
     auto wait = notifier.Wait();
-    assert_false(wait.done());
+    ASSERT_FALSE(wait.done());
     notifier.Notify();
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
 
     auto next = notifier.Wait();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
     notifier.Notify();
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
 }
 
 template<typename TPoller>
-void test_notifier_notify_before_wait(void**) {
+void test_notifier_notify_before_wait() {
     TLoop<TPoller> loop;
     TNotifier notifier(loop.Poller());
     notifier.Notify();
     auto wait = notifier.Wait();
     if constexpr (!kDriven<TPoller>) {
-        assert_true(wait.done());
+        ASSERT_TRUE(wait.done());
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
 }
 
 template<typename TPoller>
-void test_notifier_coalesces(void**) {
+void test_notifier_coalesces() {
     TLoop<TPoller> loop;
     TNotifier notifier(loop.Poller());
     for (int i = 0; i < 10000; ++i) {
@@ -2989,15 +2999,15 @@ void test_notifier_coalesces(void**) {
     }
     auto wait = notifier.Wait();
     if constexpr (!kDriven<TPoller>) {
-        assert_true(wait.done());
+        ASSERT_TRUE(wait.done());
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     auto next = notifier.Wait();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
 }
 
 template<typename TPoller>
-void test_notifier_concurrent_producers(void**) {
+void test_notifier_concurrent_producers() {
     TLoop<TPoller> loop;
     TNotifier notifier(loop.Poller());
     constexpr size_t producerCount = 8;
@@ -3014,11 +3024,11 @@ void test_notifier_concurrent_producers(void**) {
     producers.clear();
     auto wait = notifier.Wait();
     if constexpr (!kDriven<TPoller>) {
-        assert_true(wait.done());
+        ASSERT_TRUE(wait.done());
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     auto next = notifier.Wait();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
 }
 
 TFuture<void> Observe(INotifier& notifier, const int& payload, int& observed) {
@@ -3027,7 +3037,7 @@ TFuture<void> Observe(INotifier& notifier, const int& payload, int& observed) {
 }
 
 template<typename TPoller>
-void test_notifier_cross_thread_wakeup(void**) {
+void test_notifier_cross_thread_wakeup() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(10));
     TNotifier notifier(loop.Poller());
@@ -3039,8 +3049,8 @@ void test_notifier_cross_thread_wakeup(void**) {
         payload = 42;
         notifier.Notify();
     });
-    Complete(loop, wait);
-    assert_int_equal(observed, 42);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
+    ASSERT_EQ(observed, 42);
 }
 
 TFuture<void> Drain(INotifier& notifier, const std::atomic<int>& published, int total) {
@@ -3052,7 +3062,7 @@ TFuture<void> Drain(INotifier& notifier, const std::atomic<int>& published, int 
 }
 
 template<typename TPoller>
-void test_notifier_notify_while_draining(void**) {
+void test_notifier_notify_while_draining() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
@@ -3072,57 +3082,57 @@ void test_notifier_notify_while_draining(void**) {
             }
         });
     }
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     producers.clear();
-    assert_int_equal(published.load(), producerCount * perProducer);
+    ASSERT_EQ(published.load(), producerCount * perProducer);
 }
 
 template<typename TPoller>
-void test_notifier_rejects_second_listener(void**) {
+void test_notifier_rejects_second_listener() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
     auto first = notifier.Wait();
     auto second = notifier.Wait();
-    assert_true(second.done());
+    ASSERT_TRUE(second.done());
     bool rejected = false;
     try {
         second.await_resume();
     } catch (const std::logic_error&) {
         rejected = true;
     }
-    assert_true(rejected);
+    ASSERT_TRUE(rejected);
     notifier.Notify();
-    Complete(loop, first);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, first));
 }
 
 template<typename TPoller>
-void test_notifier_interface(void**) {
+void test_notifier_interface() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     std::unique_ptr<INotifier> notifier = std::make_unique<TNotifier<TPoller>>(loop.Poller());
     auto wait = notifier->Wait();
-    assert_false(wait.done());
+    ASSERT_FALSE(wait.done());
     notifier->Notify();
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     auto next = notifier->Wait();
-    assert_false(next.done());
+    ASSERT_FALSE(next.done());
 }
 
 template<typename TPoller>
-void test_notifier_cancel_wait(void**) {
+void test_notifier_cancel_wait() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     TNotifier notifier(loop.Poller());
     {
         auto cancelled = notifier.Wait();
         loop.Step();
-        assert_false(cancelled.done());
+        ASSERT_FALSE(cancelled.done());
     }
     loop.Step();
     auto wait = notifier.Wait();
     notifier.Notify();
-    Complete(loop, wait);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
 }
 
 TFuture<void> CancelNotifierWait(
@@ -3134,7 +3144,7 @@ TFuture<void> CancelNotifierWait(
 }
 
 template<typename TPoller>
-void test_notifier_cancel_ready_from_timer(void**) {
+void test_notifier_cancel_ready_from_timer() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     TNotifier notifier(loop.Poller());
@@ -3142,20 +3152,20 @@ void test_notifier_cancel_ready_from_timer(void**) {
     auto cancel = CancelNotifierWait(loop.Poller(), wait);
     notifier.Notify();
     loop.Step();
-    assert_true(cancel.done());
+    ASSERT_TRUE(cancel.done());
     cancel.await_resume();
-    assert_false(wait.has_value());
+    ASSERT_FALSE(wait.has_value());
 
     auto next = notifier.Wait();
     if constexpr (!kDriven<TPoller>) {
-        assert_true(next.done());
+        ASSERT_TRUE(next.done());
     }
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
     loop.Step();
 }
 
 template<typename TPoller>
-void test_notifier_cancel_collected_event(void**) {
+void test_notifier_cancel_collected_event() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     TNotifier notifier(loop.Poller());
@@ -3166,18 +3176,18 @@ void test_notifier_cancel_collected_event(void**) {
 
     auto next = notifier.Wait();
     if constexpr (!kDriven<TPoller>) {
-        assert_true(next.done());
+        ASSERT_TRUE(next.done());
     }
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
     auto pending = notifier.Wait();
     loop.Poller().WakeupReadyHandles();
-    assert_false(pending.done());
+    ASSERT_FALSE(pending.done());
     notifier.Notify();
-    Complete(loop, pending);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, pending));
 }
 
 template<typename TPoller>
-void test_notifier_cancel_retains_signal(void**) {
+void test_notifier_cancel_retains_signal() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TNotifier notifier(loop.Poller());
@@ -3187,7 +3197,7 @@ void test_notifier_cancel_retains_signal(void**) {
     wait.reset();
     // No new Notify(): the signal sent before the cancel must still be delivered.
     auto next = notifier.Wait();
-    Complete(loop, next);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
 }
 
 int CountOpenFds() {
@@ -3201,7 +3211,7 @@ int CountOpenFds() {
 }
 
 template<typename TPoller>
-void test_notifier_closes_descriptors(void**) {
+void test_notifier_closes_descriptors() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     const int before = CountOpenFds();
@@ -3217,12 +3227,12 @@ void test_notifier_closes_descriptors(void**) {
             }
         }
         loop.Step();
-        assert_int_equal(CountOpenFds(), before);
+        ASSERT_EQ(CountOpenFds(), before);
     }
 }
 
 template<typename TPoller>
-void test_notifier_destroy_before_poll(void**) {
+void test_notifier_destroy_before_poll() {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     for (bool registered : {false, true}) {
@@ -3237,22 +3247,22 @@ void test_notifier_destroy_before_poll(void**) {
         TNotifier replacement(loop.Poller());
         auto wait = replacement.Wait();
         replacement.Notify();
-        Complete(loop, wait);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, wait));
     }
     loop.Step();
 }
 
 void SetNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL);
-    assert_true(flags >= 0);
-    assert_int_equal(fcntl(fd, F_SETFL, flags | O_NONBLOCK), 0);
+    ASSERT_TRUE(flags >= 0);
+    ASSERT_EQ(fcntl(fd, F_SETFL, flags | O_NONBLOCK), 0);
 }
 
 void FillSendBuffer(int fd) {
     char buf[4096] = {0};
     for (size_t size : {sizeof(buf), size_t(1)}) {
         while (write(fd, buf, size) > 0) { }
-        assert_true(errno == EAGAIN || errno == EWOULDBLOCK);
+        ASSERT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
     }
 }
 
@@ -3266,7 +3276,7 @@ void MakeReady(bool write, int peer) {
     if (write) {
         Drain(peer);
     } else {
-        assert_int_equal(::write(peer, "r", 1), 1);
+        ASSERT_EQ(::write(peer, "r", 1), 1);
     }
 }
 
@@ -3303,7 +3313,7 @@ TFuture<void> CountWrite(TFileHandle& handle, int* resumed) {
 }
 
 template<typename TPoller>
-void test_destroyed_waiter_not_resumed(void**) {
+void test_destroyed_waiter_not_resumed() {
     using TFileHandle = typename TPoller::TFileHandle;
     enum { PENDING, REGISTERED, COLLECTED, CANCELLED_BY_TIMER, REPLACED };
     TLoop<TPoller> loop;
@@ -3311,18 +3321,18 @@ void test_destroyed_waiter_not_resumed(void**) {
     for (bool write : {false, true}) {
         for (int stage : {PENDING, REGISTERED, COLLECTED, CANCELLED_BY_TIMER, REPLACED}) {
             int fds[2];
-            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+            ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
             TFileHandle handle(fds[0], loop.Poller());
-            SetNonBlocking(fds[1]);
+            ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
             char byte = 0;
             auto wait = [&]() {
                 return write ? WriteByte(handle) : ReadByte(handle, &byte);
             };
             if (write) {
-                FillSendBuffer(fds[0]);
+                ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
             }
             std::optional<TFuture<void>> waiter{wait()};
-            assert_false(waiter->done());
+            ASSERT_FALSE(waiter->done());
             if (stage != PENDING) {
                 loop.Step();
             }
@@ -3330,51 +3340,51 @@ void test_destroyed_waiter_not_resumed(void**) {
             case PENDING:
             case REGISTERED:
                 waiter.reset();
-                MakeReady(write, fds[1]);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
                 loop.Step();
                 loop.Step();
                 break;
             case COLLECTED:
-                MakeReady(write, fds[1]);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
                 loop.Poller().Poll();
                 waiter.reset();
                 loop.Poller().WakeupReadyHandles();
                 break;
             case CANCELLED_BY_TIMER: {
                 auto cancel = CancelNotifierWait(loop.Poller(), waiter);
-                MakeReady(write, fds[1]);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
                 loop.Step();
-                assert_true(cancel.done());
+                ASSERT_TRUE(cancel.done());
                 cancel.await_resume();
-                assert_false(waiter.has_value());
+                ASSERT_FALSE(waiter.has_value());
                 break;
             }
             case REPLACED:
                 // The new waiter registers before the old one is destroyed.
                 *waiter = wait();
-                MakeReady(write, fds[1]);
-                Complete(loop, *waiter);
+                ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
+                ASSERT_NO_FATAL_FAILURE(Complete(loop, *waiter));
                 break;
             }
 
             // The descriptor still serves the next waiter.
             if (write) {
-                FillSendBuffer(fds[0]);
+                ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
             } else {
                 Drain(fds[0]);
             }
             auto next = wait();
-            assert_false(next.done());
+            ASSERT_FALSE(next.done());
             loop.Step();
-            MakeReady(write, fds[1]);
-            Complete(loop, next);
+            ASSERT_NO_FATAL_FAILURE(MakeReady(write, fds[1]));
+            ASSERT_NO_FATAL_FAILURE(Complete(loop, next));
             close(fds[1]);
         }
     }
 }
 
 template<typename TPoller>
-void test_reused_descriptor_wakes_new_waiter(void**) {
+void test_reused_descriptor_wakes_new_waiter() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
@@ -3384,7 +3394,7 @@ void test_reused_descriptor_wakes_new_waiter(void**) {
             // Closes the descriptors of the previous round, so that the number below is reused.
             loop.Step();
             int oldFds[2];
-            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds), 0);
+            ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds), 0);
             auto oldHandle = std::make_unique<TFileHandle>(oldFds[0], loop.Poller());
             char oldByte = 0;
             int oldResumed = 0;
@@ -3398,23 +3408,23 @@ void test_reused_descriptor_wakes_new_waiter(void**) {
             loop.Step();
 
             int newFds[2];
-            assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
-            assert_int_equal(newFds[0], oldFds[0]);
+            ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
+            ASSERT_EQ(newFds[0], oldFds[0]);
             TFileHandle newHandle(newFds[0], loop.Poller());
             char newByte = 0;
             int newResumed = 0;
             auto newWait = CountRead(newHandle, &newByte, &newResumed);
             if (shared) {
-                assert_int_equal(write(oldFds[1], "o", 1), 1);
+                ASSERT_EQ(write(oldFds[1], "o", 1), 1);
             }
-            assert_int_equal(write(newFds[1], "n", 1), 1);
-            Complete(loop, newWait);
+            ASSERT_EQ(write(newFds[1], "n", 1), 1);
+            ASSERT_NO_FATAL_FAILURE(Complete(loop, newWait));
             loop.Step();
             loop.Step();
-            assert_int_equal(newResumed, 1);
-            assert_int_equal(newByte, 'n');
-            assert_int_equal(oldResumed, 0);
-            assert_false(oldWait.done());
+            ASSERT_EQ(newResumed, 1);
+            ASSERT_EQ(newByte, 'n');
+            ASSERT_EQ(oldResumed, 0);
+            ASSERT_FALSE(oldWait.done());
 
             if (kept >= 0) {
                 close(kept);
@@ -3428,19 +3438,19 @@ void test_reused_descriptor_wakes_new_waiter(void**) {
 // The file stays open in a dup (as in a forked child) after the handle is
 // closed: its epoll registration must not keep firing (#150).
 template<typename TPoller>
-void test_close_unregisters_shared_file(void**) {
+void test_close_unregisters_shared_file() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     int fds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     auto handle = std::make_unique<TFileHandle>(fds[0], loop.Poller());
     char byte = 0;
     auto wait = ReadByte(*handle, &byte);
     loop.Step();
     int holder = dup(fds[0]);
-    assert_true(holder >= 0);
-    assert_int_equal(write(fds[1], "x", 1), 1);
+    ASSERT_TRUE(holder >= 0);
+    ASSERT_EQ(write(fds[1], "x", 1), 1);
     handle.reset();
     loop.Step();
     // With nothing registered, each step waits for the whole 10 ms timeout.
@@ -3451,8 +3461,8 @@ void test_close_unregisters_shared_file(void**) {
     }
     close(holder);
     close(fds[1]);
-    assert_false(wait.done());
-    assert_true(steps < 50);
+    ASSERT_FALSE(wait.done());
+    ASSERT_TRUE(steps < 50);
 }
 
 template<typename TFileHandle>
@@ -3471,22 +3481,22 @@ TFuture<void> WaitAndClose(std::unique_ptr<TFileHandle>& handle, bool write, int
 // of two ready waiters to be woken, or by a timer, which fires in Poll() after
 // the events are collected.
 template<typename TPoller>
-void test_close_skips_collected_events(void**) {
+void test_close_skips_collected_events() {
     using TFileHandle = typename TPoller::TFileHandle;
     for (bool timer : {false, true}) {
         TLoop<TPoller> loop;
         loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
         int fds[2];
-        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
-        SetNonBlocking(fds[1]);
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
         auto handle = std::make_unique<TFileHandle>(fds[0], loop.Poller());
-        FillSendBuffer(fds[0]);
+        ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
         int resumed = 0;
         auto reader = WaitAndClose(handle, false, &resumed);
         auto writer = WaitAndClose(handle, true, &resumed);
         loop.Step();
-        MakeReady(false, fds[1]);
-        MakeReady(true, fds[1]);
+        ASSERT_NO_FATAL_FAILURE(MakeReady(false, fds[1]));
+        ASSERT_NO_FATAL_FAILURE(MakeReady(true, fds[1]));
         std::optional<TFuture<void>> closer;
         if (timer) {
             closer.emplace([](TPoller& poller, std::unique_ptr<TFileHandle>& handle) -> TFuture<void> {
@@ -3497,8 +3507,8 @@ void test_close_skips_collected_events(void**) {
         for (int i = 0; i < 3; i++) {
             loop.Step();
         }
-        assert_int_equal(resumed, timer ? 0 : 1);
-        assert_true(IsClosed(fds[0]));
+        ASSERT_EQ(resumed, timer ? 0 : 1);
+        ASSERT_TRUE(IsClosed(fds[0]));
         close(fds[1]);
     }
 }
@@ -3506,7 +3516,7 @@ void test_close_skips_collected_events(void**) {
 // A closed listener's address is released by the next iteration: rebinding
 // it before co_await Yield() fails with EADDRINUSE, after it works.
 template<typename TPoller>
-void test_rebind_after_close_and_yield(void**) {
+void test_rebind_after_close_and_yield() {
     TLoop<TPoller> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
     auto task = [](TPoller& poller, TAddress address) -> TFuture<void> {
@@ -3519,19 +3529,19 @@ void test_rebind_after_close_and_yield(void**) {
         next.Bind(address);
         next.Listen();
     }(loop.Poller(), address);
-    StepUntilDone(loop, task);
+    ASSERT_NO_FATAL_FAILURE(StepUntilDone(loop, task));
 }
 
 #ifdef __linux__
 // A close applied before Poll() throws is not applied again once its number is reused.
-void test_epoll_close_applied_once_after_throw(void**) {
+void test_epoll_close_applied_once_after_throw() {
     TLoop<TEPoll> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     char path[] = "/tmp/coroio_close_XXXXXX";
     int file = mkstemp(path);
     unlink(path);
     int fds[2], again[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     loop.Poller().Close(fds[0], TEvent::CLOSE_SOCKET);
     loop.Poller().AddRead(file, std::noop_coroutine()); // EPOLL_CTL_ADD fails with EPERM, after the close
     bool threw = false;
@@ -3540,11 +3550,11 @@ void test_epoll_close_applied_once_after_throw(void**) {
     } catch (const std::system_error&) {
         threw = true;
     }
-    assert_true(threw);
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, again), 0);
-    assert_int_equal(again[0], fds[0]);
+    ASSERT_TRUE(threw);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, again), 0);
+    ASSERT_EQ(again[0], fds[0]);
     loop.Step();
-    assert_false(IsClosed(again[0]));
+    ASSERT_FALSE(IsClosed(again[0]));
     for (int fd : {again[0], again[1], fds[1], file}) {
         close(fd);
     }
@@ -3572,7 +3582,7 @@ TFuture<void> CountConnect(TSocket& socket, TAddress address, TTime deadline, in
 }
 
 template<typename TPoller>
-void test_destroyed_accept_and_connect_not_resumed(void**) {
+void test_destroyed_accept_and_connect_not_resumed() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
@@ -3598,12 +3608,12 @@ void test_destroyed_accept_and_connect_not_resumed(void**) {
     for (int i = 0; i < 3; i++) {
         loop.Step();
     }
-    assert_true(timedOut.done());
-    assert_int_equal(resumed, 1);
+    ASSERT_TRUE(timedOut.done());
+    ASSERT_EQ(resumed, 1);
 }
 
 template<typename TPoller>
-void test_reuse_after_closing_several(void**) {
+void test_reuse_after_closing_several() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
@@ -3612,7 +3622,7 @@ void test_reuse_after_closing_several(void**) {
     std::optional<TFuture<void>> oldWaits[2];
     char oldBytes[2] = {0};
     for (int i = 0; i < 2; i++) {
-        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds[i]), 0);
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, oldFds[i]), 0);
         oldHandles[i] = std::make_unique<TFileHandle>(oldFds[i][0], loop.Poller());
         oldWaits[i].emplace(ReadByte(*oldHandles[i], &oldBytes[i]));
     }
@@ -3623,7 +3633,7 @@ void test_reuse_after_closing_several(void**) {
     loop.Step();
 
     int newFds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, newFds), 0);
     TFileHandle newHandles[2] = {{newFds[0], loop.Poller()}, {newFds[1], loop.Poller()}};
     char newBytes[2] = {0};
     int resumed[2] = {0};
@@ -3632,28 +3642,28 @@ void test_reuse_after_closing_several(void**) {
         CountRead(newHandles[1], &newBytes[1], &resumed[1]),
     };
     loop.Step();
-    assert_int_equal(write(newFds[0], "0", 1), 1);
-    assert_int_equal(write(newFds[1], "1", 1), 1);
-    Complete(loop, newWaits[0]);
-    Complete(loop, newWaits[1]);
-    assert_int_equal(newBytes[0], '1');
-    assert_int_equal(newBytes[1], '0');
-    assert_false(oldWaits[0]->done());
-    assert_false(oldWaits[1]->done());
+    ASSERT_EQ(write(newFds[0], "0", 1), 1);
+    ASSERT_EQ(write(newFds[1], "1", 1), 1);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, newWaits[0]));
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, newWaits[1]));
+    ASSERT_EQ(newBytes[0], '1');
+    ASSERT_EQ(newBytes[1], '0');
+    ASSERT_FALSE(oldWaits[0]->done());
+    ASSERT_FALSE(oldWaits[1]->done());
 
     close(oldFds[0][1]);
     close(oldFds[1][1]);
 }
 
 template<typename TPoller>
-void test_hangup_wakes_reader_and_writer_once(void**) {
+void test_hangup_wakes_reader_and_writer_once() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     int fds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     TFileHandle handle(fds[0], loop.Poller());
-    FillSendBuffer(fds[0]);
+    ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
     char byte = 0;
     int reads = 0;
     int writes = 0;
@@ -3667,22 +3677,22 @@ void test_hangup_wakes_reader_and_writer_once(void**) {
     }
     loop.Step();
     loop.Step();
-    assert_int_equal(reads, 1);
-    assert_int_equal(writes, 1);
+    ASSERT_EQ(reads, 1);
+    ASSERT_EQ(writes, 1);
 }
 
 template<typename TPoller>
-void test_reader_beside_blocked_writer(void**) {
+void test_reader_beside_blocked_writer() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     // The writer registers in the same iteration as the reader, or in the next one.
     for (bool sameIteration : {true, false}) {
         int fds[2];
-        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
         TFileHandle handle(fds[0], loop.Poller());
-        SetNonBlocking(fds[1]);
-        FillSendBuffer(fds[0]);
+        ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
+        ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
         char byte = 0;
         int reads = 0;
         int writes = 0;
@@ -3693,14 +3703,14 @@ void test_reader_beside_blocked_writer(void**) {
         auto writer = CountWrite(handle, &writes);
         loop.Step();
 
-        assert_int_equal(write(fds[1], "r", 1), 1);
-        Complete(loop, reader);
-        assert_int_equal(byte, 'r');
-        assert_false(writer.done());
+        ASSERT_EQ(write(fds[1], "r", 1), 1);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, reader));
+        ASSERT_EQ(byte, 'r');
+        ASSERT_FALSE(writer.done());
         Drain(fds[1]);
-        Complete(loop, writer);
-        assert_int_equal(reads, 1);
-        assert_int_equal(writes, 1);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, writer));
+        ASSERT_EQ(reads, 1);
+        ASSERT_EQ(writes, 1);
         close(fds[1]);
     }
 }
@@ -3717,15 +3727,15 @@ TFuture<void> CountHangup(TFileHandle& handle, int* resumed) {
 }
 
 template<typename TPoller>
-void test_monitor_with_reader_and_writer(void**) {
+void test_monitor_with_reader_and_writer() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     int fds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     TFileHandle handle(fds[0], loop.Poller());
-    SetNonBlocking(fds[1]);
-    FillSendBuffer(fds[0]);
+    ASSERT_NO_FATAL_FAILURE(SetNonBlocking(fds[1]));
+    ASSERT_NO_FATAL_FAILURE(FillSendBuffer(fds[0]));
     char byte = 0;
     int hangups = 0;
     int reads = 0;
@@ -3738,50 +3748,50 @@ void test_monitor_with_reader_and_writer(void**) {
     loop.Step();
 
     // Data and room to write wake only their own waiters.
-    assert_int_equal(write(fds[1], "r", 1), 1);
-    Complete(loop, reader);
-    assert_int_equal(byte, 'r');
+    ASSERT_EQ(write(fds[1], "r", 1), 1);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, reader));
+    ASSERT_EQ(byte, 'r');
     Drain(fds[1]);
-    Complete(loop, writer);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, writer));
     loop.Step();
     loop.Step();
-    assert_false(monitor.done());
+    ASSERT_FALSE(monitor.done());
 
     // The hang-up wakes the monitor and a new reader, each once.
     auto last = CountRead(handle, &byte, &reads);
     loop.Step();
     close(fds[1]);
-    Complete(loop, monitor);
-    Complete(loop, last);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, monitor));
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, last));
     loop.Step();
     loop.Step();
-    assert_int_equal(hangups, 1);
-    assert_int_equal(reads, 2);
-    assert_int_equal(writes, 1);
+    ASSERT_EQ(hangups, 1);
+    ASSERT_EQ(reads, 2);
+    ASSERT_EQ(writes, 1);
 }
 
 template<typename TPoller>
-void test_monitor_ignores_unread_data(void**) {
+void test_monitor_ignores_unread_data() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(50));
     int fds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     TFileHandle handle(fds[0], loop.Poller());
     int hangups = 0;
     auto monitor = CountHangup(handle, &hangups);
     loop.Step();
-    assert_int_equal(write(fds[1], "x", 1), 1);
+    ASSERT_EQ(write(fds[1], "x", 1), 1);
     loop.Step();
     // The byte nobody reads must not make every poll return at once.
     auto start = TClock::now();
     loop.Step();
-    assert_true(TClock::now() - start >= std::chrono::milliseconds(25));
-    assert_false(monitor.done());
+    ASSERT_TRUE(TClock::now() - start >= std::chrono::milliseconds(25));
+    ASSERT_FALSE(monitor.done());
 
     close(fds[1]);
-    Complete(loop, monitor);
-    assert_int_equal(hangups, 1);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, monitor));
+    ASSERT_EQ(hangups, 1);
 }
 
 template<typename TFileHandle>
@@ -3793,57 +3803,57 @@ TFuture<void> CountHangups(TFileHandle& handle, int count, int* resumed) {
 }
 
 template<typename TPoller>
-void test_monitor_after_hangup(void**) {
+void test_monitor_after_hangup() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     int fds[2];
-    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     TFileHandle handle(fds[0], loop.Poller());
     int hangups = 0;
     // The second wait starts when the first one is resumed.
     auto twice = CountHangups(handle, 2, &hangups);
     loop.Step();
     loop.Step();
-    assert_int_equal(hangups, 0);
-    assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
-    Complete(loop, twice);
-    assert_int_equal(hangups, 2);
+    ASSERT_EQ(hangups, 0);
+    ASSERT_EQ(shutdown(fds[1], SHUT_WR), 0);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, twice));
+    ASSERT_EQ(hangups, 2);
 
     auto late = CountHangups(handle, 1, &hangups);
-    Complete(loop, late);
-    assert_int_equal(hangups, 3);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, late));
+    ASSERT_EQ(hangups, 3);
     close(fds[1]);
 }
 
 template<typename TPoller>
-void test_monitor_pipe(void**) {
+void test_monitor_pipe() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     int p[2];
-    assert_int_equal(pipe(p), 0);
+    ASSERT_EQ(pipe(p), 0);
     TFileHandle handle(p[0], loop.Poller());
     int hangups = 0;
     auto monitor = CountHangup(handle, &hangups);
     loop.Step();
     loop.Step();
-    assert_false(monitor.done());
+    ASSERT_FALSE(monitor.done());
     close(p[1]);
-    Complete(loop, monitor);
-    assert_int_equal(hangups, 1);
+    ASSERT_NO_FATAL_FAILURE(Complete(loop, monitor));
+    ASSERT_EQ(hangups, 1);
 }
 
 template<typename TPoller>
-void test_monitor_pipe_write_end(void**) {
+void test_monitor_pipe_write_end() {
     using TFileHandle = typename TPoller::TFileHandle;
     TLoop<TPoller> loop;
     for (bool registered : {false, true}) {
         loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
         int p[2];
-        assert_int_equal(pipe(p), 0);
+        ASSERT_EQ(pipe(p), 0);
         TFileHandle handle(p[1], loop.Poller());
-        FillSendBuffer(p[1]);
+        ASSERT_NO_FATAL_FAILURE(FillSendBuffer(p[1]));
         if (!registered) {
             close(p[0]);
         }
@@ -3854,37 +3864,37 @@ void test_monitor_pipe_write_end(void**) {
         if (registered) {
             loop.Step();
             loop.Step();
-            assert_false(monitor.done());
-            assert_false(writer.done());
+            ASSERT_FALSE(monitor.done());
+            ASSERT_FALSE(writer.done());
             close(p[0]);
         }
         // Linux reports only an error on the write end.
         for (int i = 0; i < 3 && !(monitor.done() && writer.done()); i++) {
             loop.Step();
         }
-        assert_true(monitor.done() && writer.done());
+        ASSERT_TRUE(monitor.done() && writer.done());
         loop.Step();
         loop.Step();
-        assert_int_equal(hangups, 1);
-        assert_int_equal(writes, 1);
+        ASSERT_EQ(hangups, 1);
+        ASSERT_EQ(writes, 1);
 
         // With both waiters gone the error is not reported any more.
         loop.Poller().SetMaxDuration(std::chrono::milliseconds(50));
         auto start = TClock::now();
         loop.Step();
-        assert_true(TClock::now() - start >= std::chrono::milliseconds(25));
+        ASSERT_TRUE(TClock::now() - start >= std::chrono::milliseconds(25));
     }
 }
 
 template<typename TPoller>
-void test_destroyed_monitor_not_resumed(void**) {
+void test_destroyed_monitor_not_resumed() {
     using TFileHandle = typename TPoller::TFileHandle;
     enum { PENDING, REGISTERED, COLLECTED, REPLACED };
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(0));
     for (int stage : {PENDING, REGISTERED, COLLECTED, REPLACED}) {
         int fds[2];
-        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
         TFileHandle handle(fds[0], loop.Poller());
         char byte = 0;
         int reads = 0;
@@ -3900,7 +3910,7 @@ void test_destroyed_monitor_not_resumed(void**) {
             monitor.reset();
             break;
         case COLLECTED:
-            assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
+            ASSERT_EQ(shutdown(fds[1], SHUT_WR), 0);
             loop.Poller().Poll();
             monitor.reset();
             loop.Poller().WakeupReadyHandles();
@@ -3914,10 +3924,10 @@ void test_destroyed_monitor_not_resumed(void**) {
 
         // The reader keeps its registration.
         if (stage != COLLECTED) {
-            assert_int_equal(write(fds[1], "r", 1), 1);
+            ASSERT_EQ(write(fds[1], "r", 1), 1);
         }
-        Complete(loop, reader);
-        assert_int_equal(reads, 1);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, reader));
+        ASSERT_EQ(reads, 1);
 
         // The descriptor still serves a new waiter, also after the hang-up.
         if (!monitor) {
@@ -3925,13 +3935,13 @@ void test_destroyed_monitor_not_resumed(void**) {
         }
         loop.Step();
         if (stage != COLLECTED) {
-            assert_int_equal(hangups, 0);
-            assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
+            ASSERT_EQ(hangups, 0);
+            ASSERT_EQ(shutdown(fds[1], SHUT_WR), 0);
         }
-        Complete(loop, *monitor);
+        ASSERT_NO_FATAL_FAILURE(Complete(loop, *monitor));
         loop.Step();
         loop.Step();
-        assert_int_equal(hangups, 1);
+        ASSERT_EQ(hangups, 1);
         close(fds[1]);
     }
 }
@@ -3950,7 +3960,7 @@ TFuture<void> AcceptAfterReset(TSocket& listener, int* resets, int* accepted) {
 }
 
 template<typename TPoller>
-void test_accept_reset_connection(void**) {
+void test_accept_reset_connection() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     TAddress address{"127.0.0.1", GetFreePort()};
@@ -3960,13 +3970,13 @@ void test_accept_reset_connection(void**) {
     auto [addr, len] = address.RawAddr();
     // The peer resets the first connection before the server accepts it.
     int aborted = socket(address.Domain(), SOCK_STREAM, 0);
-    assert_int_equal(connect(aborted, addr, len), 0);
+    ASSERT_EQ(connect(aborted, addr, len), 0);
     linger reset{1, 0};
-    assert_int_equal(setsockopt(aborted, SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)), 0);
+    ASSERT_EQ(setsockopt(aborted, SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)), 0);
     close(aborted);
     // Loopback keeps the order, so the reset arrives before this handshake.
     int next = socket(address.Domain(), SOCK_STREAM, 0);
-    assert_int_equal(connect(next, addr, len), 0);
+    ASSERT_EQ(connect(next, addr, len), 0);
 
     int resets = 0;
     int accepted = 0;
@@ -3975,14 +3985,14 @@ void test_accept_reset_connection(void**) {
         loop.Step();
     }
     close(next);
-    assert_true(accept.done());
+    ASSERT_TRUE(accept.done());
     try {
         accept.await_resume();
     } catch (const std::exception& ex) {
-        fail_msg("%s", ex.what());
+        FAIL() << ex.what();
     }
-    assert_int_equal(resets, 1);
-    assert_int_equal(accepted, 1);
+    ASSERT_EQ(resets, 1);
+    ASSERT_EQ(accepted, 1);
 }
 
 struct TShortRequest {
@@ -4057,7 +4067,7 @@ TFuture<void> SendRequest(TPoller& poller, TAddress address, std::string path, b
 }
 
 template<typename TPoller>
-void test_short_connections(void**) {
+void test_short_connections() {
     using TSocket = typename TPoller::TSocket;
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
@@ -4075,7 +4085,7 @@ void test_short_connections(void**) {
                 try {
                     it->Future.await_resume();
                 } catch (const std::exception& ex) {
-                    fail_msg("%s", ex.what());
+                    FAIL() << ex.what();
                 }
                 it = requests.erase(it);
             } else {
@@ -4089,7 +4099,7 @@ void test_short_connections(void**) {
             try {
                 server.await_resume();
             } catch (const std::exception& ex) {
-                fail_msg("accept loop: %s", ex.what());
+                FAIL() << "accept loop: " << ex.what();
             }
         }
     };
@@ -4110,9 +4120,9 @@ void test_short_connections(void**) {
             client.Future = SendRequest(loop.Poller(), address, kind == 1 ? "/slow" : "/", abort, &completed, &client.Stage);
         }
         loop.Step();
-        reap(clients);
-        reap(handlers);
-        checkServer();
+        ASSERT_NO_FATAL_FAILURE(reap(clients));
+        ASSERT_NO_FATAL_FAILURE(reap(handlers));
+        ASSERT_NO_FATAL_FAILURE(checkServer());
         while (inherited.size() > 16) {
             close(inherited.front());
             inherited.pop_front();
@@ -4121,9 +4131,9 @@ void test_short_connections(void**) {
     const auto drain = TClock::now() + std::chrono::seconds(5);
     while (!clients.empty() && TClock::now() < drain) {
         loop.Step();
-        reap(clients);
-        reap(handlers);
-        checkServer();
+        ASSERT_NO_FATAL_FAILURE(reap(clients));
+        ASSERT_NO_FATAL_FAILURE(reap(handlers));
+        ASSERT_NO_FATAL_FAILURE(checkServer());
     }
     if (!clients.empty()) {
         const auto now = TClock::now();
@@ -4138,9 +4148,9 @@ void test_short_connections(void**) {
                 report << "\n" << request.Kind << ": " << request.Stage << " for " << age(request) << " ms";
             }
         }
-        fail_msg("%s", report.str().c_str());
+        FAIL() << report.str();
     }
-    assert_int_equal(completed, started);
+    ASSERT_EQ(completed, started);
     for (int fd : inherited) {
         close(fd);
     }
@@ -4164,7 +4174,7 @@ bool IsSocketClosed(int fd) {
 // The poller closes a closed socket in its next iteration, also with a removal
 // queued after the close, or else in its destructor.
 template<typename TPoller>
-void test_close_applied_by_poll_and_destructor(void**) {
+void test_close_applied_by_poll_and_destructor() {
     for (bool step : {true, false}) {
         int fd = -1;
         {
@@ -4176,25 +4186,23 @@ void test_close_applied_by_poll_and_destructor(void**) {
             if (step) {
                 loop.Poller().RemoveEvent(fd);
                 loop.Step();
-                assert_true(IsSocketClosed(fd));
+                ASSERT_TRUE(IsSocketClosed(fd));
             } else {
-                assert_false(IsSocketClosed(fd));
+                ASSERT_FALSE(IsSocketClosed(fd));
             }
         }
-        assert_true(IsSocketClosed(fd));
+        ASSERT_TRUE(IsSocketClosed(fd));
     }
 }
 
 } // namespace
 
+#define TEST_SUITE_NAME "tests"
+
 int main(int argc, char* argv[]) {
     TInitializer init;
 
-    std::vector<CMUnitTest> tests;
-    std::unordered_set<std::string> filters;
-    tests.reserve(500);
-
-    parse_filters(argc, argv, filters);
+    testing::InitGoogleTest(&argc, argv);
 
 #ifndef _WIN32
     ADD_TEST(my_unit_poller, test_notifier_factory);
@@ -4227,7 +4235,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_reused_descriptor_wakes_new_waiter, TEPoll);
     ADD_TEST(my_unit_test, test_close_unregisters_shared_file, TEPoll);
     ADD_TEST(my_unit_test, test_close_skips_collected_events, TEPoll);
-    ADD_TEST(cmocka_unit_test, test_epoll_close_applied_once_after_throw);
+    ADD_TEST(unit_test, test_epoll_close_applied_once_after_throw);
     ADD_TEST(my_unit_test, test_reuse_after_closing_several, TEPoll);
     ADD_TEST(my_unit_test, test_destroyed_accept_and_connect_not_resumed, TEPoll);
     ADD_TEST(my_unit_test, test_hangup_wakes_reader_and_writer_once, TEPoll);
@@ -4258,18 +4266,18 @@ int main(int argc, char* argv[]) {
 #endif
 #endif
 
-    ADD_TEST(cmocka_unit_test, test_base64);
-    ADD_TEST(cmocka_unit_test, test_sha1);
-    ADD_TEST(cmocka_unit_test, test_addr);
-    ADD_TEST(cmocka_unit_test, test_addr6);
-    ADD_TEST(cmocka_unit_test, test_bad_addr);
-    ADD_TEST(cmocka_unit_test, test_timespec);
-    ADD_TEST(cmocka_unit_test, test_line_splitter);
-    ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter);
-    ADD_TEST(cmocka_unit_test, test_line_splitter_wrap);
-    ADD_TEST(cmocka_unit_test, test_zero_copy_line_splitter_wrap);
-    ADD_TEST(cmocka_unit_test, test_self_id);
-    ADD_TEST(cmocka_unit_test, test_resolv_nameservers);
+    ADD_TEST(unit_test, test_base64);
+    ADD_TEST(unit_test, test_sha1);
+    ADD_TEST(unit_test, test_addr);
+    ADD_TEST(unit_test, test_addr6);
+    ADD_TEST(unit_test, test_bad_addr);
+    ADD_TEST(unit_test, test_timespec);
+    ADD_TEST(unit_test, test_line_splitter);
+    ADD_TEST(unit_test, test_zero_copy_line_splitter);
+    ADD_TEST(unit_test, test_line_splitter_wrap);
+    ADD_TEST(unit_test, test_zero_copy_line_splitter_wrap);
+    ADD_TEST(unit_test, test_self_id);
+    ADD_TEST(unit_test, test_resolv_nameservers);
     ADD_TEST(my_unit_poller, test_listen);
     ADD_TEST(my_unit_poller, test_timeout);
     ADD_TEST(my_unit_poller, test_timeout2);
@@ -4322,29 +4330,29 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test2, test_remote_disconnect, TPoll, TEPoll);
 #ifdef HAVE_URING
     ADD_TEST(my_unit_test, test_monitor_unsupported, TUring);
-    ADD_TEST(cmocka_unit_test, test_uring_create);
-    ADD_TEST(cmocka_unit_test, test_uring_wait_signal);
-    ADD_TEST(cmocka_unit_test, test_uring_write);
-    ADD_TEST(cmocka_unit_test, test_uring_read);
-    ADD_TEST(cmocka_unit_test, test_uring_read_more_than_write);
-    ADD_TEST(cmocka_unit_test, test_uring_write_resume);
-    ADD_TEST(cmocka_unit_test, test_uring_read_resume);
-    ADD_TEST(cmocka_unit_test, test_uring_file_offset);
-    ADD_TEST(cmocka_unit_test, test_uring_no_sqe);
-    ADD_TEST(cmocka_unit_test, test_uring_wait_result_without_wakeup);
+    ADD_TEST(unit_test, test_uring_create);
+    ADD_TEST(unit_test, test_uring_wait_signal);
+    ADD_TEST(unit_test, test_uring_write);
+    ADD_TEST(unit_test, test_uring_read);
+    ADD_TEST(unit_test, test_uring_read_more_than_write);
+    ADD_TEST(unit_test, test_uring_write_resume);
+    ADD_TEST(unit_test, test_uring_read_resume);
+    ADD_TEST(unit_test, test_uring_file_offset);
+    ADD_TEST(unit_test, test_uring_no_sqe);
+    ADD_TEST(unit_test, test_uring_wait_result_without_wakeup);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_not_resumed, TUring);
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TUring);
-    ADD_TEST(cmocka_unit_test, test_uring_destroyed_before_submit);
-    ADD_TEST(cmocka_unit_test, test_uring_destroyed_file_reader_and_writer);
-    ADD_TEST(cmocka_unit_test, test_uring_destroyed_socket_writer);
-    ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_repeated_wait);
-    ADD_TEST(cmocka_unit_test, test_uring_destroyed_reader_with_full_cq);
+    ADD_TEST(unit_test, test_uring_destroyed_before_submit);
+    ADD_TEST(unit_test, test_uring_destroyed_file_reader_and_writer);
+    ADD_TEST(unit_test, test_uring_destroyed_socket_writer);
+    ADD_TEST(unit_test, test_uring_destroyed_after_repeated_wait);
+    ADD_TEST(unit_test, test_uring_destroyed_reader_with_full_cq);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TUring);
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TUring);
-    ADD_TEST(cmocka_unit_test, test_uring_destroyed_queued_and_submitted_readers);
-    ADD_TEST(cmocka_unit_test, test_uring_close_cancels_only_its_operations);
-    ADD_TEST(cmocka_unit_test, test_uring_close_cancels_after_finished_operations);
-    ADD_TEST(cmocka_unit_test, test_uring_closes_on_small_queues);
+    ADD_TEST(unit_test, test_uring_destroyed_queued_and_submitted_readers);
+    ADD_TEST(unit_test, test_uring_close_cancels_only_its_operations);
+    ADD_TEST(unit_test, test_uring_close_cancels_after_finished_operations);
+    ADD_TEST(unit_test, test_uring_closes_on_small_queues);
 #endif
 #endif
 #ifdef _WIN32
@@ -4352,16 +4360,16 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_test, test_destroyed_driven_accept_and_connect_not_resumed, TIOCp);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TIOCp);
     ADD_TEST(my_unit_test, test_driven_accept_not_listening, TIOCp);
-    ADD_TEST(cmocka_unit_test, test_iocp_failed_read_write);
-    ADD_TEST(cmocka_unit_test, test_iocp_aborted_accept);
-    ADD_TEST(cmocka_unit_test, test_iocp_file_read_write);
-    ADD_TEST(cmocka_unit_test, test_iocp_file_append);
-    ADD_TEST(cmocka_unit_test, test_iocp_file_close);
-    ADD_TEST(cmocka_unit_test, test_iocp_file_concurrent);
-    ADD_TEST(cmocka_unit_test, test_iocp_pipe);
-    ADD_TEST(cmocka_unit_test, test_iocp_accepted_socket);
+    ADD_TEST(unit_test, test_iocp_failed_read_write);
+    ADD_TEST(unit_test, test_iocp_aborted_accept);
+    ADD_TEST(unit_test, test_iocp_file_read_write);
+    ADD_TEST(unit_test, test_iocp_file_append);
+    ADD_TEST(unit_test, test_iocp_file_close);
+    ADD_TEST(unit_test, test_iocp_file_concurrent);
+    ADD_TEST(unit_test, test_iocp_pipe);
+    ADD_TEST(unit_test, test_iocp_accepted_socket);
 #endif
-    ADD_TEST(cmocka_unit_test, test_completions);
+    ADD_TEST(unit_test, test_completions);
 
-    return _cmocka_run_group_tests("tests", tests.data(), tests.size(), NULL, NULL);
+    return RUN_ALL_TESTS();
 }
