@@ -34,6 +34,10 @@ namespace NNet {
  * - Provides operations such as @ref Read(), @ref Write(), @ref Recv(), @ref Send(), @ref Accept() and @ref Connect().
  * - Offers additional methods for cancelling pending operations, registering file descriptors, waiting for completions,
  *   and submitting queued requests.
+ * - On Linux 6.1 or later the ring is set up with IORING_SETUP_SINGLE_ISSUER: the first thread
+ *   that waits on it (or posts an operation into a full submission queue, which submits) owns it, and must
+ *   post, wait for and cancel all of its operations. The poller may be constructed in another thread, and
+ *   destroyed in another thread only when no operations are pending. Older kernels get no such binding.
  *
  * Type aliases:
  *  - @c TSocket is defined as NNet::TPollerDrivenSocket<TUring>.
@@ -227,8 +231,12 @@ private:
         }
     }
 
+    /// Binds the ring to the calling thread on its first kernel entry (SINGLE_ISSUER).
+    void Enable();
     /// Submits queued I/O requests to the kernel.
     void Submit();
+    /// Runs the next batch of the deferred task work, e.g. linked closes; false when none is pending, the batch posted no completion or the call fails.
+    bool RunTaskWork();
     /// Queues the close of a close change, hard-linked after a cancel by fd if the descriptor has operations. Not named Close: it would hide TPollerBase::Close.
     void PrepClose(TEvent& change);
     /// Points the SQE just obtained to @p op, records its position in the SQ and counts it for its descriptor.
@@ -246,6 +254,7 @@ private:
     NDetail::TCompletions Completions_; ///< Completions not delivered yet.
     std::vector<unsigned> Operations_; ///< Per descriptor: operations posted whose completion is not taken yet.
     std::vector<char> Buffer_; ///< Buffer used for internal I/O operations.
+    bool Enabled_ = false; ///< Whether Enable() has bound the ring to a thread.
 };
 
 } // namespace NNet
