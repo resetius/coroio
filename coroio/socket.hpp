@@ -954,7 +954,11 @@ public:
     TPollerDrivenFileHandle(int fd, T& poller)
         : TFileHandle(fd, poller)
         , Poller_(&poller)
-    { }
+    {
+        if constexpr (requires { poller.RegisterFile(fd); }) {
+            Poller_->RegisterFile(Fd_);
+        }
+    }
 
     /**
      * @brief Asynchronously reads data from the file into the provided buffer.
