@@ -111,6 +111,8 @@ constexpr uint32_t HeaderPaddingShift = 28;
 constexpr TMessageId MaxMessageId = (TMessageId(1) << HeaderPaddingShift) - 1;
 /// Largest `PayloadAlignment` a message type may declare.
 constexpr size_t MaxPayloadAlignment = 16;
+/// Reserved id of the filler frame that `TNode` writes first after a reconnect (see `WriteFiller`).
+constexpr TMessageId FillerMessageId = 2;
 
 /// Zero bytes between the header and the payload.
 inline uint32_t HeaderPadding(const THeader& header) {

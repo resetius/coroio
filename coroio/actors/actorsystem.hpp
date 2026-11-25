@@ -20,7 +20,9 @@ namespace NNet {
 namespace NActors {
 
 enum class ESystemMessages : TMessageId {
-    PoisonPill = 1
+    PoisonPill = 1,
+    // The envelope readers drop a padded frame with this id, which is how TNode writes it
+    Filler = FillerMessageId
 };
 
 /**

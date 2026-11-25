@@ -309,6 +309,32 @@ inline uint32_t PayloadPadding(uint64_t offset, size_t alignment) {
     return static_cast<uint32_t>((0 - (offset + sizeof(THeader))) & (alignment - 1));
 }
 
+/// Payload size of the filler frame: the header and the payload take a multiple of
+/// `MaxPayloadAlignment` (24 + 8), so the padding alone sets the frame size modulo it.
+constexpr uint32_t FillerPayloadSize = static_cast<uint32_t>((0 - sizeof(THeader)) % MaxPayloadAlignment);
+/// Largest frame written by `WriteFiller`.
+constexpr size_t MaxFillerSize = sizeof(THeader) + MaxPayloadAlignment - 1 + FillerPayloadSize;
+
+/**
+ * @brief Writes the first frame of a new stream whose next frames were padded for stream offset `offset`.
+ *
+ * The frame is the header, `offset % MaxPayloadAlignment` bytes of padding and `FillerPayloadSize`
+ * bytes, so its size is congruent to `offset` and the next frames keep their padding. Returns the
+ * size, 0 when `offset` is a multiple of `MaxPayloadAlignment`. The id is `FillerMessageId`, and the
+ * padding is never empty: readers look for the filler only on the padded path and drop it.
+ */
+inline size_t WriteFiller(char (&out)[MaxFillerSize], uint64_t offset) {
+    const uint32_t padding = static_cast<uint32_t>(offset % MaxPayloadAlignment);
+    if (padding == 0) {
+        return 0;
+    }
+    const THeader header{.MessageId = FillerMessageId | (padding << HeaderPaddingShift), .Size = FillerPayloadSize};
+    const size_t size = sizeof(header) + padding + FillerPayloadSize;
+    std::memset(out, 0, size);
+    std::memcpy(out, &header, sizeof(header));
+    return size;
+}
+
 /**
  * @brief Serializes a message directly into a stream buffer with a `THeader` prefix.
  *
@@ -333,6 +359,7 @@ template<typename T, typename TStream, typename... Args>
 void SerializeFarInplace(TStream& stream, TActorId sender, TActorId recipient, Args&&... args)
 {
     static_assert(T::MessageId <= MaxMessageId, "the top bits of THeader::MessageId hold the payload padding");
+    static_assert(T::MessageId != FillerMessageId, "the id of the filler frame is reserved");
     constexpr size_t alignment = payload_alignment_v<T>;
     static_assert(alignment > 0 && (alignment & (alignment - 1)) == 0 && alignment <= MaxPayloadAlignment,
         "PayloadAlignment must be a power of two up to MaxPayloadAlignment");
