@@ -55,41 +55,42 @@ jobs:
     - uses: actions/checkout@v3
     - name: Checkout submodules
       run: git submodule update --init --recursive
-    - name: Remove system mingw64
-      run: |
-          if (Test-Path C:\mingw64) { Rename-Item C:\mingw64 mingw64_disabled }
-    - name: Install Packages using MSYS2
-      run: |
-          choco install msys2 -y
-    - name: Add MSYS2 mingw64 to PATH
-      run: |
-          echo "C:\tools\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "C:\tools\msys64\usr\bin"     | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    - name: Install Additional Packages
-      run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gtest mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl
-          ls -l C:\tools\msys64\mingw64\bin
+    - name: Install MSYS2
+      uses: msys2/setup-msys2@v2.34.0
+      with:
+          msystem: MINGW64
+          update: true
+          install: >-
+              mingw-w64-x86_64-cmake
+              mingw-w64-x86_64-ninja
+              mingw-w64-x86_64-gtest
+              mingw-w64-x86_64-pkgconf
+              mingw-w64-x86_64-gcc
+              mingw-w64-x86_64-openssl
     - name: Verify Installation
+      shell: msys2 {0}
       run: |
           gcc --version
           cmake --version
           ninja --version
     - name: Configure with CMake and Build with Ninja
+      shell: msys2 {0}
       run: |
           mkdir build
           cd build
           cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug -DCOROIO_BUILD_TESTS=ON
           ninja
     - name: Run Tests
+      shell: msys2 {0}
       run: |
           cd build
           ldd tests/ut_tests.exe
           ctest -C Debug --output-on-failure
     - name: test-log
       if: always()
+      shell: msys2 {0}
       run: |
-          type build\Testing\Temporary\LastTest.log
+          cat build/Testing/Temporary/LastTest.log
     - name: Publish Unit Test Results
       uses: EnricoMi/publish-unit-test-result-action/windows@v2
       if: always()
