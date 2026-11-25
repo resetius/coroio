@@ -94,7 +94,7 @@ public:
         , SocketFactory_(socketFactory)
         , HostPort_(hostPort)
         , Notifier_(poller)
-        , Current_(std::make_unique<TSegment>())
+        , Current_(std::make_unique<TSegment>(Segments_))
         , Server_(Serve())
     {
         Spare_.reserve(MaxSpareSegments);
@@ -111,9 +111,10 @@ public:
         return Lock_;
     }
 
-    /// Written segments kept for reuse now, at most `MaxSpareSegments`. Any thread.
-    size_t SpareSegments() const {
-        return SpareCount_.load(std::memory_order_relaxed);
+    /// Segments alive now: the current one, the queued ones, the one being written and
+    /// the spare ones. An idle node has at most `1 + MaxSpareSegments`. Any thread.
+    size_t Segments() const {
+        return Segments_.load(std::memory_order_relaxed);
     }
 
     // The framing is the one of TNode::Send
@@ -200,6 +201,21 @@ private:
     // Frames committed between two Drain calls. The buffer keeps its memory while the
     // segment goes around: producer, Queue_, I/O side, Returned_, Spare_, producer.
     struct TSegment : TMpscQueueNode<TSegment> {
+        // Counts itself: Segments() is what the node really holds, whatever path a segment took
+        explicit TSegment(std::atomic<size_t>& live)
+            : Live(live)
+        {
+            Live.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        ~TSegment() {
+            Live.fetch_sub(1, std::memory_order_relaxed);
+        }
+
+        TSegment(const TSegment&) = delete;
+        TSegment& operator=(const TSegment&) = delete;
+
+        std::atomic<size_t>& Live;
         std::vector<char> Data;
         size_t Size = 0;
     };
@@ -227,7 +243,7 @@ private:
             Spare_.push_back(std::move(segment));
         }
         if (Spare_.empty()) {
-            return std::make_unique<TSegment>();
+            return std::make_unique<TSegment>(Segments_);
         }
         auto segment = std::move(Spare_.back());
         Spare_.pop_back();
@@ -334,6 +350,8 @@ private:
 
     // Shared by the two sides
     TNotifier<TPoller> Notifier_;
+    // Declared before every owner of a segment, so it outlives the segments
+    std::atomic<size_t> Segments_ = 0;
     TMpscQueue<TSegment> Queue_;
     TMpscQueue<TSegment> Returned_;
     std::atomic<bool> ConnectRequested_ = false;
