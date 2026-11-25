@@ -867,9 +867,10 @@ public:
             }
 
             bool await_ready() const { return false; }
-            void await_suspend(std::coroutine_handle<> h) {
+            bool await_suspend(std::coroutine_handle<> h) {
                 op.Handle = h;
                 poller->Send(fd, buf, size, op);
+                return static_cast<bool>(op.Handle); // reset: written at once, go on
             }
 
             auto await_resume() {
@@ -1029,9 +1030,10 @@ public:
             }
 
             bool await_ready() const { return false; }
-            void await_suspend(std::coroutine_handle<> h) {
+            bool await_suspend(std::coroutine_handle<> h) {
                 op.Handle = h;
                 poller->Write(fd, buf, size, op);
+                return static_cast<bool>(op.Handle); // reset: written at once, go on
             }
 
             auto await_resume() {

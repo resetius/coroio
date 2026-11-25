@@ -23,10 +23,11 @@ struct TOperationState {
     TOperationState(const TOperationState&) = delete;
     TOperationState& operator=(const TOperationState&) = delete;
 
-    THandle Handle; ///< Coroutine to resume, set by the caller before posting. Cleared when posting fails, the completion is delivered or the operation is cancelled, so it is set while the operation is pending.
+    THandle Handle; ///< Coroutine to resume, set by the caller before posting. Cleared when posting fails, the operation completes at once (a TUring write), the completion is delivered or the operation is cancelled, so it is set while the operation is pending.
     int Result = 0; ///< Result of the completion, e.g. the number of bytes transferred.
     unsigned Index = 0; ///< Position of the completion in TCompletions once taken; before that, whatever the poller keeps there.
     int Fd = -1; ///< Descriptor of the operation, kept by TUring to count the operations of each descriptor.
+    bool Write = false; ///< Kept by TUring: the operation is a write, which a later write must not pass.
 };
 
 /**

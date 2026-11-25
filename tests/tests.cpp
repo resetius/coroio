@@ -1472,7 +1472,9 @@ void test_uring_write(void**) {
     TUring::TOperation op;
     op.Handle = std::noop_coroutine();
     uring.Write(p[1], buf, 1, op);
-    assert_int_equal(uring.Wait(), 1);
+    // The pipe has room: written at once, without the ring.
+    assert_true(!op.Handle);
+    assert_int_equal(op.Result, 1);
     int err = read(p[0], rbuf, 1);
     assert_true(rbuf[0] == 'e');
 }
@@ -1513,6 +1515,10 @@ void test_uring_write_resume(void**) {
     char rbuf[1] = {'k'};
     int p[2];
     assert_int_equal(0, pipe(p));
+    // A full pipe sends the write to the ring.
+    int size = fcntl(p[1], F_GETPIPE_SZ);
+    std::vector<char> fill(size, 0);
+    assert_int_equal(write(p[1], fill.data(), size), size);
     int r = 31337;
     TUring::TOperation op;
     TFuture<void> h = [](TUring::TOperation* op, int* r) -> TFuture<void> {
@@ -1523,6 +1529,9 @@ void test_uring_write_resume(void**) {
     op.Handle = h.raw();
     uring.Write(p[1], buf, 1, op);
     assert_true(!h.done());
+    assert_true(static_cast<bool>(op.Handle));
+    assert_int_equal(uring.Wait({0, 0}), 0);
+    assert_int_equal(read(p[0], fill.data(), size), size);
     assert_int_equal(uring.Wait(), 1);
     uring.WakeupReadyHandles();
     int err = read(p[0], rbuf, 1);
@@ -2618,6 +2627,212 @@ void test_uring_destroyed_socket_writer(void**) {
     StepUntilDone(loop, next);
     StepUntilDone(loop, drain);
     assert_string_equal(markers.c_str(), "v");
+}
+
+// A write that does not block completes in WriteSome() itself, without the ring.
+void test_uring_write_at_once(void**) {
+    TLoop<TUring> loop;
+    int sp[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+    TUring::TSocket socket(sp[0], loop.Poller());
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    TUring::TFileHandle out(p[1], loop.Poller());
+    int put[2] = {-1, -1};
+    auto send = WriteFrom(socket, "s", 1, &put[0]);
+    auto write = WriteFrom(out, "w", 1, &put[1]);
+    assert_true(send.done());
+    assert_true(write.done());
+    assert_int_equal(put[0], 1);
+    assert_int_equal(put[1], 1);
+    char c = 0;
+    assert_int_equal(read(sp[1], &c, 1), 1);
+    assert_int_equal(c, 's');
+    assert_int_equal(read(p[0], &c, 1), 1);
+    assert_int_equal(c, 'w');
+    close(sp[1]);
+    close(p[0]);
+}
+
+// A write queued in the ring is not passed by a later write that could go out
+// at once: room comes before the queued write is submitted.
+void test_uring_write_behind_queued_write(void**) {
+    TUring uring(256);
+    int sp[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+    std::vector<char> data(1 << 20, 'a');
+    TUring::TOperation first, second;
+    for (;;) {
+        first.Handle = std::noop_coroutine();
+        uring.Send(sp[0], data.data(), data.size(), first);
+        if (first.Handle) {
+            break; // EAGAIN: queued in the ring
+        }
+        assert_true(first.Result > 0);
+    }
+    std::vector<char> buf(data.size());
+    while (recv(sp[1], buf.data(), buf.size(), MSG_DONTWAIT) > 0) { }
+    second.Handle = std::noop_coroutine();
+    uring.Send(sp[0], "b", 1, second);
+    assert_true(static_cast<bool>(second.Handle));
+    const auto deadline = TClock::now() + std::chrono::seconds(5);
+    std::string tail;
+    while ((first.Handle || second.Handle || tail.empty() || tail.back() != 'b') && TClock::now() < deadline) {
+        uring.Wait({0, 1000000});
+        uring.WakeupReadyHandles();
+        ssize_t n;
+        while ((n = recv(sp[1], buf.data(), buf.size(), MSG_DONTWAIT)) > 0) {
+            tail.append(buf.data(), n);
+        }
+    }
+    assert_true(!first.Handle && !second.Handle);
+    assert_true(first.Result > 0);
+    assert_int_equal(second.Result, 1);
+    assert_true(tail == std::string(first.Result, 'a') + "b");
+    close(sp[0]);
+    close(sp[1]);
+}
+
+// A stream written with WriteSome() through direct writes, partial writes and
+// writes that wait in the ring arrives in order.
+void test_uring_write_stream_order(void**) {
+    TLoop<TUring> loop;
+    int sp[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+    int size = 4096; // many writes have to wait in the ring
+    assert_int_equal(setsockopt(sp[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)), 0);
+    TUring::TSocket writer(sp[0], loop.Poller());
+    TUring::TSocket reader(sp[1], loop.Poller());
+    constexpr uint32_t count = 1 << 20;
+    auto write = [](TUring::TSocket* socket) -> TFuture<void> {
+        std::vector<uint32_t> data(4096);
+        uint32_t next = 0;
+        while (next < count) {
+            for (auto& v : data) {
+                v = next++;
+            }
+            const char* p = reinterpret_cast<const char*>(data.data());
+            size_t left = data.size() * sizeof(uint32_t);
+            while (left > 0) {
+                int n = co_await socket->WriteSome(p, left);
+                p += n;
+                left -= n;
+            }
+        }
+    }(&writer);
+    uint32_t expected = 0;
+    bool ordered = true;
+    auto read = [](TUring::TSocket* socket, uint32_t* expected, bool* ordered) -> TFuture<void> {
+        std::vector<char> buf(100000);
+        std::string partial;
+        while (*expected < count) {
+            int n = co_await socket->ReadSome(buf.data(), buf.size());
+            if (n <= 0) {
+                break;
+            }
+            partial.append(buf.data(), n);
+            size_t i = 0;
+            for (; i + sizeof(uint32_t) <= partial.size(); i += sizeof(uint32_t)) {
+                uint32_t v;
+                memcpy(&v, partial.data() + i, sizeof(v));
+                *ordered = *ordered && v == *expected;
+                ++*expected;
+            }
+            partial.erase(0, i);
+        }
+    }(&reader, &expected, &ordered);
+    StepUntilDone(loop, write);
+    StepUntilDone(loop, read);
+    assert_true(ordered);
+    assert_int_equal(expected, count);
+}
+
+// The errors of a direct write are the ones of the ring: EPIPE without SIGPIPE
+// from Send(), ECONNRESET first after a reset.
+void test_uring_write_at_once_errors(void**) {
+    static int sigpipes = 0;
+    auto old = signal(SIGPIPE, [](int) { sigpipes++; });
+    TUring uring(256);
+    int sp[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+    close(sp[1]);
+    TUring::TOperation op;
+    op.Handle = std::noop_coroutine();
+    uring.Send(sp[0], "x", 1, op);
+    assert_true(!op.Handle);
+    assert_int_equal(op.Result, -EPIPE);
+    assert_int_equal(sigpipes, 0);
+    close(sp[0]);
+    signal(SIGPIPE, old);
+
+    using TSocket = TUring::TSocket;
+    TLoop<TUring> loop;
+    TAddress address{"127.0.0.1", GetFreePort()};
+    TSocket listener(loop.Poller(), address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+    auto [client, server] = ConnectedPair(loop, listener, address);
+    linger l = {1, 0}; // the close resets the connection
+    assert_int_equal(setsockopt(server.Fd(), SOL_SOCKET, SO_LINGER, &l, sizeof(l)), 0);
+    {
+        TSocket closed = std::move(server);
+    }
+    loop.Step();
+    int results[2] = {0, 0};
+    for (int& result : results) {
+        auto w = IoResult(client, true, const_cast<char*>("x"), 1, &result);
+        StepUntilDone(loop, w);
+    }
+    assert_int_equal(results[0], -ECONNRESET);
+    assert_int_equal(results[1], -EPIPE);
+}
+
+// A close cancels a write waiting in the ring, and a regular file is written
+// through the ring; neither is remembered for the next file with that number.
+void test_uring_write_at_once_after_close(void**) {
+    TLoop<TUring> loop;
+    // Opened first, so that their numbers differ from the reused one.
+    char path[] = "/tmp/coroio_uring_direct_XXXXXX";
+    int fd = mkstemp(path);
+    assert_true(fd >= 0);
+    unlink(path);
+    int p[2];
+    assert_int_equal(pipe(p), 0);
+    int sp[2];
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sp), 0);
+    auto handle = std::make_unique<TUring::TSocket>(sp[0], loop.Poller());
+    char fill[4096] = {0};
+    while (send(sp[0], fill, sizeof(fill), MSG_DONTWAIT) > 0) { }
+    int result = 0;
+    auto writer = IoResult(*handle, true, fill, sizeof(fill), &result);
+    assert_false(writer.done());
+    loop.Step();
+    const int number = sp[0];
+    handle.reset();
+    StepUntilDone(loop, writer);
+    assert_int_equal(result, -ECANCELED);
+    close(sp[1]);
+
+    assert_int_equal(dup2(fd, number), number);
+    close(fd);
+    auto file = std::make_unique<TUring::TFileHandle>(number, loop.Poller());
+    auto fileWrite = WriteFrom(*file, "f", 1, &result);
+    assert_false(fileWrite.done()); // EOPNOTSUPP: through the ring
+    StepUntilDone(loop, fileWrite);
+    assert_int_equal(result, 1);
+    file.reset();
+    loop.Step();
+
+    assert_int_equal(dup2(p[1], number), number);
+    close(p[1]);
+    TUring::TFileHandle out(number, loop.Poller());
+    auto pipeWrite = WriteFrom(out, "p", 1, &result);
+    assert_true(pipeWrite.done());
+    assert_int_equal(result, 1);
+    char c = 0;
+    assert_int_equal(read(p[0], &c, 1), 1);
+    assert_int_equal(c, 'p');
+    close(p[0]);
 }
 
 // Completions collected by a Wait() not followed by WakeupReadyHandles() are
@@ -4337,6 +4552,11 @@ int main(int argc, char* argv[]) {
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_before_submit);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_file_reader_and_writer);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_socket_writer);
+    ADD_TEST(cmocka_unit_test, test_uring_write_at_once);
+    ADD_TEST(cmocka_unit_test, test_uring_write_behind_queued_write);
+    ADD_TEST(cmocka_unit_test, test_uring_write_stream_order);
+    ADD_TEST(cmocka_unit_test, test_uring_write_at_once_errors);
+    ADD_TEST(cmocka_unit_test, test_uring_write_at_once_after_close);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_after_repeated_wait);
     ADD_TEST(cmocka_unit_test, test_uring_destroyed_reader_with_full_cq);
     ADD_TEST(my_unit_test, test_destroyed_driven_reader_among_many, TUring);
