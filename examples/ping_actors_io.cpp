@@ -39,18 +39,16 @@ public:
             hostPort);
     }
 
-    void ServeInbound(TActorSystem& sys, TNodeId nodeId, const TAddress& address, int readerType) override {
+    void ServeInbound(TActorSystem& sys, TNodeId nodeId, const TAddress& address, int readerType, const TMessagesFactory* factory) override {
         auto& poller = Threads_.back()->Poller();
         TSocket listener(poller, address.Domain());
         listener.Bind(address);
         listener.Listen();
         Delivery_ = std::make_unique<TQueuedDelivery>(sys);
         if (readerType == 0) {
-            Inbound_ = std::make_shared<TThreadedInbound<TPoller, TQueuedDelivery, TZeroCopyEnvelopeReader>>(
-                poller, std::move(listener), nodeId, *Delivery_);
+            Inbound_ = MakeInbound<TZeroCopyEnvelopeReader>(poller, std::move(listener), nodeId, factory);
         } else {
-            Inbound_ = std::make_shared<TThreadedInbound<TPoller, TQueuedDelivery, TZeroCopyEnvelopeReaderV2>>(
-                poller, std::move(listener), nodeId, *Delivery_);
+            Inbound_ = MakeInbound<TZeroCopyEnvelopeReaderV2>(poller, std::move(listener), nodeId, factory);
         }
     }
 
@@ -86,6 +84,15 @@ public:
     }
 
 private:
+    template<typename TReader>
+    std::shared_ptr<void> MakeInbound(TPoller& poller, TSocket listener, TNodeId nodeId, const TMessagesFactory* factory) {
+        using TInbound = TThreadedInbound<TPoller, TQueuedDelivery, TReader>;
+        if (factory) {
+            return std::make_shared<TInbound>(poller, std::move(listener), nodeId, *Delivery_, *factory);
+        }
+        return std::make_shared<TInbound>(poller, std::move(listener), nodeId, *Delivery_);
+    }
+
     std::vector<std::unique_ptr<TLoopThread<TPoller>>> Threads_;
     std::unique_ptr<TResolver> Resolver_;
     std::unique_ptr<TQueuedDelivery> Delivery_;
