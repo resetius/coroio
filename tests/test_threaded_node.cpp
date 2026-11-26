@@ -893,6 +893,145 @@ void test_threaded_node_connects_on_request() {
     ASSERT_EQ(peer.Accepted(), 1u);
 }
 
+// A frame of the stream as the test expects to receive it
+struct TWireFrame {
+    TMessageId MessageId;
+    std::string Payload;
+    bool Aligned;
+};
+
+// Walks the raw stream frame by frame from `pos`, up to an incomplete frame. The padding
+// must be zeros, and the payload of an aligned frame must start at a multiple of 16.
+static void ParseWire(const std::string& wire, size_t& pos, std::vector<TWireFrame>& frames) {
+    while (wire.size() - pos >= sizeof(THeader)) {
+        THeader header;
+        std::memcpy(&header, wire.data() + pos, sizeof(header));
+        const size_t padding = HeaderPadding(header);
+        const size_t size = sizeof(header) + padding + header.Size;
+        if (wire.size() - pos < size) {
+            return;
+        }
+        for (size_t i = 0; i < padding; ++i) {
+            ASSERT_EQ(wire[pos + sizeof(header) + i], 0);
+        }
+        const size_t payload = pos + sizeof(header) + padding;
+        frames.push_back({HeaderMessageId(header), wire.substr(payload, header.Size), payload % 16 == 0});
+        pos += size;
+    }
+}
+
+// The segments grow through many sizes, are reused with stale bytes, and keep the frames:
+// the padding is zeros and the holes of the deferred payloads are written, over segments
+// that were filled with 0xff first
+template<typename TPoller>
+void test_threaded_node_segments_grow_keeping_frames() {
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    TMessagesFactory factory;
+    RegisterTypes(factory);
+    const int port = GetFreePort();
+    TPeer<TPoller> peer(loop.Poller(), port);
+    TThreadedSetup<TPoller> setup(loop, factory, port);
+    INode& node = setup.Node;
+    TAllocator alloc;
+    std::mt19937 rng(31);
+
+    std::vector<TWireFrame> frames;
+    std::vector<TWireFrame> received;
+    size_t parsed = 0;
+    // Sends the segment and waits until all the frames are in `received`
+    auto flush = [&]() {
+        node.Drain();
+        ASSERT_TRUE(Pump(loop, [&] {
+            if (peer.Accepted() > 0) {
+                ParseWire(peer.Bytes(0), parsed, received);
+            }
+            return received.size() >= frames.size();
+        }));
+    };
+    auto send = [&](TMessageId messageId, TBlob blob) {
+        node.Send(TEnvelope{.Sender = Sender, .Recipient = Recipient, .MessageId = messageId, .Blob = std::move(blob)});
+    };
+    // Near objects: their payloads are written by the I/O side, into holes
+    auto sendText = [&](size_t size, char fill) {
+        std::string text(size, fill);
+        send(TText::MessageId, SerializeNear<TText>(alloc, text));
+        frames.push_back({TText::MessageId, text, false});
+    };
+    auto sendBytes = [&](size_t size, char fill) {
+        std::string bytes(size, fill);
+        send(TAlignedBytes::MessageId, SerializeNear<TAlignedBytes>(alloc, bytes));
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+    };
+    // The same frames written in place by the producer
+    auto writeShifted = [&]() {
+        std::string text(rng() % 41, 'l');
+        SerializeFarInplace<TText>(node, Sender, Recipient, text);
+        frames.push_back({TText::MessageId, text, false});
+        std::string bytes(1 + rng() % 60, 'm');
+        SerializeFarInplace<TAlignedBytes>(node, Sender, Recipient, TAlignedBytes{bytes});
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+        const TAlignedPod pod{{rng(), rng(), rng()}};
+        SerializeFarInplace<TAlignedPod>(node, Sender, Recipient, pod);
+        frames.push_back({TAlignedPod::MessageId, std::string(reinterpret_cast<const char*>(&pod), sizeof(pod)), true});
+    };
+    // A text of 0..40 bytes moves the stream offset, so the padding of the aligned frame has any length
+    auto sendShifted = [&]() {
+        sendText(rng() % 41, 's');
+        sendBytes(1 + rng() % 60, 't');
+    };
+    // A frame with a payload of 0xff bytes, written without padding: leaves them in the segment
+    auto writeDirty = [&](size_t size) {
+        auto buf = node.Acquire(sizeof(THeader) + size);
+        const THeader header{Sender, Recipient, TText::MessageId, static_cast<uint32_t>(size)};
+        std::memcpy(buf.data(), &header, sizeof(header));
+        std::memset(buf.data() + sizeof(header), 0xff, size);
+        node.Commit(sizeof(THeader) + size);
+        frames.push_back({TText::MessageId, std::string(size, '\xff'), false});
+    };
+
+    // Phase 1: a segment of about 1 MiB grows from empty, a few bytes at a time
+    for (int i = 0; i < 2000; ++i) {
+        writeShifted();
+        sendShifted();
+    }
+    ASSERT_NO_FATAL_FAILURE(flush());
+
+    // Phase 2: every segment of the node is filled with 0xff
+    for (int i = 0; i < 8; ++i) {
+        writeDirty(256 << 10);
+        ASSERT_NO_FATAL_FAILURE(flush());
+    }
+
+    // Phase 3: frames over the stale bytes; their padding and holes are written explicitly
+    for (int batch = 0; batch < 4; ++batch) {
+        for (int i = 0; i < 100; ++i) {
+            writeShifted();
+            sendShifted();
+        }
+        ASSERT_NO_FATAL_FAILURE(flush());
+    }
+
+    // Phase 4: segments of several MiB, grown over the stale bytes, with a large hole after each shift
+    for (int batch = 0; batch < 3; ++batch) {
+        for (int i = 0; i < 6; ++i) {
+            sendText(rng() % 41, 'x');
+            sendBytes((1 << 20) + 5, static_cast<char>('a' + i));
+        }
+        ASSERT_NO_FATAL_FAILURE(flush());
+    }
+    setup.Stop();
+
+    ASSERT_EQ(received.size(), frames.size());
+    for (size_t i = 0; i < frames.size(); ++i) {
+        ASSERT_EQ(received[i].MessageId, frames[i].MessageId);
+        ASSERT_TRUE(received[i].Payload == frames[i].Payload);
+        if (frames[i].Aligned) {
+            ASSERT_TRUE(received[i].Aligned);
+        }
+    }
+}
+
 // An id in the padding bits would break the stream, even with an empty blob
 template<typename TPoller>
 void test_threaded_node_rejects_message_id_with_padding_bits() {
@@ -1385,6 +1524,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_threaded_node_unaligned_reconnect_equals_node);
     ADD_TEST(my_unit_poller, test_threaded_node_reconnects_to_dead_peer);
     ADD_TEST(my_unit_poller, test_threaded_node_connects_on_request);
+    ADD_TEST(my_unit_poller, test_threaded_node_segments_grow_keeping_frames);
     ADD_TEST(my_unit_poller, test_threaded_node_rejects_message_id_with_padding_bits);
     ADD_TEST(my_unit_poller, test_threaded_node_destroyed_during_blocked_write);
     ADD_TEST(my_unit_poller, test_threaded_node_bounds_spare_segments);
