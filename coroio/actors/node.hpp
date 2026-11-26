@@ -177,13 +177,10 @@ private:
                 CommittedBytes = 0;
                 SentBytes += readSize;
                 co_await TByteWriter(Socket).Write(SendBuffer.Data(), readSize);
-                // The sent buffer becomes the output one: keep it for the next burst of this size
-                SendBuffer.ReleaseIfSparse(readSize);
             }
             co_return;
         } catch (const std::exception& ex) {
             std::cerr << "Error during draining: " << ex.what() << "\n";
-            SendBuffer.ReleaseIfSparse(0);
             Connect();
             co_return;
         }

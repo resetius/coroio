@@ -2229,33 +2229,27 @@ void test_output_buffer_grows_keeping_bytes() {
         ASSERT_EQ(stale.Data()[i], 0x5a);
     }
 
-    // ReleaseIfSparse frees a large block after several uses of less than a quarter of it in a row
+    // Swap exchanges the blocks
     TOutputBuffer small;
     small.Reserve(0, 100);
     const size_t smallCap = small.Capacity();
-    for (unsigned i = 0; i < 2 * TOutputBuffer::SparseUsesToRelease; ++i) {
-        small.ReleaseIfSparse(0);
-    }
-    ASSERT_EQ(small.Capacity(), smallCap);
-    // Swap exchanges the blocks
+    const size_t largeCap = stale.Capacity();
     small.Swap(stale);
+    ASSERT_EQ(small.Capacity(), largeCap);
     ASSERT_EQ(stale.Capacity(), smallCap);
-    const size_t largeCap = small.Capacity();
-    ASSERT_TRUE(largeCap >= (8 << 20));
-    for (unsigned i = 0; i < TOutputBuffer::SparseUsesToRelease - 1; ++i) {
-        small.ReleaseIfSparse(largeCap / 4 - 1);
-    }
-    ASSERT_EQ(small.Capacity(), largeCap);
-    // A use of a quarter starts the count again
-    small.ReleaseIfSparse(largeCap / 4);
-    for (unsigned i = 0; i < TOutputBuffer::SparseUsesToRelease - 1; ++i) {
-        small.ReleaseIfSparse(0);
-    }
-    ASSERT_EQ(small.Capacity(), largeCap);
-    small.ReleaseIfSparse(0);
+
+    // A moved-from buffer is empty and grows again
+    TOutputBuffer moved(std::move(small));
+    ASSERT_EQ(moved.Capacity(), largeCap);
     ASSERT_EQ(small.Capacity(), 0);
-    small.Reserve(0, 1);
+    ASSERT_TRUE(small.Data() == nullptr);
+    small.Reserve(0, 100);
     ASSERT_EQ(small.Capacity(), TOutputBuffer::MinCapacity);
+    small.Data()[0] = 1;
+    small = std::move(moved);
+    ASSERT_EQ(small.Capacity(), largeCap);
+    ASSERT_EQ(moved.Capacity(), 0);
+    ASSERT_TRUE(moved.Data() == nullptr);
 }
 
 // Walks the raw stream frame by frame, from `pos`, up to an incomplete frame. The stream
@@ -2278,8 +2272,8 @@ static void ParseWire(const std::string& wire, size_t& pos, std::vector<TExpecte
     }
 }
 
-// The outbound buffer of TNode grows through many sizes, is reused dirty, and is freed after
-// bursts above RetainedCapacity: the frames arrive whole, aligned, and padded with zeros
+// The outbound buffer of TNode grows through many sizes and is reused dirty, with
+// bursts of several MiB: the frames arrive whole, aligned, and padded with zeros
 void test_node_output_buffer_growth_keeps_frames() {
     using TPoller = TDefaultPoller;
     TLoop<TPoller> loop;
@@ -2384,8 +2378,8 @@ void test_node_output_buffer_growth_keeps_frames() {
     }
     ASSERT_NO_FATAL_FAILURE(flush());
 
-    // Phase 4: bursts of 10 MiB, above RetainedCapacity, grown through the large-block path;
-    // the small bursts after them free the blocks
+    // Phase 4: bursts of 10 MiB grow the blocks through the large-block path, and the next
+    // bursts reuse them
     const size_t large = (1 << 20) + 5;
     for (int burst = 0; burst < 3; ++burst) {
         for (int i = 0; i < 10; ++i) {
@@ -2395,20 +2389,11 @@ void test_node_output_buffer_growth_keeps_frames() {
         ASSERT_NO_FATAL_FAILURE(flush());
     }
 
-    // Phase 5: small bursts, enough for the large blocks to be freed (each of the two buffers
-    // carries every second one)
-    for (unsigned batch = 0; batch < 4 * TOutputBuffer::SparseUsesToRelease; ++batch) {
+    // Phase 5: small bursts over the stale bytes of the large blocks
+    for (int batch = 0; batch < 8; ++batch) {
         ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 5, rng, frames));
         ASSERT_NO_FATAL_FAILURE(flush());
     }
-
-    // Phase 6: a large burst on the freed buffers, then a small one
-    for (int i = 0; i < 6; ++i) {
-        sendBytes(large, static_cast<char>('k' + i));
-    }
-    ASSERT_NO_FATAL_FAILURE(flush());
-    ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 50, rng, frames));
-    ASSERT_NO_FATAL_FAILURE(flush());
 
     ASSERT_EQ(received.size(), frames.size());
     for (size_t i = 0; i < frames.size(); ++i) {

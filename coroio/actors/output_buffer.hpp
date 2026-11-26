@@ -18,24 +18,46 @@ namespace NActors {
  * bytes are in use and writes every byte before it reads it. The memory is not initialized, so a
  * serializer must not leave gaps in the range it was given.
  *
- * It grows geometrically, and copies only the bytes in use. Large blocks are grown by `realloc`,
- * which lets the allocator remap pages instead of copying them. The buffer never shrinks by
- * itself, so a burst of the same size finds the room it needs; `ReleaseIfSparse` returns a large
- * block that a smaller burst did not use.
+ * It grows geometrically and never shrinks. A block that is mostly full is grown by `realloc`,
+ * which lets the allocator extend or remap it, and copies the whole old block only when it
+ * cannot (at most twice the bytes in use). A block that holds mostly stale bytes is replaced by
+ * a new one and only the bytes in use are copied.
  */
 class TOutputBuffer {
 public:
-    /// The smallest block `Reserve` allocates.
+    /// The smallest block `Reserve` allocates: small frames do not cause a chain of tiny reallocations.
     static constexpr size_t MinCapacity = 4096;
-    /// `ReleaseIfSparse` keeps blocks up to this size whatever their use.
-    static constexpr size_t RetainedCapacity = 1 << 20;
-    /// `ReleaseIfSparse` frees a larger block after this many sparse uses in a row.
-    static constexpr unsigned SparseUsesToRelease = 8;
+    /// A block grows to this many times its size at least: the total copy stays proportional to the final size.
+    static constexpr size_t GrowthFactor = 2;
+    /// A block with less than 1/`StaleRatio` of its bytes in use is mostly stale (left from the
+    /// previous use), so it is cheaper to copy the used bytes than to let `realloc` copy all of them.
+    static constexpr size_t StaleRatio = 2;
 
+    TOutputBuffer() = default;
+    TOutputBuffer(const TOutputBuffer&) = delete;
+    TOutputBuffer& operator=(const TOutputBuffer&) = delete;
+
+    /// Takes the block; `other` is left empty.
+    TOutputBuffer(TOutputBuffer&& other) noexcept
+        : Ptr(std::move(other.Ptr))
+        , Cap(std::exchange(other.Cap, 0))
+    { }
+
+    /// Frees the block of `this` and takes the block of `other`, which is left empty.
+    TOutputBuffer& operator=(TOutputBuffer&& other) noexcept {
+        if (this != &other) {
+            Ptr = std::move(other.Ptr);
+            Cap = std::exchange(other.Cap, 0);
+        }
+        return *this;
+    }
+
+    /// The start of the block, null while the capacity is 0. Valid until the next `Reserve` or `Swap`.
     char* Data() {
         return Ptr.get();
     }
 
+    /// The size of the block in bytes.
     size_t Capacity() const {
         return Cap;
     }
@@ -48,26 +70,10 @@ public:
         }
     }
 
-    /// Call it after each use of the block, `used` being the bytes it carried. Frees the block if
-    /// it is larger than `RetainedCapacity` and the last `SparseUsesToRelease` uses took less than
-    /// a quarter of it each: memory is not pinned at the peak of bursts that are gone, while
-    /// bursts of a varying size keep the block.
-    void ReleaseIfSparse(size_t used) {
-        if (Cap <= RetainedCapacity || used >= Cap / 4) {
-            SparseUses = 0;
-            return;
-        }
-        if (++SparseUses >= SparseUsesToRelease) {
-            Ptr.reset();
-            Cap = 0;
-            SparseUses = 0;
-        }
-    }
-
+    /// Exchanges the blocks of the two buffers.
     void Swap(TOutputBuffer& other) noexcept {
         Ptr.swap(other.Ptr);
         std::swap(Cap, other.Cap);
-        std::swap(SparseUses, other.SparseUses);
     }
 
 private:
@@ -78,9 +84,8 @@ private:
     };
 
     void Grow(size_t used, size_t size) {
-        const size_t cap = std::max({size, Cap * 2, MinCapacity});
-        if (used * 2 < Cap) {
-            // Most of the old block is stale bytes: copying only the used ones is cheaper than realloc
+        const size_t cap = std::max({size, Cap * GrowthFactor, MinCapacity});
+        if (used * StaleRatio < Cap) {
             std::unique_ptr<char, TFree> block(static_cast<char*>(std::malloc(cap)));
             if (!block) {
                 throw std::bad_alloc();
@@ -99,12 +104,10 @@ private:
             Ptr.reset(block);
         }
         Cap = cap;
-        SparseUses = 0;
     }
 
     std::unique_ptr<char, TFree> Ptr;
     size_t Cap = 0;
-    unsigned SparseUses = 0;
 };
 
 } // namespace NActors
