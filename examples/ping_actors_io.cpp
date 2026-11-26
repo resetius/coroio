@@ -8,6 +8,8 @@
 #include <coroio/loop_thread.hpp>
 
 #include <chrono>
+#include <exception>
+#include <iostream>
 #include <thread>
 #include <vector>
 
@@ -31,7 +33,10 @@ public:
     std::unique_ptr<INode> MakeNode(TMessagesFactory& factory, const THostPort& hostPort) override {
         auto& poller = Threads_.front()->Poller();
         return std::make_unique<TThreadedNode<TPoller>>(poller, factory, *Resolver_,
-            [&poller](const TAddress& addr) { return TSocket(poller, addr.Domain()); }, hostPort);
+            [&poller](const TAddress& addr) {
+                return TSocket(poller, addr.Domain());
+            },
+            hostPort);
     }
 
     void ServeInbound(TActorSystem& sys, TNodeId nodeId, const TAddress& address, int readerType) override {
@@ -53,19 +58,31 @@ public:
         for (auto& thread : Threads_) {
             thread->Start();
         }
+        Started_ = true;
     }
 
-    void Stop() override {
-        // Lets the nodes write what the actors sent last: the poison pills
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    bool Stop() override {
+        if (Started_) {
+            // The nodes have no "written everything" signal, so give them time to write
+            // what the actors sent last (the poison pills). Best effort, not a guarantee.
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
         for (auto& thread : Threads_) {
             thread->Stop();
         }
+        bool ok = true;
         for (auto& thread : Threads_) {
-            thread->Join();
+            // Join() rethrows the exception that ended the loop; join the rest anyway
+            try {
+                thread->Join();
+            } catch (const std::exception& e) {
+                std::cerr << "I/O thread failed: " << e.what() << "\n";
+                ok = false;
+            }
         }
         Inbound_.reset();
         Delivery_.reset();
+        return ok;
     }
 
 private:
@@ -73,6 +90,7 @@ private:
     std::unique_ptr<TResolver> Resolver_;
     std::unique_ptr<TQueuedDelivery> Delivery_;
     std::shared_ptr<void> Inbound_;
+    bool Started_ = false;
 };
 
 } // namespace

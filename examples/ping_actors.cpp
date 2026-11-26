@@ -315,6 +315,12 @@ int templatedMain(int argc, char** argv) {
     case 262144: runner.template operator()<262144>(); break;
     default:
         std::cerr << "Unsupported message size: " << messageSize << "\n";
+#ifndef _WIN32
+        // As on the normal path: the inbound and the delivery go before the actor system
+        if (io) {
+            io->Stop();
+        }
+#endif
         return -1;
     }
 
@@ -327,8 +333,8 @@ int templatedMain(int argc, char** argv) {
         loop.Step();
     }
 #ifndef _WIN32
-    if (io) {
-        io->Stop();
+    if (io && !io->Stop()) {
+        return 1;
     }
 #endif
 
