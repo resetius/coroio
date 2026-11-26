@@ -41,6 +41,15 @@ struct TNullLock {
  * frame once a frame with `PayloadAlignment` has been written (see `WriteFiller`).
  * Unlike `TNode`, committed bytes are not sent until the next `Drain`.
  *
+ * `Send` defers the serialization of a Near object of a registered non-POD type (see
+ * `TMessagesFactory::HasPayloadWriter`). The producer side takes the size of its payload
+ * and frames it, so the frame keeps its place among the frames written around it and the
+ * stream stays that of `TNode`. The I/O side writes the payload into the frame with
+ * `SerializeTo` before the segment goes to the socket, and destroys the object there.
+ * The object must therefore own, or keep alive, everything that `SerializeTo` reads.
+ * A `SerializeTo` that throws fails its segment as a failed write does. POD payloads
+ * and Far blobs are copied at once, as by `TNode`.
+ *
  * `TLock` guards the producer side. With the default `TNullLock` it has one producer
  * thread. With a real lock (`std::mutex`) any thread may produce: `Send`, `StartConnect`
  * and `Drain` take the lock themselves, and a caller of `Offset`, `Acquire` and `Commit`
@@ -82,7 +91,8 @@ public:
      * @brief Constructs the node and its I/O coroutine; does not connect.
      *
      * @param poller        Poller of the I/O thread.
-     * @param factory       Factory for serializing messages to their Far (wire) form; used on the producer side.
+     * @param factory       Factory for serializing messages to their Far (wire) form; its payload
+     *                      writers run on the I/O side.
      * @param resolver      DNS resolver on `poller`.
      * @param socketFactory Callable that creates a socket on `poller` given a resolved `TAddress`.
      * @param hostPort      Remote host and port to connect to.
@@ -117,7 +127,7 @@ public:
         return Segments_.load(std::memory_order_relaxed);
     }
 
-    // The framing is the one of TNode::Send
+    // The framing is the one of TNode::Send; a deferred payload is left to the I/O side
     void Send(TEnvelope&& envelope) override {
         // Empty blobs skip the factory and its compile-time check of the id
         if (envelope.MessageId > MaxMessageId) [[unlikely]] {
@@ -127,8 +137,17 @@ public:
         std::lock_guard guard(Lock_);
         auto blob = std::move(envelope.Blob);
         uint32_t padding = 0;
+        uint32_t payload = 0;
+        bool deferred = false;
         if (blob.Size > 0) {
-            blob = Factory_.SerializeFar(envelope.MessageId, std::move(blob));
+            deferred = blob.Type == TBlob::PointerType::Near && Factory_.HasPayloadWriter(envelope.MessageId);
+            if (deferred) {
+                // Sized here: an invalid object throws to the sender, as with TNode
+                payload = Factory_.PayloadSize(envelope.MessageId, blob);
+            } else {
+                blob = Factory_.SerializeFar(envelope.MessageId, std::move(blob));
+                payload = blob.Size;
+            }
             const size_t alignment = Factory_.PayloadAlignment(envelope.MessageId);
             if (alignment > 1) {
                 padding = PayloadPadding(Offset(), alignment);
@@ -138,14 +157,21 @@ public:
             .Sender = envelope.Sender,
             .Recipient = envelope.Recipient,
             .MessageId = envelope.MessageId | (padding << HeaderPaddingShift),
-            .Size = blob.Size
+            .Size = payload
         };
-        const size_t size = sizeof(data) + padding + blob.Size;
+        const size_t size = sizeof(data) + padding + payload;
         auto buf = Acquire(size);
         std::memcpy(buf.data(), &data, sizeof(data));
         std::memset(buf.data() + sizeof(data), 0, padding);
-        if (blob.Size > 0) {
-            std::memcpy(buf.data() + sizeof(data) + padding, blob.Data.get(), blob.Size);
+        if (deferred) {
+            Current_->Deferred.push_back(TDeferredPayload{
+                .Offset = Current_->Size + sizeof(data) + padding,
+                .Size = payload,
+                .MessageId = envelope.MessageId,
+                .Blob = std::move(blob),
+            });
+        } else if (payload > 0) {
+            std::memcpy(buf.data() + sizeof(data) + padding, blob.Data.get(), payload);
         }
         Commit(size);
     }
@@ -198,6 +224,14 @@ public:
     }
 
 private:
+    // A payload that the I/O side writes into its frame, at Offset of the segment
+    struct TDeferredPayload {
+        size_t Offset = 0;
+        uint32_t Size = 0;
+        TMessageId MessageId = 0;
+        TBlob Blob;
+    };
+
     // Frames committed between two Drain calls. The buffer keeps its memory while the
     // segment goes around: producer, Queue_, I/O side, Returned_, Spare_, producer.
     struct TSegment : TMpscQueueNode<TSegment> {
@@ -218,6 +252,8 @@ private:
         std::atomic<size_t>& Live;
         std::vector<char> Data;
         size_t Size = 0;
+        // In the order of their frames; empty again once the I/O side has written them
+        std::vector<TDeferredPayload> Deferred;
     };
 
     // AlignState_ is the stream base shifted left by one, with this bit set once
@@ -260,6 +296,21 @@ private:
         }
     }
 
+    // I/O side. The objects die here, also when a writer throws: a recycled segment
+    // must not bring them back to the producer.
+    void WritePayloads(TSegment& segment) {
+        try {
+            for (const auto& payload : segment.Deferred) {
+                Factory_.WritePayload(payload.MessageId, payload.Blob,
+                    std::span<char>(segment.Data.data() + payload.Offset, payload.Size));
+            }
+        } catch (...) {
+            segment.Deferred.clear();
+            throw;
+        }
+        segment.Deferred.clear();
+    }
+
     // I/O side. A failed wait is logged and tried again after the back-off: the node
     // then looks for work once a second instead of never.
     TFuture<void> WaitForWork() {
@@ -290,6 +341,7 @@ private:
             // Counted before the write: a failed write drops the rest of the segment, as in TNode
             SentBytes_ += Writing_->Size;
             try {
+                WritePayloads(*Writing_);
                 co_await TByteWriter(Socket_).Write(Writing_->Data.data(), Writing_->Size);
             } catch (const std::exception& ex) {
                 std::cerr << "Error during draining: " << ex.what() << "\n";

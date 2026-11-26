@@ -141,6 +141,12 @@ private:
  * the envelopes of every read to `delivery` in one `TEnvelopeBatch`. Envelopes for
  * another node are dropped and logged, as there.
  *
+ * With a `factory`, the payloads of the types registered with
+ * `TMessagesFactory::RegisterDeserializer` are deserialized here, on the I/O thread:
+ * the actors get Near blobs of them, all other envelopes go on unchanged. An envelope
+ * whose deserializer throws is dropped and logged. The bytes counted against the limit
+ * of the delivery are those read.
+ *
  * `TDelivery` is the way to the actors; `TQueuedDelivery` is the one for an actor
  * system on another thread. Both calls are made on the I/O thread:
  *
@@ -195,12 +201,13 @@ public:
      * @param logger   Optional; called on the I/O thread.
      */
     TThreadedInbound(TPoller& poller, TSocket listener, TNodeId nodeId, TDelivery& delivery, std::function<void(const std::string&)> logger = {})
-        : Poller_(poller)
-        , Listener_(std::move(listener))
-        , NodeId_(nodeId)
-        , Delivery_(delivery)
-        , Logger_(std::move(logger))
-        , Acceptor_(Accept())
+        : TThreadedInbound(poller, std::move(listener), nodeId, delivery, nullptr, std::move(logger))
+    { }
+
+    /// The same, and the payloads of the types `factory` can deserialize are deserialized
+    /// on the I/O thread. `factory` outlives the inbound.
+    TThreadedInbound(TPoller& poller, TSocket listener, TNodeId nodeId, TDelivery& delivery, const TMessagesFactory& factory, std::function<void(const std::string&)> logger = {})
+        : TThreadedInbound(poller, std::move(listener), nodeId, delivery, &factory, std::move(logger))
     { }
 
     /// Destroys the coroutines first: they wait on the sockets
@@ -218,6 +225,16 @@ public:
     }
 
 private:
+    TThreadedInbound(TPoller& poller, TSocket listener, TNodeId nodeId, TDelivery& delivery, const TMessagesFactory* factory, std::function<void(const std::string&)> logger)
+        : Poller_(poller)
+        , Listener_(std::move(listener))
+        , NodeId_(nodeId)
+        , Delivery_(delivery)
+        , Factory_(factory)
+        , Logger_(std::move(logger))
+        , Acceptor_(Accept())
+    { }
+
     struct TConnection {
         explicit TConnection(TSocket socket)
             : Socket(std::move(socket))
@@ -251,6 +268,20 @@ private:
         }
     }
 
+    // False if the deserializer throws: the envelope is then dropped
+    bool Deserialize(TEnvelope& envelope) {
+        try {
+            envelope.Blob = Factory_->DeserializeFar(envelope.MessageId, std::move(envelope.Blob));
+            return true;
+        } catch (const std::exception& e) {
+            if (Logger_) {
+                Logger_("Cannot deserialize message " + std::to_string(envelope.MessageId)
+                    + " for " + envelope.Recipient.ToString() + ": " + e.what());
+            }
+            return false;
+        }
+    }
+
     TFuture<void> Read(TSocket& socket) {
         TEnvelopeReader envelopeReader(InflightBytes, /*lowWatermark = */ 1024);
         size_t bytesRead = 0;
@@ -277,10 +308,14 @@ private:
                         }
                         continue;
                     }
+                    const size_t bytes = envelope->Blob.Size + sizeof(THeader);
+                    if (Factory_ && !Deserialize(*envelope)) {
+                        continue;
+                    }
                     if (!batch) {
                         batch = std::make_unique<TEnvelopeBatch>();
                     }
-                    batch->Bytes += envelope->Blob.Size + sizeof(THeader);
+                    batch->Bytes += bytes;
                     batch->Envelopes.push_back(std::move(*envelope));
                 }
                 if (batch) {
@@ -307,6 +342,7 @@ private:
     TSocket Listener_;
     TNodeId NodeId_;
     TDelivery& Delivery_;
+    const TMessagesFactory* Factory_;
     std::function<void(const std::string&)> Logger_;
     std::vector<std::unique_ptr<TConnection>> Connections_;
     TFuture<void> Acceptor_;
