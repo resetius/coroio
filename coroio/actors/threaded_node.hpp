@@ -41,14 +41,13 @@ struct TNullLock {
  * frame once a frame with `PayloadAlignment` has been written (see `WriteFiller`).
  * Unlike `TNode`, committed bytes are not sent until the next `Drain`.
  *
- * `Send` defers the serialization of a Near object of a registered non-POD type (see
- * `TMessagesFactory::HasPayloadWriter`). The producer side takes the size of its payload
- * and frames it, so the frame keeps its place among the frames written around it and the
- * stream stays that of `TNode`. The I/O side writes the payload into the frame with
- * `SerializeTo` before the segment goes to the socket, and destroys the object there.
- * The object must therefore own, or keep alive, everything that `SerializeTo` reads.
- * A `SerializeTo` that throws fails its segment as a failed write does. POD payloads
- * and Far blobs are copied at once, as by `TNode`.
+ * `Send` defers the serialization of a Near object of a type registered with
+ * `TMessagesFactory::RegisterPayloadWriter`, which states what such a type must allow.
+ * The producer side takes the size of its payload and frames it, so the frame keeps its
+ * place among the frames written around it and the stream stays that of `TNode`. The I/O
+ * side writes the payload into the frame with `SerializeTo` before the segment goes to
+ * the socket, and destroys the object there; it does not read the factory. All other
+ * payloads are serialized in `Send`, as by `TNode`.
  *
  * `TLock` guards the producer side. With the default `TNullLock` it has one producer
  * thread. With a real lock (`std::mutex`) any thread may produce: `Send`, `StartConnect`
@@ -91,8 +90,7 @@ public:
      * @brief Constructs the node and its I/O coroutine; does not connect.
      *
      * @param poller        Poller of the I/O thread.
-     * @param factory       Factory for serializing messages to their Far (wire) form; its payload
-     *                      writers run on the I/O side.
+     * @param factory       Factory for serializing messages to their Far (wire) form; used on the producer side.
      * @param resolver      DNS resolver on `poller`.
      * @param socketFactory Callable that creates a socket on `poller` given a resolved `TAddress`.
      * @param hostPort      Remote host and port to connect to.
@@ -138,12 +136,14 @@ public:
         auto blob = std::move(envelope.Blob);
         uint32_t padding = 0;
         uint32_t payload = 0;
-        bool deferred = false;
+        const TMessagesFactory::TPayloadWriter* writer = nullptr;
         if (blob.Size > 0) {
-            deferred = blob.Type == TBlob::PointerType::Near && Factory_.HasPayloadWriter(envelope.MessageId);
-            if (deferred) {
+            if (blob.Type == TBlob::PointerType::Near) {
+                writer = Factory_.PayloadWriter(envelope.MessageId);
+            }
+            if (writer) {
                 // Sized here: an invalid object throws to the sender, as with TNode
-                payload = Factory_.PayloadSize(envelope.MessageId, blob);
+                payload = writer->Size(blob);
             } else {
                 blob = Factory_.SerializeFar(envelope.MessageId, std::move(blob));
                 payload = blob.Size;
@@ -163,11 +163,11 @@ public:
         auto buf = Acquire(size);
         std::memcpy(buf.data(), &data, sizeof(data));
         std::memset(buf.data() + sizeof(data), 0, padding);
-        if (deferred) {
+        if (writer) {
             Current_->Deferred.push_back(TDeferredPayload{
                 .Offset = Current_->Size + sizeof(data) + padding,
                 .Size = payload,
-                .MessageId = envelope.MessageId,
+                .Write = writer->Write,
                 .Blob = std::move(blob),
             });
         } else if (payload > 0) {
@@ -228,7 +228,8 @@ private:
     struct TDeferredPayload {
         size_t Offset = 0;
         uint32_t Size = 0;
-        TMessageId MessageId = 0;
+        // Taken in Send: the I/O side does not read the factory
+        TMessagesFactory::TPayloadWrite Write = nullptr;
         TBlob Blob;
     };
 
@@ -296,17 +297,10 @@ private:
         }
     }
 
-    // I/O side. The objects die here, also when a writer throws: a recycled segment
-    // must not bring them back to the producer.
-    void WritePayloads(TSegment& segment) {
-        try {
-            for (const auto& payload : segment.Deferred) {
-                Factory_.WritePayload(payload.MessageId, payload.Blob,
-                    std::span<char>(segment.Data.data() + payload.Offset, payload.Size));
-            }
-        } catch (...) {
-            segment.Deferred.clear();
-            throw;
+    // I/O side. The objects die here: a recycled segment must not bring them back.
+    void WritePayloads(TSegment& segment) noexcept {
+        for (const auto& payload : segment.Deferred) {
+            payload.Write(payload.Blob, std::span<char>(segment.Data.data() + payload.Offset, payload.Size));
         }
         segment.Deferred.clear();
     }
@@ -340,8 +334,8 @@ private:
             }
             // Counted before the write: a failed write drops the rest of the segment, as in TNode
             SentBytes_ += Writing_->Size;
+            WritePayloads(*Writing_);
             try {
-                WritePayloads(*Writing_);
                 co_await TByteWriter(Socket_).Write(Writing_->Data.data(), Writing_->Size);
             } catch (const std::exception& ex) {
                 std::cerr << "Error during draining: " << ex.what() << "\n";

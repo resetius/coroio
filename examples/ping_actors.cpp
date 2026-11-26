@@ -388,7 +388,7 @@ int templatedMain(int argc, char** argv) {
         factory.RegisterSerializer<TPingMessageType>();
         TActorId pingActorId;
         if (deferred) {
-            factory.RegisterSerializer<TBulkPing>();
+            factory.RegisterPayloadWriter<TBulkPing>();
             factory.RegisterDeserializer<TBulkPing>();
             pingActorId = sys.Register(std::make_unique<TBulkPingActor>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds, MessageSize));
         } else {

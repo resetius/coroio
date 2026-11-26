@@ -10,13 +10,27 @@ namespace NActors {
 /**
  * @brief Serializers and deserializers of message types, by message id.
  *
- * `RegisterSerializer<T>` lets a node write `T` to the wire; `RegisterDeserializer<T>`
- * lets an inbound connection build `T` from it on its own thread (`TThreadedInbound`).
- * Register every type before the threads that use the factory start: the lookups are
- * const and may then run on any thread.
+ * - `RegisterSerializer<T>` lets a node write `T` to the wire.
+ * - `RegisterPayloadWriter<T>` also lets a `TThreadedNode` write the payloads of Near
+ *   objects of `T` on its I/O thread; the I/O thread does not read the factory for it.
+ * - `RegisterDeserializer<T>` lets a `TThreadedInbound` build `T` on its I/O thread.
+ *
+ * Registration and the lookups of the nodes run on the thread of the actor system.
+ * Register the deserializers before the inbound threads start: they read the factory.
  */
 class TMessagesFactory {
 public:
+    /// Writes the payload of the object in a Near blob into `out`, which has its size.
+    using TPayloadWrite = void (*)(const TBlob& blob, std::span<char> out) noexcept;
+
+    /// The payload writer of a type, see `RegisterPayloadWriter`.
+    struct TPayloadWriter {
+        /// `FarPayloadSize` of the object in a Near blob; may throw.
+        uint32_t (*Size)(const TBlob& blob) = nullptr;
+        /// `SerializeTo` of that object, which must not throw.
+        TPayloadWrite Write = nullptr;
+    };
+
     // Local messages have no wire handler, even when registered generically.
     template<typename T>
     void RegisterSerializer() {
@@ -31,20 +45,36 @@ public:
                 return ::NNet::NActors::SerializeFar<T>(std::move(blob));
             };
             Handlers_[messageId] = {serializeFunc, payload_alignment_v<T>};
-            if constexpr (!is_pod_v<T>) {
-                if (Writers_.size() <= messageId) {
-                    Writers_.resize(messageId + 1);
-                }
-                Writers_[messageId] = {
-                    +[](const TBlob& blob) {
-                        return FarPayloadSize(*static_cast<const T*>(blob.Data.get()));
-                    },
-                    +[](const TBlob& blob, std::span<char> out) {
-                        SerializeTo(*static_cast<const T*>(blob.Data.get()), out);
-                    },
-                };
-            }
         }
+    }
+
+    /**
+     * @brief `RegisterSerializer<T>`, and a `TThreadedNode` writes the payloads of Near objects of `T` on its I/O thread.
+     *
+     * The node takes `SerializedSize` in `Send` and calls `SerializeTo` later, on its I/O
+     * thread, where it then destroys the object. So for `T`:
+     * - what `SerializeTo` reads must not change, and must stay alive, until the object is destroyed;
+     * - the destructor of the object and the deleter of its blob must be safe on the I/O thread;
+     * - `SerializeTo` must not throw: check the object in `SerializedSize`, which throws to the
+     *   sender. An exception from `SerializeTo` terminates the process.
+     */
+    template<typename T>
+    void RegisterPayloadWriter() {
+        static_assert(!is_local_message_v<T>, "local messages never go to the wire");
+        static_assert(!is_pod_v<T>, "a POD payload costs as much to queue as to copy");
+        RegisterSerializer<T>();
+        constexpr auto messageId = T::MessageId;
+        if (Writers_.size() <= messageId) {
+            Writers_.resize(messageId + 1);
+        }
+        Writers_[messageId] = {
+            +[](const TBlob& blob) {
+                return FarPayloadSize(*static_cast<const T*>(blob.Data.get()));
+            },
+            +[](const TBlob& blob, std::span<char> out) noexcept {
+                SerializeTo(*static_cast<const T*>(blob.Data.get()), out);
+            },
+        };
     }
 
     /**
@@ -83,19 +113,10 @@ public:
         return messageId < Handlers_.size() ? Handlers_[messageId].PayloadAlignment : 1;
     }
 
-    /// True for a registered non-POD type: its Near objects can be written straight into a frame.
-    bool HasPayloadWriter(uint32_t messageId) const {
-        return messageId < Writers_.size() && Writers_[messageId].Size;
-    }
-
-    /// `FarPayloadSize` of the object in the Near `blob`; requires `HasPayloadWriter(messageId)`.
-    uint32_t PayloadSize(uint32_t messageId, const TBlob& blob) const {
-        return Writers_[messageId].Size(blob);
-    }
-
-    /// `SerializeTo` of the object in the Near `blob` into `out`, which has its `PayloadSize`.
-    void WritePayload(uint32_t messageId, const TBlob& blob, std::span<char> out) const {
-        Writers_[messageId].Write(blob, out);
+    /// The writer registered with `RegisterPayloadWriter` for `messageId`, or nullptr.
+    /// The pointer is valid until the next registration.
+    const TPayloadWriter* PayloadWriter(uint32_t messageId) const {
+        return messageId < Writers_.size() && Writers_[messageId].Size ? &Writers_[messageId] : nullptr;
     }
 
     /**
@@ -116,13 +137,9 @@ private:
         TBlob(*Serialize)(TBlob&&) = nullptr;
         size_t PayloadAlignment = 1;
     };
-    struct TWriter {
-        uint32_t (*Size)(const TBlob&) = nullptr;
-        void (*Write)(const TBlob&, std::span<char>) = nullptr;
-    };
     std::vector<THandler> Handlers_;
     // Apart from Handlers_, so the code of TNode that reads it does not change
-    std::vector<TWriter> Writers_;
+    std::vector<TPayloadWriter> Writers_;
     std::vector<TBlob(*)(TBlob&&)> Readers_;
 };
 

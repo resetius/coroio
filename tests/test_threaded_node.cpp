@@ -65,20 +65,15 @@ struct TProbeLog {
     std::vector<std::thread::id> Destroyed;
 };
 
-// A non-POD aligned message: TThreadedNode defers its payload
+// A non-POD aligned message: TThreadedNode defers its payload once it has a payload writer
 struct TProbe {
     static constexpr TMessageId MessageId = 56;
     static constexpr size_t PayloadAlignment = 16;
-    enum class EFail {
-        None,
-        Size,
-        Write,
-    };
 
-    TProbe(TProbeLog* log, std::string value, EFail fail = EFail::None)
+    TProbe(TProbeLog* log, std::string value, bool sizeFails = false)
         : Log(log)
         , Value(std::move(value))
-        , Fail(fail)
+        , SizeFails(sizeFails)
     { }
 
     ~TProbe() {
@@ -90,7 +85,14 @@ struct TProbe {
 
     TProbeLog* Log;
     std::string Value;
-    EFail Fail;
+    bool SizeFails;
+};
+
+// Registered while a node runs; never sent
+template<TMessageId Id>
+struct TLate {
+    static constexpr TMessageId MessageId = Id;
+    std::string Value;
 };
 
 namespace NNet::NActors {
@@ -98,7 +100,7 @@ namespace NNet::NActors {
 template<>
 size_t SerializedSize<TProbe>(const TProbe& obj) {
     obj.Log->Add(obj.Log->Sized);
-    if (obj.Fail == TProbe::EFail::Size) {
+    if (obj.SizeFails) {
         throw std::runtime_error("probe: no size");
     }
     return obj.Value.size();
@@ -107,9 +109,36 @@ size_t SerializedSize<TProbe>(const TProbe& obj) {
 template<>
 void SerializeTo<TProbe>(const TProbe& obj, std::span<char> out) {
     obj.Log->Add(obj.Log->Written);
-    if (obj.Fail == TProbe::EFail::Write) {
-        throw std::runtime_error("probe: no write");
-    }
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+template<>
+size_t SerializedSize<TLate<1000>>(const TLate<1000>& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TLate<1000>>(const TLate<1000>& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+template<>
+size_t SerializedSize<TLate<2000>>(const TLate<2000>& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TLate<2000>>(const TLate<2000>& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+template<>
+size_t SerializedSize<TLate<3000>>(const TLate<3000>& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TLate<3000>>(const TLate<3000>& obj, std::span<char> out) {
     std::memcpy(out.data(), obj.Value.data(), out.size());
 }
 
@@ -181,10 +210,11 @@ std::string TextFrame(const std::string& text) {
     return stream.Data;
 }
 
+// The Near objects of the two non-POD types are serialized on the I/O thread
 void RegisterTypes(TMessagesFactory& factory) {
-    factory.RegisterSerializer<TText>();
+    factory.RegisterPayloadWriter<TText>();
     factory.RegisterSerializer<TAlignedPod>();
-    factory.RegisterSerializer<TAlignedBytes>();
+    factory.RegisterPayloadWriter<TAlignedBytes>();
     factory.RegisterSerializer<TPlainPod>();
     factory.RegisterSerializer<TPing>();
 }
@@ -684,24 +714,35 @@ void WriteStressFrame(TNodeType& node, TAllocator& alloc, std::mt19937& rng, uin
     }
 }
 
-void SendProbe(INode& node, TAllocator& alloc, TProbeLog& log, std::string value, TProbe::EFail fail = TProbe::EFail::None) {
+void SendProbe(INode& node, TAllocator& alloc, TProbeLog& log, std::string value, bool sizeFails = false) {
     node.Send(TEnvelope{
         .Sender = Sender,
         .Recipient = Recipient,
         .MessageId = TProbe::MessageId,
-        .Blob = SerializeNear<TProbe>(alloc, &log, std::move(value), fail),
+        .Blob = SerializeNear<TProbe>(alloc, &log, std::move(value), sizeFails),
     });
 }
+
+struct TProbeRun {
+    // TProbe gets a payload writer; else only a serializer
+    bool Writer = true;
+    // Registers new types with payload writers during the run, on the producer thread
+    bool LateTypes = false;
+};
 
 // Probes between small frames that are framed at once, as a TFinish after the last chunk;
 // every 50th round also a probe that cannot be sized. `thrown` counts the rejected sends.
 template<typename TPoller, typename TSetup>
-void RunProbes(std::string& stream, TProbeLog& log, int& thrown) {
+void RunProbes(std::string& stream, TProbeLog& log, int& thrown, TProbeRun run = {}) {
     TLoop<TPoller> loop;
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TMessagesFactory factory;
     RegisterTypes(factory);
-    factory.RegisterSerializer<TProbe>();
+    if (run.Writer) {
+        factory.RegisterPayloadWriter<TProbe>();
+    } else {
+        factory.RegisterSerializer<TProbe>();
+    }
     const int port = GetFreePort();
     TPeer<TPoller> peer(loop.Poller(), port);
     TSetup setup(loop, factory, port);
@@ -716,10 +757,20 @@ void RunProbes(std::string& stream, TProbeLog& log, int& thrown) {
         SerializeFarInplace<TAlignedPod>(node, Sender, Recipient, TAlignedPod{{uint64_t(r), 2, 3}});
         if (r % 50 == 25) {
             try {
-                SendProbe(node, alloc, log, "bad", TProbe::EFail::Size);
+                SendProbe(node, alloc, log, "bad", true);
             } catch (const std::runtime_error&) {
                 ++thrown;
             }
+        }
+        // Each one grows the vector of writers while the I/O side writes payloads
+        if (run.LateTypes && r == 60) {
+            factory.RegisterPayloadWriter<TLate<1000>>();
+        }
+        if (run.LateTypes && r == 120) {
+            factory.RegisterPayloadWriter<TLate<2000>>();
+        }
+        if (run.LateTypes && r == 180) {
+            factory.RegisterPayloadWriter<TLate<3000>>();
         }
         if (rng() % 4 == 0) {
             node.Drain();
@@ -975,39 +1026,42 @@ void test_threaded_node_defers_payloads() {
     ASSERT_EQ(std::count(threadedLog.Destroyed.begin(), threadedLog.Destroyed.end(), io), 200);
 }
 
-// A payload writer that throws fails its segment as a failed write does: nothing of the
-// segment reaches the peer, the node reconnects, and the next segments arrive.
+// A non-POD type without a payload writer is serialized in Send, as by TNode
 template<typename TPoller>
-void test_threaded_node_failed_payload_writer_reconnects() {
-    TProbeLog log;
-    TLoop<TPoller> loop;
-    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
-    TMessagesFactory factory;
-    RegisterTypes(factory);
-    factory.RegisterSerializer<TProbe>();
-    const int port = GetFreePort();
-    TPeer<TPoller> peer(loop.Poller(), port);
-    TThreadedSetup<TPoller> setup(loop, factory, port);
-    INode& node = setup.Node;
+void test_threaded_node_serializes_other_payloads_at_once() {
+    TProbeLog plainLog;
+    TProbeLog threadedLog;
+    std::string plain;
+    std::string threaded;
+    int plainThrown = 0;
+    int threadedThrown = 0;
+    const TProbeRun run{.Writer = false};
+    ASSERT_NO_FATAL_FAILURE((RunProbes<TPoller, TPlainSetup<TPoller>>(plain, plainLog, plainThrown, run)));
+    ASSERT_NO_FATAL_FAILURE((RunProbes<TPoller, TThreadedSetup<TPoller>>(threaded, threadedLog, threadedThrown, run)));
+    ASSERT_TRUE(plain == threaded);
+    ASSERT_EQ(threadedThrown, 4);
+    const auto producer = std::this_thread::get_id();
+    ASSERT_EQ(threadedLog.Written.size(), 200u);
+    ASSERT_EQ(std::count(threadedLog.Written.begin(), threadedLog.Written.end(), producer), 200);
+    ASSERT_EQ(std::count(threadedLog.Destroyed.begin(), threadedLog.Destroyed.end(), producer), 204);
+}
 
-    TAllocator alloc;
-    SerializeFarInplace<TText>(node, Sender, Recipient, std::string("lost-before"));
-    SendProbe(node, alloc, log, "lost", TProbe::EFail::Write);
-    SerializeFarInplace<TText>(node, Sender, Recipient, std::string("lost-after"));
-    node.Drain();
-    SerializeFarInplace<TText>(node, Sender, Recipient, std::string("next"));
-    WriteEnd(node);
-    node.Drain();
-    ASSERT_TRUE(Pump(loop, [&] { return peer.Accepted() == 2 && Ended(peer.Bytes(1)); }));
-    setup.Stop();
-    ASSERT_EQ(peer.Accepted(), 2u);
-    ASSERT_TRUE(peer.Bytes(0).empty());
-    const std::string& bytes = peer.Bytes(1);
-    ASSERT_EQ(bytes.find(TextFrame("lost-before")), std::string::npos);
-    ASSERT_EQ(bytes.find(TextFrame("lost-after")), std::string::npos);
-    ASSERT_NE(bytes.find(TextFrame("next")), std::string::npos);
-    ASSERT_EQ(log.Written.size(), 1u);
-    ASSERT_EQ(log.Destroyed.size(), 1u);
+// Types registered on the producer thread while the I/O side writes deferred payloads:
+// the I/O side does not read the factory, so the stream is still that of TNode
+template<typename TPoller>
+void test_threaded_node_registers_types_while_running() {
+    TProbeLog plainLog;
+    TProbeLog threadedLog;
+    std::string plain;
+    std::string threaded;
+    int plainThrown = 0;
+    int threadedThrown = 0;
+    const TProbeRun run{.LateTypes = true};
+    ASSERT_NO_FATAL_FAILURE((RunProbes<TPoller, TPlainSetup<TPoller>>(plain, plainLog, plainThrown, run)));
+    ASSERT_NO_FATAL_FAILURE((RunProbes<TPoller, TThreadedSetup<TPoller>>(threaded, threadedLog, threadedThrown, run)));
+    ASSERT_TRUE(plain == threaded);
+    ASSERT_EQ(threadedLog.Written.size(), 200u);
+    ASSERT_TRUE(threadedLog.Written.front() != std::this_thread::get_id());
 }
 
 // The node is destroyed while a write blocks: the probes in its queue and in its current
@@ -1019,7 +1073,7 @@ void test_threaded_node_destroys_deferred_payloads() {
     loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
     TMessagesFactory factory;
     RegisterTypes(factory);
-    factory.RegisterSerializer<TProbe>();
+    factory.RegisterPayloadWriter<TProbe>();
     const int port = GetFreePort();
     TPeer<TPoller> peer(loop.Poller(), port);
     peer.SetReadLimit(0, 0);
@@ -1335,7 +1389,8 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_threaded_node_destroyed_during_blocked_write);
     ADD_TEST(my_unit_poller, test_threaded_node_bounds_spare_segments);
     ADD_TEST(my_unit_poller, test_threaded_node_defers_payloads);
-    ADD_TEST(my_unit_poller, test_threaded_node_failed_payload_writer_reconnects);
+    ADD_TEST(my_unit_poller, test_threaded_node_serializes_other_payloads_at_once);
+    ADD_TEST(my_unit_poller, test_threaded_node_registers_types_while_running);
     ADD_TEST(my_unit_poller, test_threaded_node_destroys_deferred_payloads);
     ADD_TEST(my_unit_poller, test_threaded_node_actor_systems);
     ADD_TEST(my_unit_poller, test_threaded_node_stress);

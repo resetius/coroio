@@ -821,7 +821,7 @@ void test_threaded_inbound_deferred_actor_systems() {
     auto inboundIo = std::make_unique<TLoopThread<TPoller>>();
     auto resolver = std::make_unique<TResolver>(TAddress{"127.0.0.1", 53}, nodesIo->Poller());
     TMessagesFactory factory;
-    factory.RegisterSerializer<TBulk>();
+    factory.RegisterPayloadWriter<TBulk>();
     factory.RegisterDeserializer<TBulk>();
     factory.RegisterSerializer<TMark>();
     factory.RegisterSerializer<TPong>();
