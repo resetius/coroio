@@ -20,6 +20,8 @@ namespace NActors {
 
 #ifndef _WIN32
 
+// TODO: a batch is allocated on every read and freed on the actor thread. Recycle batches
+// through a return queue with a cap on spares, as TThreadedNode does with its segments.
 /// Envelopes of one read of an inbound connection, on their way from its I/O thread to the actors.
 struct TEnvelopeBatch : TMpscQueueNode<TEnvelopeBatch> {
     std::vector<TEnvelope> Envelopes;
