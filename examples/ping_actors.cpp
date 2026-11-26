@@ -7,6 +7,8 @@
 #include <coroio/corochain.hpp>
 #include <coroio/actors/actorsystem.hpp>
 
+#include "ping_actors_io.h"
+
 #include <cstdint>
 
 using namespace NNet;
@@ -113,17 +115,17 @@ int templatedMain(int argc, char** argv) {
     TResolver resolver(loop.Poller());
     TMessagesFactory factory;
     int messageSize = 0;
-    std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 65536};
+    std::set<int> allowedMessageSizes = {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 65536, 262144};
 
-    std::vector<
-        std::tuple<int, std::unique_ptr<TNode<TPoller>>>
-    > nodes;
+    std::vector<std::tuple<int, THostPort>> nodes;
     TNodeId myNodeId = 1;
     int port = 0;
     int delay = 5000;
     int inflight = 2;
     int messages = 100000;
     int readerType = 0;
+    int ioThreads = 0;
+    int ioInbound = 1;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -135,15 +137,7 @@ int templatedMain(int argc, char** argv) {
                 std::string host = hostPortNode.substr(0, colon1);
                 int port = std::stoi(hostPortNode.substr(colon1 + 1, colon2 - colon1 - 1));
                 int nodeId = std::stoi(hostPortNode.substr(colon2 + 1));
-                nodes.emplace_back(nodeId, std::make_unique<TNode<TPoller>>(
-                    loop.Poller(),
-                    factory,
-                    resolver,
-                    [&](const TAddress& addr) {
-                        return typename TPoller::TSocket(loop.Poller(), addr.Domain());
-                    },
-                    THostPort(host, port)
-                ));
+                nodes.emplace_back(nodeId, THostPort(host, port));
                 std::cerr << "Node: " << host << ":" << port << " with id: " << nodeId << "\n";
             } else {
                 std::cerr << "Invalid node format. Use host:port:nodeId\n";
@@ -173,8 +167,27 @@ int templatedMain(int argc, char** argv) {
                 std::cerr << "Invalid reader type. Use 0 for TZeroCopyEnvelopeReader or 1 for TZeroCopyEnvelopeReaderV2.\n";
                 return -1;
             }
+        } else if (!strcmp(argv[i], "--io-threads") && i + 1 < argc) {
+            ioThreads = std::stoi(argv[++i]);
+            if (ioThreads < 0 || ioThreads > 2) {
+                std::cerr << "Invalid number of I/O threads. Use 0 (none), 1 (nodes and inbound connections) or 2 (nodes on one, inbound connections on the other).\n";
+                return -1;
+            }
+#ifdef _WIN32
+            if (ioThreads > 0) {
+                std::cerr << "I/O threads are not available on Windows.\n";
+                return -1;
+            }
+#endif
+        } else if (!strcmp(argv[i], "--io-inbound") && i + 1 < argc) {
+            ioInbound = std::stoi(argv[++i]);
+            if (ioInbound < 0 || ioInbound > 1) {
+                std::cerr << "Invalid --io-inbound. Use 1 to read the inbound connections on an I/O thread or 0 to read them on the actor thread.\n";
+                return -1;
+            }
         } else if (!strcmp(argv[i], "--help")) {
-            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]\n";
+            std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]"
+                << " [--reader-type 0|1] [--io-threads 0|1|2] [--io-inbound 0|1]\n";
             return 0;
         } else if (!strcmp(argv[i], "--method")) {
             if (i + 1 < argc) {
@@ -186,14 +199,42 @@ int templatedMain(int argc, char** argv) {
         }
     }
 
+    if (ioThreads == 2 && !ioInbound) {
+        std::cerr << "--io-threads 2 reads the inbound connections on the second thread.\n";
+        return -1;
+    }
+#ifndef _WIN32
+    // Declared before the actor system: it destroys its nodes first
+    std::unique_ptr<IIoThreads> io;
+    if (ioThreads > 0) {
+        io = MakeIoThreads<TPoller>(ioThreads);
+    }
+#endif
+    auto makeNode = [&](const THostPort& hostPort) -> std::unique_ptr<INode> {
+#ifndef _WIN32
+        if (io) {
+            return io->MakeNode(factory, hostPort);
+        }
+#endif
+        return std::make_unique<TNode<TPoller>>(
+            loop.Poller(),
+            factory,
+            resolver,
+            [&](const TAddress& addr) {
+                return typename TPoller::TSocket(loop.Poller(), addr.Domain());
+            },
+            hostPort
+        );
+    };
+
     std::vector<TNodeId> nodeIds;
     TActorSystem sys(&loop.Poller(), myNodeId);
-    for (auto&& [nodeId, node] : nodes) {
+    for (auto&& [nodeId, hostPort] : nodes) {
         if (nodeId != myNodeId) {
             std::cerr << "Adding node with id: " << nodeId << "\n";
-            sys.AddNode(nodeId, std::move(node));
+            sys.AddNode(nodeId, makeNode(hostPort));
         } else {
-            port = node->GetHostPort().GetPort();
+            port = hostPort.GetPort();
         }
         nodeIds.push_back(nodeId);
     }
@@ -208,11 +249,17 @@ int templatedMain(int argc, char** argv) {
     TNodeId nextNodeId = nodeIds[nextIdx];
 
     TAddress address{"::", port};
-    typename TPoller::TSocket socket(loop.Poller(), address.Domain());
-    socket.Bind(address);
-    socket.Listen();
-
     auto serve = [&]<typename TEnvelopeReader>() {
+#ifndef _WIN32
+        if (io && ioInbound) {
+            io->ServeInbound(sys, myNodeId, address, readerType);
+            sys.ServeOutbound();
+            return;
+        }
+#endif
+        typename TPoller::TSocket socket(loop.Poller(), address.Domain());
+        socket.Bind(address);
+        socket.Listen();
         sys.Serve<decltype(socket), TEnvelopeReader>(std::move(socket));
     };
 
@@ -265,14 +312,25 @@ int templatedMain(int argc, char** argv) {
     case 2048: runner.template operator()<2048>(); break;
     case 4096: runner.template operator()<4096>(); break;
     case 65536: runner.template operator()<65536>(); break;
+    case 262144: runner.template operator()<262144>(); break;
     default:
         std::cerr << "Unsupported message size: " << messageSize << "\n";
         return -1;
     }
 
+#ifndef _WIN32
+    if (io) {
+        io->Start();
+    }
+#endif
     while (sys.ActorsSize() > 0) {
         loop.Step();
     }
+#ifndef _WIN32
+    if (io) {
+        io->Stop();
+    }
+#endif
 
     return 0;
 }
