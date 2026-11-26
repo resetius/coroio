@@ -284,6 +284,49 @@ void test_loop_thread_rethrows_loop_exception() {
     }
 }
 
+// The failure hook gets the exception that ends the loop, on the loop thread, and
+// Join() still rethrows it; a loop that is stopped does not call the hook.
+void test_loop_thread_calls_failure_hook() {
+    {
+        TLoopThread<TFailingPoller> io;
+        std::string error;
+        std::thread::id calledOn;
+        int calls = 0;
+        io.Start([&](std::exception_ptr exception) {
+            ++calls;
+            calledOn = std::this_thread::get_id();
+            try {
+                std::rethrow_exception(exception);
+            } catch (const std::runtime_error& ex) {
+                error = ex.what();
+            }
+        });
+        io.Poller().Fail.store(true);
+        std::string joined;
+        try {
+            io.Join();
+        } catch (const std::runtime_error& ex) {
+            joined = ex.what();
+        }
+        // Join() orders the writes of the hook before these reads
+        ASSERT_EQ(calls, 1);
+        ASSERT_STREQ(error.c_str(), "poll failed");
+        ASSERT_STREQ(joined.c_str(), "poll failed");
+        ASSERT_TRUE(calledOn != std::this_thread::get_id());
+        ASSERT_TRUE(calledOn != std::thread::id());
+    }
+    {
+        TLoopThread<TFailingPoller> io;
+        int calls = 0;
+        io.Start([&](std::exception_ptr) {
+            ++calls;
+        });
+        io.Stop();
+        io.Join();
+        ASSERT_EQ(calls, 0);
+    }
+}
+
 // Each producer pushes one item and waits until the consumer has seen it: the consumer
 // goes to sleep between the rounds, and a lost wakeup stops the test at the deadline.
 template<typename TPoller>
@@ -416,6 +459,7 @@ int main(int argc, char* argv[]) {
     ADD_TEST(my_unit_poller, test_loop_thread_runs_coroutines);
     ADD_TEST(my_unit_poller, test_loop_thread_stop);
     ADD_TEST(unit_test, test_loop_thread_rethrows_loop_exception);
+    ADD_TEST(unit_test, test_loop_thread_calls_failure_hook);
     ADD_TEST(my_unit_poller, test_mpsc_queue_wakes_consumer);
     ADD_TEST(my_unit_poller, test_mpsc_queue_stop_under_load);
 #endif

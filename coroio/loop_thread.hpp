@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <exception>
+#include <functional>
 #include <thread>
 #include <utility>
 
@@ -44,7 +45,8 @@ namespace NNet {
  * destroyed, and only then does a peer see the end of its stream.
  *
  * An exception that ends the loop (a poller throws `std::system_error` when its
- * system call fails) does not terminate the process: `Join()` rethrows it.
+ * system call fails) does not terminate the process: `Join()` rethrows it. An owner
+ * that must learn of it at once, not at `Join()`, passes a failure hook to `Start()`.
  *
  * @tparam TPoller Polling backend; any POSIX poller.
  *
@@ -53,6 +55,9 @@ namespace NNet {
 template<typename TPoller>
 class TLoopThread {
 public:
+    /// Called on the loop thread with the exception that ended the loop, see `Start()`.
+    using TFailureHook = std::function<void(std::exception_ptr)>;
+
     TLoopThread()
         : StopNotifier_(Loop_.Poller())
         , Stopper_(WaitStop())
@@ -75,15 +80,26 @@ public:
         return Loop_.Poller();
     }
 
-    /// Starts the loop thread. Call once, from the owner thread.
-    void Start() {
+    /**
+     * @brief Starts the loop thread. Call once, from the owner thread.
+     *
+     * @param onFailure Optional. If the loop ends with an exception, it is called with that
+     *        exception on the loop thread, before the thread exits; `Join()` still rethrows
+     *        the exception. A loop that is stopped does not call it. It must not throw: an
+     *        exception that leaves it terminates the process. Use it when the owner must act
+     *        at once, for example to end a process that cannot work without this loop.
+     */
+    void Start(TFailureHook onFailure = {}) {
         assert(!Thread_.joinable() && "TLoopThread is started once");
-        Thread_ = std::thread([this] {
+        Thread_ = std::thread([this, onFailure = std::move(onFailure)] {
             try {
                 Loop_.Loop();
             } catch (...) {
                 // Read by Join() after join(), which orders it after this write
                 Error_ = std::current_exception();
+                if (onFailure) {
+                    onFailure(Error_);
+                }
             }
         });
     }
