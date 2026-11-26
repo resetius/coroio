@@ -20,8 +20,9 @@ public:
     /// Reads the inbound connections of `sys` on the last thread, with reader 0 (v1) or 1 (V2)
     virtual void ServeInbound(NNet::NActors::TActorSystem& sys, NNet::NActors::TNodeId nodeId, const NNet::TAddress& address, int readerType) = 0;
     virtual void Start() = 0;
-    /// Stops and joins the threads, then destroys the inbound; the nodes go with the actor system
-    virtual void Stop() = 0;
+    /// Stops and joins the threads, then destroys the inbound; the nodes go with the actor system.
+    /// Returns false if a loop ended with an exception (it is logged); safe without Start().
+    virtual bool Stop() = 0;
 };
 
 #ifndef _WIN32
