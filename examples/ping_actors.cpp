@@ -1,5 +1,7 @@
 #include <chrono>
+#include <cstring>
 #include <iostream>
+#include <memory>
 #include <vector>
 #include <set>
 #include <coroio/all.hpp>
@@ -24,6 +26,99 @@ template<>
 struct TPingMessage<0> {
     static constexpr TMessageId MessageId = 100;
     // Empty message, no data
+};
+
+// --deferred: a ping whose payload a TThreadedNode writes on its I/O thread and the inbound
+// reads there, as QumirDB does with its data chunks. The sender shares one buffer with all
+// of its pings; a received ping keeps the bytes it was read into.
+struct TBulkPing {
+    static constexpr TMessageId MessageId = 101;
+    static constexpr size_t PayloadAlignment = 16;
+    std::shared_ptr<const void> Bytes;
+    uint32_t Size = 0;
+};
+
+namespace NNet::NActors {
+
+template<>
+size_t SerializedSize<TBulkPing>(const TBulkPing& message) {
+    return message.Size;
+}
+
+template<>
+void SerializeTo<TBulkPing>(const TBulkPing& message, std::span<char> out) {
+    if (message.Size > 0) {
+        std::memcpy(out.data(), message.Bytes.get(), message.Size);
+    }
+}
+
+template<>
+void DeserializeFrom<TBulkPing>(TBulkPing& message, TBlob& blob) {
+    message.Size = blob.Size;
+    message.Bytes = std::shared_ptr<void>(std::move(blob.Data));
+}
+
+} // namespace NNet::NActors
+
+// TPingActor that sends TBulkPing as a Near blob through the untyped Send
+class TBulkPingActor : public IActor {
+public:
+    TBulkPingActor(bool isFirstNode, int total, int nextNodeId, const std::vector<TNodeId>& nodeIds, uint32_t size)
+        : IsFirstNode(isFirstNode)
+        , TotalMessages(total)
+        , RemainingMessages(total)
+        , NextNodeId(nextNodeId)
+        , NodeIds(nodeIds)
+        , Payload(std::make_shared<std::vector<char>>(size, 'p'))
+    { }
+
+    void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr ctx) override {
+        if (IsFirstNode && !TimerStarted) {
+            std::cout << "Starting pinging...\n";
+            TimerStarted = true;
+            StartTime = std::chrono::steady_clock::now();
+        }
+        if (IsFirstNode && RemainingMessages == 0) {
+            return;
+        }
+        auto nextActorId = TActorId{NextNodeId, ctx->Self().ActorId(), ctx->Self().Cookie()};
+        TBulkPing ping{.Bytes = std::shared_ptr<const void>(Payload, Payload->data()), .Size = static_cast<uint32_t>(Payload->size())};
+        ctx->Send(nextActorId, TBulkPing::MessageId, SerializeNear<TBulkPing>(Allocator, std::move(ping)));
+        if (IsFirstNode) {
+            if (ctx->Sender()) {
+                --RemainingMessages;
+            }
+            if (RemainingMessages == 0) {
+                auto now = std::chrono::steady_clock::now();
+                double secs = std::chrono::duration<double>(now - StartTime).count();
+                std::cout << "\nPing throughput: " << (double)(TotalMessages) / secs << " msg/s\n";
+                for (auto nodeId : NodeIds) {
+                    ctx->Send<TPoison>(TActorId{nodeId, ctx->Self().ActorId(), ctx->Self().Cookie()});
+                }
+            }
+        }
+    }
+
+private:
+    struct TAllocator {
+        void* Acquire(size_t size) {
+            return ::operator new(size);
+        }
+
+        void Release(void* ptr) {
+            ::operator delete(ptr);
+        }
+    };
+
+    bool IsFirstNode;
+    bool TimerStarted = false;
+    int TotalMessages;
+    int RemainingMessages;
+    TNodeId NextNodeId;
+    std::chrono::steady_clock::time_point StartTime;
+    std::vector<TNodeId> NodeIds;
+    std::shared_ptr<std::vector<char>> Payload;
+    TAllocator Allocator;
 };
 
 template<size_t Size>
@@ -126,6 +221,7 @@ int templatedMain(int argc, char** argv) {
     int readerType = 0;
     int ioThreads = 0;
     int ioInbound = 1;
+    int deferred = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--node") && i + 1 < argc) {
@@ -185,9 +281,15 @@ int templatedMain(int argc, char** argv) {
                 std::cerr << "Invalid --io-inbound. Use 1 to read the inbound connections on an I/O thread or 0 to read them on the actor thread.\n";
                 return -1;
             }
+        } else if (!strcmp(argv[i], "--deferred") && i + 1 < argc) {
+            deferred = std::stoi(argv[++i]);
+            if (deferred < 0 || deferred > 1) {
+                std::cerr << "Invalid --deferred. Use 1 to serialize and read the pings on the I/O threads.\n";
+                return -1;
+            }
         } else if (!strcmp(argv[i], "--help")) {
             std::cout << "Usage: " << argv[0] << " [--node host:port:nodeId] [--node-id id] [--delay ms] [--inflight n] [--messages n] [--message-size size]"
-                << " [--reader-type 0|1] [--io-threads 0|1|2] [--io-inbound 0|1]\n";
+                << " [--reader-type 0|1] [--io-threads 0|1|2] [--io-inbound 0|1] [--deferred 0|1]\n";
             return 0;
         } else if (!strcmp(argv[i], "--method")) {
             if (i + 1 < argc) {
@@ -201,6 +303,10 @@ int templatedMain(int argc, char** argv) {
 
     if (ioThreads == 2 && !ioInbound) {
         std::cerr << "--io-threads 2 reads the inbound connections on the second thread.\n";
+        return -1;
+    }
+    if (deferred && ioThreads == 0) {
+        std::cerr << "--deferred 1 needs --io-threads 1 or 2.\n";
         return -1;
     }
 #ifndef _WIN32
@@ -252,7 +358,7 @@ int templatedMain(int argc, char** argv) {
     auto serve = [&]<typename TEnvelopeReader>() {
 #ifndef _WIN32
         if (io && ioInbound) {
-            io->ServeInbound(sys, myNodeId, address, readerType);
+            io->ServeInbound(sys, myNodeId, address, readerType, deferred ? &factory : nullptr);
             sys.ServeOutbound();
             return;
         }
@@ -280,8 +386,15 @@ int templatedMain(int argc, char** argv) {
         using TPingActorType = TPingActor<MessageSize>;
 
         factory.RegisterSerializer<TPingMessageType>();
-        auto pingActor = std::make_unique<TPingActorType>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds);
-        auto pingActorId = sys.Register(std::move(pingActor));
+        TActorId pingActorId;
+        if (deferred) {
+            factory.RegisterPayloadWriter<TBulkPing>();
+            factory.RegisterDeserializer<TBulkPing>();
+            pingActorId = sys.Register(std::make_unique<TBulkPingActor>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds, MessageSize));
+        } else {
+            auto pingActor = std::make_unique<TPingActorType>(myNodeId == nodeIds.front(), messages, nextNodeId, nodeIds);
+            pingActorId = sys.Register(std::move(pingActor));
+        }
 
         if (myNodeId == nodeIds.front()) {
             auto firstPing = [&]() -> TVoidTask {

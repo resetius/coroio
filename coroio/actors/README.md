@@ -154,6 +154,8 @@ auto node = std::make_unique<TNode<Poller>>(
 
 For **local-only** deployments, `TMessagesFactory` is not needed.
 
+With `TThreadedNode`, the serialization of a non-POD message can move to the I/O thread: register its type with `factory.RegisterPayloadWriter<T>()` and send a `Near` blob with `TActorSystem::Send(sender, recipient, messageId, blob)` (or `ctx->Send(to, messageId, blob)`). The node takes `SerializedSize` and frames the message at once, so it keeps its place among the other frames. `SerializeTo` writes the payload on the I/O thread just before the write, and the object is destroyed there. Hence, until the object is destroyed, nothing that `SerializeTo` reads may change or go away; its destructor and the blob's deleter must be safe on the I/O thread; and `SerializeTo` must not throw (check the object in `SerializedSize`; an exception terminates the process). Other types are serialized in `Send`, as before. On the receiving side, `factory.RegisterDeserializer<T>()` and a `TThreadedInbound` built with the factory run `DeserializeFrom<T>` on the I/O thread; the actor then gets a `Near` blob of `T`.
+
 ---
 
 ## Actor types

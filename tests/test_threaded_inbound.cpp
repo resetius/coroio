@@ -3,7 +3,9 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -45,11 +47,84 @@ struct TPong {
     uint64_t Check;
 };
 
+// Remembers the thread that deserialized it; a payload "BAD" does not deserialize
+struct TTraced {
+    static constexpr TMessageId MessageId = 64;
+    std::string Value;
+    std::thread::id ReadOn;
+};
+
+// Sent as a Near blob, so a TThreadedNode defers it; the TMark of the same Seq follows it
+struct TBulk {
+    static constexpr TMessageId MessageId = 65;
+    uint64_t Seq = 0;
+    std::string Value;
+    std::thread::id ReadOn;
+};
+
+// Aligned: it follows bulks of any size, and the V2 reader leaves an unaligned POD unaligned
+struct TMark {
+    static constexpr TMessageId MessageId = 66;
+    static constexpr size_t PayloadAlignment = 16;
+    uint64_t Seq;
+};
+
 namespace NNet::NActors {
 
 template<>
 size_t SerializedSize<TText>(const TText& obj) {
     return obj.Value.size();
+}
+
+template<>
+void DeserializeFrom<TText>(TText& obj, TBlob& blob) {
+    obj.Value.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
+}
+
+template<>
+void DeserializeFrom<TAlignedText>(TAlignedText& obj, TBlob& blob) {
+    obj.Value.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
+}
+
+template<>
+size_t SerializedSize<TTraced>(const TTraced& obj) {
+    return obj.Value.size();
+}
+
+template<>
+void SerializeTo<TTraced>(const TTraced& obj, std::span<char> out) {
+    std::memcpy(out.data(), obj.Value.data(), out.size());
+}
+
+template<>
+void DeserializeFrom<TTraced>(TTraced& obj, TBlob& blob) {
+    obj.Value.assign(static_cast<const char*>(blob.Data.get()), blob.Size);
+    if (obj.Value == "BAD") {
+        throw std::runtime_error("bad payload");
+    }
+    obj.ReadOn = std::this_thread::get_id();
+}
+
+template<>
+size_t SerializedSize<TBulk>(const TBulk& obj) {
+    return sizeof(obj.Seq) + obj.Value.size();
+}
+
+template<>
+void SerializeTo<TBulk>(const TBulk& obj, std::span<char> out) {
+    std::memcpy(out.data(), &obj.Seq, sizeof(obj.Seq));
+    std::memcpy(out.data() + sizeof(obj.Seq), obj.Value.data(), obj.Value.size());
+}
+
+template<>
+void DeserializeFrom<TBulk>(TBulk& obj, TBlob& blob) {
+    if (blob.Size < sizeof(obj.Seq)) {
+        throw std::runtime_error("short bulk");
+    }
+    const char* data = static_cast<const char*>(blob.Data.get());
+    std::memcpy(&obj.Seq, data, sizeof(obj.Seq));
+    obj.Value.assign(data + sizeof(obj.Seq), blob.Size - sizeof(obj.Seq));
+    obj.ReadOn = std::this_thread::get_id();
 }
 
 template<>
@@ -148,6 +223,8 @@ struct TRecord {
     std::vector<uint32_t> Next;
     bool Aligned;
     size_t (*Size)(uint32_t);
+    // The inbound deserializes TText and TAlignedText, so the actor gets Near blobs
+    bool Near = false;
     size_t Received = 0;
     std::string Error;
 };
@@ -168,12 +245,17 @@ public:
         const uint32_t seq = Record.Next[connection]++;
         const std::string expected = MakePayload(connection, seq, Record.Size(seq));
         const std::string frame = "frame " + std::to_string(seq) + " of connection " + std::to_string(connection);
-        if (messageId != MessageIdOf(seq) || blob.Size != expected.size()
-            || std::memcmp(blob.Data.get(), expected.data(), expected.size()) != 0)
-        {
+        const bool near = blob.Type == TBlob::PointerType::Near;
+        std::string_view payload(static_cast<const char*>(blob.Data.get()), blob.Size);
+        if (near) {
+            payload = messageId == TText::MessageId
+                ? std::string_view(static_cast<const TText*>(blob.Data.get())->Value)
+                : std::string_view(static_cast<const TAlignedText*>(blob.Data.get())->Value);
+        }
+        if (messageId != MessageIdOf(seq) || near != Record.Near || payload != expected) {
             Record.Fail(frame + " differs");
         }
-        if (Record.Aligned && messageId == TAlignedText::MessageId && reinterpret_cast<uintptr_t>(blob.Data.get()) % 16 != 0) {
+        if (Record.Aligned && !near && messageId == TAlignedText::MessageId && reinterpret_cast<uintptr_t>(blob.Data.get()) % 16 != 0) {
             Record.Fail(frame + " is not aligned");
         }
         ++Record.Received;
@@ -222,14 +304,23 @@ typename TPoller::TSocket Listen(TPoller& poller, const TAddress& address) {
  */
 template<typename TPoller, typename TReader>
 struct TInboundSetup {
-    explicit TInboundSetup(size_t limit = TQueuedDelivery::DefaultLimit)
+    using TInbound = TThreadedInbound<TPoller, TQueuedDelivery, TReader>;
+
+    // With a factory, the inbound deserializes what it can
+    explicit TInboundSetup(size_t limit = TQueuedDelivery::DefaultLimit, const TMessagesFactory* factory = nullptr)
         : Address("127.0.0.1", GetFreePort())
         , Delivery(System, limit)
-        , Inbound(Io.Poller(), Listen(Io.Poller(), Address), LocalNode, Delivery, [this](const std::string& message) {
+    {
+        auto logger = [this](const std::string& message) {
             Closed += message.find("InboundConnection") != std::string::npos;
             Dropped += message.find("different node") != std::string::npos;
-        })
-    {
+            Undecodable += message.find("Cannot deserialize") != std::string::npos;
+        };
+        if (factory) {
+            Inbound = std::make_unique<TInbound>(Io.Poller(), Listen(Io.Poller(), Address), LocalNode, Delivery, *factory, logger);
+        } else {
+            Inbound = std::make_unique<TInbound>(Io.Poller(), Listen(Io.Poller(), Address), LocalNode, Delivery, logger);
+        }
         Loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
         System.Serve();
         Io.Start();
@@ -251,9 +342,16 @@ struct TInboundSetup {
     TLoopThread<TPoller> Io;
     std::atomic<int> Closed = 0;
     std::atomic<int> Dropped = 0;
+    std::atomic<int> Undecodable = 0;
     TQueuedDelivery Delivery;
-    TThreadedInbound<TPoller, TQueuedDelivery, TReader> Inbound;
+    std::unique_ptr<TInbound> Inbound;
 };
+
+// Deserializes the payloads of the test streams
+void RegisterTexts(TMessagesFactory& factory) {
+    factory.RegisterDeserializer<TText>();
+    factory.RegisterDeserializer<TAlignedText>();
+}
 
 /// Writes prepared streams to `address` from a thread of its own, one connection per
 /// stream, in pieces of 64 KiB. After its stream a connection shuts its side down and
@@ -333,11 +431,14 @@ private:
 // Three connections at once, small and large frames: every connection delivers its
 // frames intact and in order, and the V2 reader keeps the aligned payloads aligned
 template<typename TPoller, typename TReader>
-void test_threaded_inbound_delivers_in_order() {
+void RunDeliversInOrder(bool deserialize) {
     constexpr uint32_t connections = 3;
     constexpr uint32_t frames = 2000;
-    TInboundSetup<TPoller, TReader> setup;
+    TMessagesFactory factory;
+    RegisterTexts(factory);
+    TInboundSetup<TPoller, TReader> setup(TQueuedDelivery::DefaultLimit, deserialize ? &factory : nullptr);
     TRecord record(connections, std::is_same_v<TReader, TZeroCopyEnvelopeReaderV2>);
+    record.Near = deserialize;
     const auto recorder = setup.System.Register(std::make_unique<TRecorder>(record));
     std::vector<std::string> streams;
     for (uint32_t c = 0; c < connections; ++c) {
@@ -357,6 +458,17 @@ void test_threaded_inbound_delivers_in_order() {
     ASSERT_EQ(setup.Delivery.QueuedBytes(), 0u);
 }
 
+template<typename TPoller, typename TReader>
+void test_threaded_inbound_delivers_in_order() {
+    RunDeliversInOrder<TPoller, TReader>(false);
+}
+
+// The same with the payloads deserialized on the I/O thread
+template<typename TPoller, typename TReader>
+void test_threaded_inbound_deserializes_in_order() {
+    RunDeliversInOrder<TPoller, TReader>(true);
+}
+
 size_t LargeSize(uint32_t) {
     return 64 * 1024;
 }
@@ -365,11 +477,14 @@ size_t LargeSize(uint32_t) {
 // the inbound stops reading, and TCP stops the client. Then the actor loop runs, and
 // everything arrives in order.
 template<typename TPoller>
-void test_threaded_inbound_backpressure() {
+void RunBackpressure(bool deserialize) {
     constexpr size_t limit = 1024 * 1024;
     constexpr uint32_t frames = 1024;
-    TInboundSetup<TPoller, TZeroCopyEnvelopeReaderV2> setup(limit);
+    TMessagesFactory factory;
+    RegisterTexts(factory);
+    TInboundSetup<TPoller, TZeroCopyEnvelopeReaderV2> setup(limit, deserialize ? &factory : nullptr);
     TRecord record(1, true, LargeSize);
+    record.Near = deserialize;
     const auto recorder = setup.System.Register(std::make_unique<TRecorder>(record));
     TClients<TPoller> clients(setup.Address, {MakeStream(recorder, 0, frames, LargeSize)});
 
@@ -397,6 +512,80 @@ void test_threaded_inbound_backpressure() {
     ASSERT_LT(written, clients.Size(0));
     ASSERT_TRUE(record.Error.empty()) << record.Error;
     ASSERT_TRUE(complete);
+}
+
+template<typename TPoller>
+void test_threaded_inbound_backpressure() {
+    RunBackpressure<TPoller>(false);
+}
+
+// Deserialized envelopes count the bytes read, not the size of their objects
+template<typename TPoller>
+void test_threaded_inbound_backpressure_deserialized() {
+    RunBackpressure<TPoller>(true);
+}
+
+// Registered types arrive as Near blobs deserialized on the I/O thread, the others as
+// they were read; an envelope whose deserializer throws is dropped and logged
+template<typename TPoller, typename TReader>
+void test_threaded_inbound_deserializes_registered_types() {
+    TMessagesFactory factory;
+    factory.RegisterDeserializer<TTraced>();
+    TInboundSetup<TPoller, TReader> setup(TQueuedDelivery::DefaultLimit, &factory);
+    struct TSeen {
+        TMessageId MessageId;
+        bool Near;
+        std::string Value;
+        std::thread::id ReadOn;
+    };
+    std::vector<TSeen> seen;
+    class TCollector : public IActor {
+    public:
+        explicit TCollector(std::vector<TSeen>& seen)
+            : Seen(seen)
+        { }
+
+        void Receive(TMessageId messageId, TBlob blob, TActorContext::TPtr) override {
+            if (blob.Type == TBlob::PointerType::Near) {
+                const auto& traced = *static_cast<const TTraced*>(blob.Data.get());
+                Seen.push_back({messageId, true, traced.Value, traced.ReadOn});
+            } else {
+                Seen.push_back({messageId, false, std::string(static_cast<const char*>(blob.Data.get()), blob.Size), {}});
+            }
+        }
+
+        std::vector<TSeen>& Seen;
+    };
+    const auto collector = setup.System.Register(std::make_unique<TCollector>(seen));
+    TVectorStream stream;
+    for (int i = 0; i < 6; ++i) {
+        SerializeFarInplace<TTraced>(stream, SenderOf(0), collector, TTraced{.Value = "traced-" + std::to_string(i)});
+        SerializeFarInplace<TText>(stream, SenderOf(0), collector, TText{"text-" + std::to_string(i)});
+        if (i % 2) {
+            SerializeFarInplace<TTraced>(stream, SenderOf(0), collector, TTraced{.Value = "BAD"});
+        }
+    }
+    TClients<TPoller> clients(setup.Address, {stream.Data});
+
+    const bool closed = Pump(setup.Loop, [&] { return setup.Closed.load() == 1; });
+    Pump(setup.Loop, [&] { return seen.size() == 12; }, std::chrono::seconds(10));
+    clients.Stop();
+    setup.Stop();
+    ASSERT_TRUE(closed);
+    ASSERT_EQ(seen.size(), 12u);
+    ASSERT_EQ(setup.Undecodable.load(), 3);
+    for (int i = 0; i < 6; ++i) {
+        const auto& traced = seen[2 * i];
+        ASSERT_EQ(traced.MessageId, TTraced::MessageId);
+        ASSERT_TRUE(traced.Near);
+        ASSERT_TRUE(traced.Value == "traced-" + std::to_string(i));
+        ASSERT_TRUE(traced.ReadOn != std::thread::id{});
+        ASSERT_TRUE(traced.ReadOn != std::this_thread::get_id());
+        const auto& text = seen[2 * i + 1];
+        ASSERT_EQ(text.MessageId, TText::MessageId);
+        ASSERT_FALSE(text.Near);
+        ASSERT_TRUE(text.Value == "text-" + std::to_string(i));
+    }
 }
 
 // Envelopes for another node are dropped and logged; the others arrive
@@ -439,7 +628,7 @@ void test_threaded_inbound_closes_and_forgets_connections() {
     }
     setup.Stop();
     ASSERT_TRUE(record.Error.empty()) << record.Error;
-    ASSERT_EQ(setup.Inbound.Connections(), 1u);
+    ASSERT_EQ(setup.Inbound->Connections(), 1u);
 }
 
 class TPonger : public IBehaviorActor, public TBehavior<TPonger, TPing> {
@@ -553,6 +742,154 @@ void test_threaded_inbound_actor_systems() {
     }
 }
 
+// Checks that every TMark comes after the TBulk of its Seq, which a TThreadedNode deferred
+// and the inbound deserialized; answers each TMark with a TPong
+class TBulkPonger : public IBehaviorActor, public TBehavior<TBulkPonger, TBulk, TMark> {
+public:
+    TBulkPonger(std::thread::id actorThread, std::string& error)
+        : ActorThread(actorThread)
+        , Error(error)
+    {
+        Become(this);
+    }
+
+    void Receive(TBulk&& bulk, TBlob blob, TActorContext::TPtr) {
+        if (blob.Type != TBlob::PointerType::Near || bulk.ReadOn == ActorThread) {
+            Fail("bulk " + std::to_string(bulk.Seq) + " was not deserialized on the I/O thread");
+        }
+        if (bulk.Seq != Bulks || bulk.Value != std::string(BulkSize(bulk.Seq), static_cast<char>('a' + bulk.Seq % 26))) {
+            Fail("bulk " + std::to_string(Bulks) + " differs");
+        }
+        ++Bulks;
+    }
+
+    void Receive(TMark&& mark, TBlob, TActorContext::TPtr ctx) {
+        if (mark.Seq + 1 != Bulks) {
+            Fail("mark " + std::to_string(mark.Seq) + " after " + std::to_string(Bulks) + " bulks");
+        }
+        ctx->Send<TPong>(ctx->Sender(), TPong{mark.Seq, mark.Seq * 3});
+    }
+
+    void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) {
+    }
+
+    static size_t BulkSize(uint64_t seq) {
+        return seq % 16 == 15 ? 100 * 1024 + seq : seq % 300;
+    }
+
+private:
+    void Fail(const std::string& error) {
+        if (Error.empty()) {
+            Error = error;
+        }
+    }
+
+    std::thread::id ActorThread;
+    std::string& Error;
+    uint64_t Bulks = 0;
+};
+
+class TPongCollector : public IBehaviorActor, public TBehavior<TPongCollector, TPong> {
+public:
+    explicit TPongCollector(std::vector<TPong>& replies)
+        : Replies(replies)
+    {
+        Become(this);
+    }
+
+    void Receive(TPong&& reply, TBlob, TActorContext::TPtr) {
+        Replies.push_back(reply);
+    }
+
+    void HandleUnknownMessage(TMessageId, TBlob, TActorContext::TPtr) {
+    }
+
+    std::vector<TPong>& Replies;
+};
+
+// Two actor systems: one sends Near TBulk objects through TActorSystem::Send(blob), each
+// followed by a TMark framed at once. The node serializes the bulks on its I/O thread, the
+// inbound of the other system deserializes them on another one, and every mark arrives
+// after its bulk.
+template<typename TPoller, typename TReader>
+void test_threaded_inbound_deferred_actor_systems() {
+    using TSocket = typename TPoller::TSocket;
+    constexpr uint64_t rounds = 3000;
+    TLoop<TPoller> loop;
+    loop.Poller().SetMaxDuration(std::chrono::milliseconds(1));
+    auto nodesIo = std::make_unique<TLoopThread<TPoller>>();
+    auto inboundIo = std::make_unique<TLoopThread<TPoller>>();
+    auto resolver = std::make_unique<TResolver>(TAddress{"127.0.0.1", 53}, nodesIo->Poller());
+    TMessagesFactory factory;
+    factory.RegisterPayloadWriter<TBulk>();
+    factory.RegisterDeserializer<TBulk>();
+    factory.RegisterSerializer<TMark>();
+    factory.RegisterSerializer<TPong>();
+    TActorSystem first(&loop.Poller(), 1);
+    TActorSystem second(&loop.Poller(), 2);
+    TActorSystem* systems[] = {&first, &second};
+
+    const int ports[] = {GetFreePort(), GetFreePort()};
+    std::unique_ptr<TQueuedDelivery> deliveries[2];
+    std::unique_ptr<TThreadedInbound<TPoller, TQueuedDelivery, TReader>> inbounds[2];
+    for (int i = 0; i < 2; ++i) {
+        auto& poller = nodesIo->Poller();
+        systems[i]->AddNode(2 - i, std::make_unique<TThreadedNode<TPoller>>(
+            poller, factory, *resolver,
+            [&poller](const TAddress& addr) { return TSocket(poller, addr.Domain()); },
+            THostPort("127.0.0.1", ports[1 - i])));
+        deliveries[i] = std::make_unique<TQueuedDelivery>(*systems[i]);
+        inbounds[i] = std::make_unique<TThreadedInbound<TPoller, TQueuedDelivery, TReader>>(
+            inboundIo->Poller(), Listen(inboundIo->Poller(), TAddress{"127.0.0.1", ports[i]}), i + 1, *deliveries[i], factory);
+    }
+    std::string error;
+    std::vector<TPong> replies;
+    const auto ponger = second.RegisterWellKnown(1, std::make_unique<TBulkPonger>(std::this_thread::get_id(), error));
+    const auto collector = first.Register(std::make_unique<TPongCollector>(replies));
+    first.ServeOutbound();
+    second.ServeOutbound();
+    nodesIo->Start();
+    inboundIo->Start();
+
+    struct TAllocator {
+        void* Acquire(size_t size) {
+            return ::operator new(size);
+        }
+
+        void Release(void* ptr) {
+            ::operator delete(ptr);
+        }
+    } alloc;
+    for (uint64_t seq = 0; seq < rounds; ++seq) {
+        TBulk bulk{.Seq = seq, .Value = std::string(TBulkPonger::BulkSize(seq), static_cast<char>('a' + seq % 26))};
+        first.Send(collector, ponger, TBulk::MessageId, SerializeNear<TBulk>(alloc, std::move(bulk)));
+        first.Send<TMark>(collector, ponger, TMark{seq});
+        if (seq % 100 == 99) {
+            loop.Step();
+        }
+    }
+    const bool complete = Pump(loop, [&] { return replies.size() == rounds || !error.empty(); });
+    nodesIo->Stop();
+    inboundIo->Stop();
+    nodesIo->Join();
+    inboundIo->Join();
+    first.AddNode(2, nullptr);
+    second.AddNode(1, nullptr);
+    for (int i = 0; i < 2; ++i) {
+        inbounds[i].reset();
+        deliveries[i].reset();
+    }
+    resolver.reset();
+    nodesIo.reset();
+    inboundIo.reset();
+
+    ASSERT_TRUE(error.empty()) << error;
+    ASSERT_TRUE(complete);
+    for (uint64_t seq = 0; seq < rounds; ++seq) {
+        ASSERT_EQ(replies[seq].Seq, seq);
+    }
+}
+
 // The I/O loop stops while clients write; then the inbound and the delivery are destroyed
 // with envelopes in the queue, and with V2 the reader goes before the blobs of its chunks.
 // Whether the actor side has emptied the queue by then is a matter of timing: at least one
@@ -614,10 +951,14 @@ int main(int argc, char* argv[]) {
 
 #ifndef _WIN32
     ADD_TEST(my_reader_poller, test_threaded_inbound_delivers_in_order);
+    ADD_TEST(my_reader_poller, test_threaded_inbound_deserializes_in_order);
     ADD_TEST(my_unit_poller, test_threaded_inbound_backpressure);
+    ADD_TEST(my_unit_poller, test_threaded_inbound_backpressure_deserialized);
+    ADD_TEST(my_reader_poller, test_threaded_inbound_deserializes_registered_types);
     ADD_TEST(my_unit_poller, test_threaded_inbound_drops_envelopes_for_other_nodes);
     ADD_TEST(my_unit_poller, test_threaded_inbound_closes_and_forgets_connections);
     ADD_TEST(my_reader_poller, test_threaded_inbound_actor_systems);
+    ADD_TEST(my_reader_poller, test_threaded_inbound_deferred_actor_systems);
     ADD_TEST(my_reader_poller, test_threaded_inbound_stop_under_load);
 #endif
 
