@@ -7,6 +7,7 @@ set(SOURCES
     envelope_reader.cpp
     node.hpp
     node.cpp
+    threaded_inbound.hpp
     threaded_node.hpp
     messages.hpp
     messages.cpp

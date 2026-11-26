@@ -293,7 +293,7 @@ public:
      *
      * Messages sent to an actor whose `NodeId()` equals `id` are serialized
      * and forwarded via this node's outbound buffer. Must be called before
-     * `Serve(TSocket)`.
+     * `Serve(TSocket)` or `ServeOutbound()`.
      *
      * @param id   Node identifier matching the remote process's `nodeId`.
      * @param node Transport handle (e.g. `TNode<TDefaultPoller>`).
@@ -323,6 +323,22 @@ public:
     void Serve(TSocket socket) {
         Serve();
         Handles.emplace_back(InboundServe<TSocket, TEnvelopeReader>(std::move(socket)));
+        for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
+            if (Nodes[i].Node) {
+                Handles.emplace_back(OutboundServe(i));
+            }
+        }
+    }
+
+    /**
+     * @brief Starts the actor system with outbound network serving only.
+     *
+     * `Serve(TSocket)` without the accept loop, for a system whose inbound connections
+     * are served elsewhere: `TThreadedInbound` reads them on an I/O thread and hands
+     * their envelopes to `Send`.
+     */
+    void ServeOutbound() {
+        Serve();
         for (int i = 0; i < static_cast<int>(Nodes.size()); ++i) {
             if (Nodes[i].Node) {
                 Handles.emplace_back(OutboundServe(i));
