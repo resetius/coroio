@@ -20,6 +20,7 @@
 #include <coroio/actors/actorsystem.hpp>
 #include <coroio/actors/messages.hpp>
 #include <coroio/actors/messages_factory.hpp>
+#include <coroio/actors/output_buffer.hpp>
 #include <coroio/actors/queue.hpp>
 #include <coroio/actors/intrusive_list.hpp>
 
@@ -2180,6 +2181,230 @@ void test_node_aligns_payloads() {
     ASSERT_NO_FATAL_FAILURE(CheckAlignedFrames(envelopes, frames));
 }
 
+// The buffer grows without losing the bytes in use, along both paths of its growth
+void test_output_buffer_grows_keeping_bytes() {
+    TOutputBuffer buf;
+    ASSERT_EQ(buf.Capacity(), 0);
+    buf.Reserve(0, 0);
+    ASSERT_EQ(buf.Capacity(), 0);
+
+    std::mt19937 rng(21);
+    std::vector<char> expected;
+    for (int i = 0; i < 2000; ++i) {
+        const size_t size = 1 + rng() % 700;
+        const size_t used = expected.size();
+        buf.Reserve(used, used + size);
+        ASSERT_TRUE(buf.Capacity() >= used + size);
+        for (size_t j = 0; j < size; ++j) {
+            const char c = static_cast<char>(rng());
+            buf.Data()[used + j] = c;
+            expected.push_back(c);
+        }
+        ASSERT_EQ(0, memcmp(buf.Data(), expected.data(), expected.size()));
+    }
+
+    // Room that is there is not reallocated
+    const size_t cap = buf.Capacity();
+    char* data = buf.Data();
+    buf.Reserve(expected.size(), cap);
+    ASSERT_EQ(buf.Capacity(), cap);
+    ASSERT_TRUE(buf.Data() == data);
+    // Growth is geometric
+    buf.Reserve(expected.size(), cap + 1);
+    ASSERT_TRUE(buf.Capacity() >= 2 * cap);
+
+    // A block that is mostly stale bytes: only the bytes in use are kept
+    TOutputBuffer stale;
+    stale.Reserve(0, 1 << 20);
+    std::memset(stale.Data(), 0x5a, 1 << 20);
+    stale.Reserve(10, (1 << 20) + 1);
+    ASSERT_TRUE(stale.Capacity() > (1 << 20));
+    for (int i = 0; i < 10; ++i) {
+        ASSERT_EQ(stale.Data()[i], 0x5a);
+    }
+    // A request far above the doubling
+    stale.Reserve(10, 8 << 20);
+    ASSERT_TRUE(stale.Capacity() >= (8 << 20));
+    for (int i = 0; i < 10; ++i) {
+        ASSERT_EQ(stale.Data()[i], 0x5a);
+    }
+
+    // Swap exchanges the blocks
+    TOutputBuffer small;
+    small.Reserve(0, 100);
+    const size_t smallCap = small.Capacity();
+    const size_t largeCap = stale.Capacity();
+    small.Swap(stale);
+    ASSERT_EQ(small.Capacity(), largeCap);
+    ASSERT_EQ(stale.Capacity(), smallCap);
+
+    // A moved-from buffer is empty and grows again
+    TOutputBuffer moved(std::move(small));
+    ASSERT_EQ(moved.Capacity(), largeCap);
+    ASSERT_EQ(small.Capacity(), 0);
+    ASSERT_TRUE(small.Data() == nullptr);
+    small.Reserve(0, 100);
+    ASSERT_EQ(small.Capacity(), TOutputBuffer::MinCapacity);
+    small.Data()[0] = 1;
+    small = std::move(moved);
+    ASSERT_EQ(small.Capacity(), largeCap);
+    ASSERT_EQ(moved.Capacity(), 0);
+    ASSERT_TRUE(moved.Data() == nullptr);
+}
+
+// Walks the raw stream frame by frame, from `pos`, up to an incomplete frame. The stream
+// offset of an aligned payload must be a multiple of 16, and the padding must be zeros.
+static void ParseWire(const std::string& wire, size_t& pos, std::vector<TExpectedFrame>& frames) {
+    while (wire.size() - pos >= sizeof(THeader)) {
+        THeader header;
+        std::memcpy(&header, wire.data() + pos, sizeof(header));
+        const size_t padding = HeaderPadding(header);
+        const size_t size = sizeof(header) + padding + header.Size;
+        if (wire.size() - pos < size) {
+            return;
+        }
+        for (size_t i = 0; i < padding; ++i) {
+            ASSERT_EQ(wire[pos + sizeof(header) + i], 0);
+        }
+        const size_t payload = pos + sizeof(header) + padding;
+        frames.push_back({HeaderMessageId(header), wire.substr(payload, header.Size), payload % 16 == 0});
+        pos += size;
+    }
+}
+
+// The outbound buffer of TNode grows through many sizes and is reused dirty, with
+// bursts of several MiB: the frames arrive whole, aligned, and padded with zeros
+void test_node_output_buffer_growth_keeps_frames() {
+    using TPoller = TDefaultPoller;
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+    TResolver resolver(TAddress{"127.0.0.1", 53}, poller);
+    TMessagesFactory factory;
+    factory.RegisterSerializer<TAlignedPod>();
+    factory.RegisterSerializer<TAlignedBytes>();
+    TAllocator alloc;
+    const int port = GetFreePort();
+    TAddress address{"127.0.0.1", port};
+    TPoller::TSocket listener(poller, address.Domain());
+    listener.Bind(address);
+    listener.Listen();
+
+    TNode<TPoller> node(poller, factory, resolver,
+        [&poller](const TAddress& addr) { return TPoller::TSocket(poller, addr.Domain()); },
+        THostPort("127.0.0.1", port));
+    INode& stream = node;
+
+    std::string wire;
+    auto server = [](TPoller::TSocket& listener, std::string& wire) -> TFuture<void> {
+        auto client = (co_await listener.Accept()).value();
+        std::vector<char> buf(1 << 16);
+        while (true) {
+            auto size = co_await client.ReadSome(buf.data(), buf.size());
+            if (size < 0) {
+                continue;
+            }
+            if (size == 0) {
+                break;
+            }
+            wire.append(buf.data(), size);
+        }
+    }(listener, wire);
+
+    std::mt19937 rng(22);
+    std::vector<TExpectedFrame> frames;
+    std::vector<TExpectedFrame> received;
+    size_t parsed = 0;
+    // Sends the queued frames and waits until all of them are in `received`
+    auto flush = [&]() {
+        node.Drain();
+        const auto deadline = TClock::now() + std::chrono::seconds(30);
+        while (received.size() < frames.size() && TClock::now() < deadline) {
+            loop.Step();
+            ASSERT_NO_FATAL_FAILURE(ParseWire(wire, parsed, received));
+        }
+        ASSERT_EQ(received.size(), frames.size());
+    };
+    auto sendBytes = [&](size_t size, char fill) {
+        std::string bytes(size, fill);
+        node.Send(TEnvelope{
+            .Sender = TActorId(1, 1, 1),
+            .Recipient = TActorId(1, 2, 2),
+            .MessageId = TAlignedBytes::MessageId,
+            .Blob = SerializeNear<TAlignedBytes>(alloc, bytes),
+        });
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+    };
+    // A string of 0..40 bytes moves the offset, then aligned bytes get padding of any length
+    auto writeShifted = [&]() {
+        const TActorId sender(1, 1, 1);
+        const TActorId recipient(1, 2, 2);
+        std::string text(rng() % 41, 'l');
+        SerializeFarInplace<TWrappedString>(stream, sender, recipient, text);
+        frames.push_back({TWrappedString::MessageId, text, false});
+        std::string bytes(1 + rng() % 60, 'm');
+        SerializeFarInplace<TAlignedBytes>(stream, sender, recipient, TAlignedBytes{bytes});
+        frames.push_back({TAlignedBytes::MessageId, bytes, true});
+    };
+    // A frame with a payload of 0xff bytes, written without padding: leaves them in the buffer
+    auto sendDirty = [&](size_t size) {
+        auto buf = node.Acquire(sizeof(THeader) + size);
+        const THeader header{TActorId(1, 1, 1), TActorId(1, 2, 2), TWrappedString::MessageId, static_cast<uint32_t>(size)};
+        std::memcpy(buf.data(), &header, sizeof(header));
+        std::memset(buf.data() + sizeof(header), 0xff, size);
+        node.Commit(sizeof(THeader) + size);
+        frames.push_back({TWrappedString::MessageId, std::string(size, '\xff'), false});
+    };
+
+    // Phase 1: a burst of about 1 MiB from an empty buffer, a few bytes at a time
+    for (int batch = 0; batch < 40; ++batch) {
+        ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 100, rng, frames));
+        sendBytes(1 + rng() % 60, 'q');
+    }
+    ASSERT_NO_FATAL_FAILURE(flush());
+
+    // Phase 2: fill both buffers of the node with 0xff
+    sendDirty(512 << 10);
+    ASSERT_NO_FATAL_FAILURE(flush());
+    sendDirty(512 << 10);
+    ASSERT_NO_FATAL_FAILURE(flush());
+
+    // Phase 3: frames written over the stale bytes; their padding is explicit
+    for (int batch = 0; batch < 10; ++batch) {
+        ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 20, rng, frames));
+        sendBytes(1 + rng() % 60, 'w');
+        for (int i = 0; i < 20; ++i) {
+            writeShifted();
+        }
+    }
+    ASSERT_NO_FATAL_FAILURE(flush());
+
+    // Phase 4: bursts of 10 MiB grow the blocks through the large-block path, and the next
+    // bursts reuse them
+    const size_t large = (1 << 20) + 5;
+    for (int burst = 0; burst < 3; ++burst) {
+        for (int i = 0; i < 10; ++i) {
+            sendBytes(large, static_cast<char>('a' + i));
+            sendBytes(7, 'y');
+        }
+        ASSERT_NO_FATAL_FAILURE(flush());
+    }
+
+    // Phase 5: small bursts over the stale bytes of the large blocks
+    for (int batch = 0; batch < 8; ++batch) {
+        ASSERT_NO_FATAL_FAILURE(WriteAlignedFrames(stream, 5, rng, frames));
+        ASSERT_NO_FATAL_FAILURE(flush());
+    }
+
+    ASSERT_EQ(received.size(), frames.size());
+    for (size_t i = 0; i < frames.size(); ++i) {
+        ASSERT_EQ(received[i].MessageId, frames[i].MessageId);
+        ASSERT_TRUE(received[i].Payload == frames[i].Payload);
+        if (frames[i].Aligned) {
+            ASSERT_TRUE(received[i].Aligned);
+        }
+    }
+}
+
 // An id in the padding bits would break the stream, even with an empty blob
 void test_node_rejects_message_id_with_padding_bits() {
     using TPoller = TDefaultPoller;
@@ -2465,6 +2690,8 @@ int main(int argc, char** argv) {
     ADD_TEST(unit_test, test_filler_frame);
     ADD_TEST(unit_test, test_filler_frame_across_v2_chunks);
     ADD_TEST(unit_test, test_node_aligns_payloads);
+    ADD_TEST(unit_test, test_output_buffer_grows_keeping_bytes);
+    ADD_TEST(unit_test, test_node_output_buffer_growth_keeps_frames);
     ADD_TEST(unit_test, test_node_rejects_message_id_with_padding_bits);
     ADD_TEST(unit_test, test_node_filler_keeps_queue_aligned_on_reconnect);
     ADD_TEST(unit_test, test_node_reconnects_without_filler_when_unaligned);

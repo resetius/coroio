@@ -3,6 +3,7 @@
 #include "actor.hpp"
 #include "envelope_reader.hpp"
 #include "messages_factory.hpp"
+#include "output_buffer.hpp"
 
 #include <coroio/address.hpp>
 #include <coroio/dns/resolver.hpp>
@@ -59,7 +60,7 @@ public:
  * @brief Concrete `INode` implementation for a single remote actor-system endpoint.
  *
  * Maintains a persistent TCP connection to `hostPort`, reconnecting with a 1 s
- * back-off on failure. Outbound messages are accumulated in a vector buffer and
+ * back-off on failure. Outbound messages are accumulated in a growable buffer (`TOutputBuffer`) and
  * flushed by `Drain()` once the connection is established.
  *
  * @tparam TPoller Poller type (e.g. `TDefaultPoller`); determines the socket type.
@@ -131,10 +132,8 @@ public:
     }
 
     std::span<char> Acquire(size_t size) override {
-        if (CommittedBytes + size > OutputBuffer.size()) {
-            OutputBuffer.resize(CommittedBytes + size);
-        }
-        return std::span<char>(OutputBuffer.data() + CommittedBytes, size);
+        OutputBuffer.Reserve(CommittedBytes, CommittedBytes + size);
+        return std::span<char>(OutputBuffer.Data() + CommittedBytes, size);
     }
 
     void Commit(size_t size) override {
@@ -173,11 +172,11 @@ private:
     TFuture<void> DoDrain() {
         try {
             while (CommittedBytes > 0) {
-                SendBuffer.swap(OutputBuffer);
+                SendBuffer.Swap(OutputBuffer);
                 auto readSize = CommittedBytes;
                 CommittedBytes = 0;
                 SentBytes += readSize;
-                co_await TByteWriter(Socket).Write(SendBuffer.data(), readSize);
+                co_await TByteWriter(Socket).Write(SendBuffer.Data(), readSize);
             }
             co_return;
         } catch (const std::exception& ex) {
@@ -243,14 +242,14 @@ private:
     TResolver& Resolver;
     std::function<TSocket(TAddress&)> SocketFactory;
     THostPort HostPort;
-    std::vector<char> OutputBuffer;
+    TOutputBuffer OutputBuffer;
     size_t CommittedBytes = 0;
     // Frame bytes handed to sockets, without the filler; congruent to the stream offset of
     // OutputBuffer mod MaxPayloadAlignment, also after a reconnect (see the filler in DoConnect)
     uint64_t SentBytes = 0;
     // Set by Offset(): from then on a reconnect keeps SentBytes and writes a filler
     mutable bool WroteAligned = false;
-    std::vector<char> SendBuffer;
+    TOutputBuffer SendBuffer;
 };
 
 } // namespace NActors
