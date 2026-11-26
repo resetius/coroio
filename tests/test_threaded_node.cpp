@@ -946,7 +946,8 @@ void test_threaded_node_segments_grow_keeping_frames() {
             if (peer.Accepted() > 0) {
                 ParseWire(peer.Bytes(0), parsed, received);
             }
-            return received.size() >= frames.size();
+            // A bad frame stops the wait
+            return received.size() >= frames.size() || ::testing::Test::HasFatalFailure();
         }));
     };
     auto send = [&](TMessageId messageId, TBlob blob) {
