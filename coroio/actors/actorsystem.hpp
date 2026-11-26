@@ -293,7 +293,7 @@ public:
      *
      * Messages sent to an actor whose `NodeId()` equals `id` are serialized
      * and forwarded via this node's outbound buffer. Must be called before
-     * `Serve(TSocket)`.
+     * `Serve(TSocket)` or `ServeOutbound()`.
      *
      * @param id   Node identifier matching the remote process's `nodeId`.
      * @param node Transport handle (e.g. `TNode<TDefaultPoller>`).

@@ -41,6 +41,9 @@ struct TEnvelopeBatch : TMpscQueueNode<TEnvelopeBatch> {
  *   as the connections of `TActorSystem::Serve(TSocket)` do.
  *
  * `Full()` is true while the bytes handed over and not passed to `Send` yet reach `limit`.
+ * A connection that it stops looks again only after 1 ms, so `limit` must hold more than
+ * a millisecond of the actor side's work: under backpressure the delivery passes at most
+ * about `limit` per millisecond (16 GB/s with the default, 1 GB/s with 1 MiB).
  *
  * @note Construct and destroy it on the thread of the actor system, before its loop
  *       runs and after the I/O threads that deliver to it have stopped. The destructor
@@ -150,8 +153,8 @@ private:
  *
  * @code
  * TLoop<TDefaultPoller> loop;               // the loop of the actor system
+ * TLoopThread<TDefaultPoller> io;            // before sys: it outlives the nodes on io
  * TActorSystem sys(&loop.Poller(), 1);
- * TLoopThread<TDefaultPoller> io;
  * sys.AddNode(2, ...);                       // a TNode on loop or a TThreadedNode on io
  * TQueuedDelivery delivery(sys);
  * TAddress address{"::", 9001};
@@ -165,7 +168,7 @@ private:
  * ...
  * io.Stop();
  * io.Join();
- * // inbound and then delivery are destroyed here, before io and loop
+ * // inbound, delivery and sys with its nodes are destroyed here, then io and loop
  * @endcode
  *
  * @tparam TPoller         Poller type of the I/O thread; determines the socket type.

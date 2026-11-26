@@ -554,9 +554,12 @@ void test_threaded_inbound_actor_systems() {
 }
 
 // The I/O loop stops while clients write; then the inbound and the delivery are destroyed
-// with envelopes in the queue, and with V2 the reader goes before the blobs of its chunks
+// with envelopes in the queue, and with V2 the reader goes before the blobs of its chunks.
+// Whether the actor side has emptied the queue by then is a matter of timing: at least one
+// iteration must destroy a queue that is not empty.
 template<typename TPoller, typename TReader>
 void test_threaded_inbound_stop_under_load() {
+    int nonEmpty = 0;
     for (int iteration = 0; iteration < 10; ++iteration) {
         TInboundSetup<TPoller, TReader> setup(4 * 1024 * 1024);
         TRecord record(2, std::is_same_v<TReader, TZeroCopyEnvelopeReaderV2>);
@@ -567,9 +570,11 @@ void test_threaded_inbound_stop_under_load() {
         // The actor side takes some of what was handed over before the stop
         Pump(setup.Loop, [] { return false; }, std::chrono::milliseconds(iteration % 3));
         clients.Stop();
+        nonEmpty += setup.Delivery.QueuedBytes() > 0;
         ASSERT_TRUE(running);
         ASSERT_TRUE(record.Error.empty()) << record.Error;
     }
+    ASSERT_GT(nonEmpty, 0);
 }
 
 #endif // _WIN32
