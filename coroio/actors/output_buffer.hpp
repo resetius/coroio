@@ -5,6 +5,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <span>
 #include <utility>
 
 namespace NNet {
@@ -109,6 +110,21 @@ private:
     std::unique_ptr<char, TFree> Ptr;
     size_t Cap = 0;
 };
+
+/**
+ * @brief Marks a range that `IOutputStream::Acquire` hands out as not written yet.
+ *
+ * In a build without `NDEBUG` it fills the range with `0xA5`, so a writer that leaves a gap in
+ * it (padding, or the part of a payload that `SerializeTo` does not write) sends the marker,
+ * which tests see, and not zeros or old bytes that hide the gap. With `NDEBUG` it does nothing.
+ */
+inline void PoisonAcquired([[maybe_unused]] std::span<char> range) {
+#ifndef NDEBUG
+    if (!range.empty()) {
+        std::memset(range.data(), 0xA5, range.size());
+    }
+#endif
+}
 
 } // namespace NActors
 } // namespace NNet
