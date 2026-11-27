@@ -1,6 +1,7 @@
 #pragma once
 
 #include "node.hpp"
+#include "output_buffer.hpp"
 
 #include <coroio/mpsc_queue.hpp>
 #include <coroio/notifier.hpp>
@@ -47,7 +48,9 @@ struct TNullLock {
  * place among the frames written around it and the stream stays that of `TNode`. The I/O
  * side writes the payload into the frame with `SerializeTo` before the segment goes to
  * the socket, and destroys the object there; it does not read the factory. All other
- * payloads are serialized in `Send`, as by `TNode`.
+ * payloads are serialized in `Send`, as by `TNode`. A segment grows without zero-filling
+ * (`TOutputBuffer`): the producer writes the headers, the padding and the other payloads, the
+ * I/O side the deferred ones, and every byte of a frame is written before it is sent.
  *
  * `TLock` guards the producer side. With the default `TNullLock` it has one producer
  * thread. With a real lock (`std::mutex`) any thread may produce: `Send`, `StartConnect`
@@ -178,10 +181,8 @@ public:
 
     std::span<char> Acquire(size_t size) override {
         auto& segment = *Current_;
-        if (segment.Size + size > segment.Data.size()) {
-            segment.Data.resize(segment.Size + size);
-        }
-        return std::span<char>(segment.Data.data() + segment.Size, size);
+        segment.Data.Reserve(segment.Size, segment.Size + size);
+        return std::span<char>(segment.Data.Data() + segment.Size, size);
     }
 
     void Commit(size_t size) override {
@@ -251,7 +252,9 @@ private:
         TSegment& operator=(const TSegment&) = delete;
 
         std::atomic<size_t>& Live;
-        std::vector<char> Data;
+        // Not zero-filled: every byte below Size is written before the segment is sent, the
+        // padding by the producer and the payload holes by WritePayloads
+        TOutputBuffer Data;
         size_t Size = 0;
         // In the order of their frames; empty again once the I/O side has written them
         std::vector<TDeferredPayload> Deferred;
@@ -300,7 +303,7 @@ private:
     // I/O side. The objects die here: a recycled segment must not bring them back.
     void WritePayloads(TSegment& segment) noexcept {
         for (const auto& payload : segment.Deferred) {
-            payload.Write(payload.Blob, std::span<char>(segment.Data.data() + payload.Offset, payload.Size));
+            payload.Write(payload.Blob, std::span<char>(segment.Data.Data() + payload.Offset, payload.Size));
         }
         segment.Deferred.clear();
     }
@@ -336,7 +339,7 @@ private:
             SentBytes_ += Writing_->Size;
             WritePayloads(*Writing_);
             try {
-                co_await TByteWriter(Socket_).Write(Writing_->Data.data(), Writing_->Size);
+                co_await TByteWriter(Socket_).Write(Writing_->Data.Data(), Writing_->Size);
             } catch (const std::exception& ex) {
                 std::cerr << "Error during draining: " << ex.what() << "\n";
                 Connected_ = false;

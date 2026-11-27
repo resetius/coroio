@@ -55,6 +55,8 @@ public:
      * thread, where it then destroys the object. So for `T`:
      * - what `SerializeTo` reads must not change, and must stay alive, until the object is destroyed;
      * - the destructor of the object and the deleter of its blob must be safe on the I/O thread;
+     * - `SerializeTo` must write every byte of `out`: the frame is not zeroed, and what it leaves
+     *   is whatever the segment held before;
      * - `SerializeTo` must not throw: check the object in `SerializedSize`, which throws to the
      *   sender. An exception from `SerializeTo` terminates the process.
      */
