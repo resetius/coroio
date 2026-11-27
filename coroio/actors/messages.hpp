@@ -217,7 +217,9 @@ TBlob SerializeNear(TAllocator& alloc, Args&&... args)
  * `DeserializeFrom<T>` for the receiving side). `SerializedSize` returns the
  * exact payload size; `SerializeTo` then writes exactly that many bytes into
  * `out`, which is a region of the node's outbound buffer (`out.size()` equals
- * `SerializedSize(obj)`; it may be unaligned). The unspecialized templates
+ * `SerializedSize(obj)`; it may be unaligned and it is not zeroed: it holds whatever the
+ * buffer held before, and a byte that `SerializeTo` skips is sent as it is; a build without
+ * `NDEBUG` fills it with `0xA5` first). The unspecialized templates
  * trigger a `static_assert` when a non-POD type is sent to a remote node.
  *
  * @code

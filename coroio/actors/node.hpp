@@ -133,7 +133,9 @@ public:
 
     std::span<char> Acquire(size_t size) override {
         OutputBuffer.Reserve(CommittedBytes, CommittedBytes + size);
-        return std::span<char>(OutputBuffer.Data() + CommittedBytes, size);
+        const std::span<char> buf(OutputBuffer.Data() + CommittedBytes, size);
+        PoisonAcquired(buf);
+        return buf;
     }
 
     void Commit(size_t size) override {
