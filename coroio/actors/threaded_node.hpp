@@ -182,7 +182,9 @@ public:
     std::span<char> Acquire(size_t size) override {
         auto& segment = *Current_;
         segment.Data.Reserve(segment.Size, segment.Size + size);
-        return std::span<char>(segment.Data.Data() + segment.Size, size);
+        const std::span<char> buf(segment.Data.Data() + segment.Size, size);
+        PoisonAcquired(buf);
+        return buf;
     }
 
     void Commit(size_t size) override {

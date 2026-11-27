@@ -25,6 +25,8 @@ public:
     virtual ~IOutputStream() = default;
     /// Reserves `size` contiguous bytes after the committed ones and returns a span over them.
     /// A reservation that is not committed (its writer threw) is reused by the next `Acquire`.
+    /// The bytes are not zeroed: the writer must write every one of them (padding included).
+    /// A build without `NDEBUG` fills the span with `0xA5` first, so a gap shows in tests.
     virtual std::span<char> Acquire(size_t size) = 0;
     /// Marks `size` previously acquired bytes as ready to send.
     virtual void Commit(size_t size) = 0;
