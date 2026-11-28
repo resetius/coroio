@@ -647,7 +647,8 @@ void test_http_server_wait_hang_up() {
     auto task = [](TSocket& client, TAddress& addr) -> TFuture<void> {
         co_await client.Connect(addr);
         TByteWriter writer(client);
-        const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        // The connection's handler then ends with the router instead of waiting for another request.
+        const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
         co_await writer.Write(request.data(), request.size());
     }(client, serverAddr);
 
