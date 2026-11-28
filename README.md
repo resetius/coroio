@@ -216,7 +216,7 @@ TAddress addr = co_await THostPort("example.com", 80).Resolve(resolver);
 ```
 TWebServer<TSocket>          accept loop + per-connection handler
 IRouter                      implement HandleRequest(TRequest&, TResponse&)
-TRequest                     method, URI, headers, body (Content-Length or chunked)
+TRequest                     method, URI, headers, body (Content-Length or chunked), WaitHangUp
 TResponse                    SetStatus, SetHeader, SendHeaders, WriteBodyFull / WriteBodyChunk
 TUri                         path, query parameters, fragment
 ```
@@ -248,6 +248,14 @@ Reading the request body:
 std::string body = co_await req.ReadBodyFull();        // slurp entire body
 ssize_t n = co_await req.ReadBodySome(buf, size);      // streaming
 ```
+
+Stopping work for a client that has gone:
+```cpp
+co_await req.WaitHangUp();                             // the client closed the connection
+```
+- It completes when the client closes the connection or shuts down its writing side, so a client that sends its request and then calls `shutdown(SHUT_WR)` counts as gone.
+- At most one `WaitHangUp()` per request may wait at a time.
+- epoll, kqueue and poll on Linux report hang-ups; on the others (select, uring, IOCP) the future throws `operation_not_supported` when awaited.
 
 ---
 

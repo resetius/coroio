@@ -604,6 +604,69 @@ void test_http_write_body_full() {
     ASSERT_STREQ(fetch("/").c_str(), expected.c_str());
 }
 
+// A handler that waits for its client to hang up, as one that stops work nobody
+// waits for. Pollers without remote hang-up reports throw instead.
+template<typename TPoller>
+void test_http_server_wait_hang_up() {
+    using TSocket = typename TPoller::TSocket;
+
+    struct TRouter : IRouter {
+        bool Started = false;
+        bool HungUp = false;
+        bool Unsupported = false;
+
+        TFuture<void> HandleRequest(TRequest& request, TResponse&) override {
+            Started = true;
+            try {
+                co_await request.WaitHangUp();
+                HungUp = true;
+            } catch (const std::system_error& ex) {
+                Unsupported = ex.code() == std::errc::operation_not_supported;
+            }
+        }
+    } router;
+
+    TLoop<TPoller> loop;
+    auto& poller = loop.Poller();
+
+    TAddress serverAddr{"127.0.0.1", GetFreePort()};
+    TSocket listener(poller, serverAddr.Domain());
+    listener.Bind(serverAddr);
+    listener.Listen();
+
+    TWebServer<TSocket> server(std::move(listener), router);
+    {
+        // The detached accept loop never finishes, its frame is intentionally left suspended
+#if defined(__SANITIZE_ADDRESS__) && defined(__linux__)
+        __lsan::ScopedDisabler lsanDisabler;
+#endif
+        server.Start();
+    }
+
+    TSocket client(poller, serverAddr.Domain());
+    auto task = [](TSocket& client, TAddress& addr) -> TFuture<void> {
+        co_await client.Connect(addr);
+        TByteWriter writer(client);
+        // The connection's handler then ends with the router instead of waiting for another request.
+        const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        co_await writer.Write(request.data(), request.size());
+    }(client, serverAddr);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!(task.done() && router.Started) && std::chrono::steady_clock::now() < deadline) {
+        loop.Step();
+    }
+    ASSERT_TRUE(task.done() && router.Started);
+    task.await_resume();
+    ASSERT_FALSE(router.HungUp);
+    client.Close();
+    while (!router.HungUp && !router.Unsupported && std::chrono::steady_clock::now() < deadline) {
+        loop.Step();
+    }
+    ASSERT_EQ(router.HungUp, poller.SupportsRemoteHup());
+    ASSERT_EQ(router.Unsupported, !poller.SupportsRemoteHup());
+}
+
 #define TEST_SUITE_NAME "test_http"
 
 int main(int argc, char** argv) {
@@ -627,6 +690,12 @@ int main(int argc, char** argv) {
     ADD_TEST(unit_test, test_byte_reader_read_until_empty_delimiter);
     ADD_TEST(unit_test, test_http_write_body_full);
     ADD_TEST(unit_test, test_http_server_header_split_between_writes);
+    RegisterTest("test_http_server_wait_hang_up", "TSelect", test_http_server_wait_hang_up<TSelect>);
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    RegisterTest("test_http_server_wait_hang_up", "TKqueue", test_http_server_wait_hang_up<TKqueue>);
+#else
+    RegisterTest("test_http_server_wait_hang_up", "TEPoll", test_http_server_wait_hang_up<TEPoll>);
+#endif
 
     return RUN_ALL_TESTS();
 }
