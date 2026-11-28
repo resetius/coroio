@@ -119,7 +119,9 @@ public:
      * Lets a handler stop work for a client that has gone, such as a long
      * computation of the answer. Reads of the body and writes of the response may
      * wait at the same time, and unread data does not complete it. Destroying the
-     * future stops the wait; it must not outlive the request.
+     * future stops the wait; it must not outlive the request. At most one wait per
+     * request: the poller keeps one hang-up waiter per socket, so a second one
+     * replaces the first, which is then never resumed.
      *
      * @throws std::system_error with std::errc::operation_not_supported, when
      *         awaited, if the poller does not report remote hang-ups (see

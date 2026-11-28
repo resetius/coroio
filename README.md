@@ -249,10 +249,13 @@ std::string body = co_await req.ReadBodyFull();        // slurp entire body
 ssize_t n = co_await req.ReadBodySome(buf, size);      // streaming
 ```
 
-Stopping work for a client that has gone (epoll, kqueue and poll on Linux report hang-ups):
+Stopping work for a client that has gone:
 ```cpp
 co_await req.WaitHangUp();                             // the client closed the connection
 ```
+- It completes when the client closes the connection or shuts down its writing side, so a client that sends its request and then calls `shutdown(SHUT_WR)` counts as gone.
+- At most one `WaitHangUp()` per request may wait at a time.
+- epoll, kqueue and poll on Linux report hang-ups; on the others (select, uring, IOCP) the future throws `operation_not_supported` when awaited.
 
 ---
 
