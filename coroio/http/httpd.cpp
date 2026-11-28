@@ -1,5 +1,7 @@
 #include "httpd.hpp"
 
+#include <system_error>
+
 namespace NNet
 {
 
@@ -95,10 +97,12 @@ const std::string& TUri::Path() const {
 
 TRequest::TRequest(std::string&& header,
     std::function<TFuture<ssize_t>(char*, size_t)> bodyReader,
-    std::function<TFuture<std::string>()> chunkHeaderReader)
+    std::function<TFuture<std::string>()> chunkHeaderReader,
+    std::function<TFuture<void>()> hangUpWaiter)
     : Header_(std::move(header))
     , BodyReader_(std::move(bodyReader))
     , ChunkHeaderReader_(std::move(chunkHeaderReader))
+    , HangUpWaiter_(std::move(hangUpWaiter))
 {
     // Parse the request line and headers
     ParseRequestLine();
@@ -171,6 +175,14 @@ void TRequest::ParseHeaders() {
 
 const THeaders& TRequest::Headers() const {
     return Headers_;
+}
+
+TFuture<void> TRequest::WaitHangUp() {
+    if (!HangUpWaiter_) {
+        throw std::system_error(std::make_error_code(std::errc::operation_not_supported),
+            "the request has no hang-up waiter");
+    }
+    co_await HangUpWaiter_();
 }
 
 bool TRequest::RequireConnectionClose() const {

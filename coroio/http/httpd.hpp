@@ -74,12 +74,16 @@ private:
  *
  * Header string views (`Method()`, `Version()`, values in `Headers()`) reference
  * the internal header buffer and are valid for the lifetime of this object.
+ *
+ * `hangUpWaiter` completes when the client hangs up; `TWebServer` passes the
+ * connection's `TSocket::Monitor()`.
  */
 class TRequest {
 public:
     TRequest(std::string&& header,
         std::function<TFuture<ssize_t>(char*, size_t)> bodyReader,
-        std::function<TFuture<std::string>()> chunkHeaderReader = {});
+        std::function<TFuture<std::string>()> chunkHeaderReader = {},
+        std::function<TFuture<void>()> hangUpWaiter = {});
     /// HTTP method string (e.g. `"GET"`, `"POST"`).
     std::string_view Method() const;
     /// Parsed request URI.
@@ -109,6 +113,19 @@ public:
     bool RequireConnectionClose() const;
     /// All request headers as a `name → value` map (views into the header buffer).
     const THeaders& Headers() const;
+    /**
+     * @brief Completes when the client closes the connection or shuts down its writing side.
+     *
+     * Lets a handler stop work for a client that has gone, such as a long
+     * computation of the answer. Reads of the body and writes of the response may
+     * wait at the same time, and unread data does not complete it. Destroying the
+     * future stops the wait; it must not outlive the request.
+     *
+     * @throws std::system_error with std::errc::operation_not_supported, when
+     *         awaited, if the poller does not report remote hang-ups (see
+     *         TSocket::Monitor()) or the request has no hang-up waiter.
+     */
+    TFuture<void> WaitHangUp();
 
 private:
     void ParseRequestLine();
@@ -127,6 +144,7 @@ private:
     size_t CurrentChunkSize_ = 0;
     std::function<TFuture<ssize_t>(char*, size_t)> BodyReader_;
     std::function<TFuture<std::string>()> ChunkHeaderReader_;
+    std::function<TFuture<void>()> HangUpWaiter_;
     std::string_view Method_;
     TUri Uri_;
     std::string_view Version_;
@@ -299,12 +317,16 @@ private:
             co_return co_await clientSocket.WriteSome(data, size);
         };
 
+        auto hangUpWaiter = [&]() -> TFuture<void> {
+            co_await clientSocket.Monitor();
+        };
+
         std::string clientString = clientSocket.RemoteAddr() ? clientSocket.RemoteAddr()->ToString() : "unknown";
 
         try {
             while (true) {
                 auto header = co_await byteReader.ReadUntil("\r\n\r\n");
-                TRequest request(std::move(header), bodyReader, chunkHeaderReader);
+                TRequest request(std::move(header), bodyReader, chunkHeaderReader, hangUpWaiter);
                 TResponse response(bodyWriter);
                 co_await Router.HandleRequest(request, response);
                 Log(request, response, clientString);
